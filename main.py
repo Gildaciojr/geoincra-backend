@@ -49,6 +49,8 @@ import app.models.avaliacao_profissional
 import app.models.calculation_parameter
 import app.models.proposal
 import app.models.ocr_result
+import app.models.template
+
 
 # ============================================================
 # FASTAPI APP
