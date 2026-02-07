@@ -4,14 +4,17 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 
 from app.core.deps import get_db, get_current_user_required
-from app.models.template import Template
 from app.models.user import User
 from app.crud.template_crud import list_templates, get_template
+from app.schemas.template import TemplateResponse
 
 router = APIRouter(prefix="/templates", tags=["Templates"])
 
+# Base segura para arquivos de templates
+BASE_TEMPLATES_PATH = Path("app/uploads/templates").resolve()
 
-@router.get("/", response_model=list)
+
+@router.get("/", response_model=list[TemplateResponse])
 def list_templates_route(
     categoria: str | None = Query(None),
     db: Session = Depends(get_db),
@@ -30,7 +33,12 @@ def download_template_route(
     if not template or not template.ativo:
         raise HTTPException(status_code=404, detail="Template não encontrado")
 
-    file_path = Path(template.file_path)
+    file_path = Path(template.file_path).resolve()
+
+    # 🔒 proteção contra acesso fora da pasta de templates
+    if not str(file_path).startswith(str(BASE_TEMPLATES_PATH)):
+        raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")
 

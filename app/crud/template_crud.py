@@ -12,6 +12,7 @@ def create_template(db: Session, data: TemplateCreate) -> Template:
         stored_filename=data.stored_filename,
         original_filename=data.original_filename,
         file_path=data.file_path,
+        ativo=True,  # explícito para robustez SaaS
     )
     db.add(obj)
     db.commit()
