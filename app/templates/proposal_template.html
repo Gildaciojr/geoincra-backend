@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8" />
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; font-size: 14px; }
+        h1, h2, h3 { font-weight: bold; margin-bottom: 4px; }
+        .center { text-align: center; }
+        .logo { width: 160px; margin: 10px auto; display:block; }
+        .divider { margin: 20px 0; border-bottom: 2px solid #444; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        .table td, .table th { border: 1px solid #555; padding: 6px; font-size: 13px; }
+    </style>
+</head>
+
+<body>
+
+<p class="center">
+    <strong>PROPOSTA COMERCIAL</strong><br>
+    Cacoal, {{ data_atual }}
+</p>
+
+<img src="{{ logo_path }}" class="logo" alt="Logo GeoFácil" />
+
+<p>
+<strong>REF.:</strong> Serviços de Georreferenciamento e Regularização Fundiária
+</p>
+
+<p><strong>Cliente:</strong> {{ cliente }}</p>
+
+<p>
+A GeoFácil apresenta a seguir sua proposta técnica e comercial para realização dos serviços
+solicitados conforme normas vigentes do INCRA.
+</p>
+
+<div class="divider"></div>
+
+<h3>OBJETO</h3>
+<p>
+Georreferenciamento do imóvel <strong>{{ descricao_imovel }}</strong>, localizado em {{ municipio }} – RO.
+</p>
+
+<div class="divider"></div>
+
+<h3>INVESTIMENTO</h3>
+
+<table class="table">
+    <tr><th>Descrição</th><th>Valor</th></tr>
+
+    <tr>
+        <td><strong>Serviço de Georreferenciamento ({{ area }} ha)</strong></td>
+        <td><strong>R$ {{ "%.2f"|format(valor_base) }}</strong></td>
+    </tr>
+
+    <tr>
+        <td><strong>Taxas ART ({{ arts }} unidade(s))</strong></td>
+        <td>R$ {{ "%.2f"|format(valor_art) }}</td>
+    </tr>
+
+    <tr>
+        <td><strong>Custos Adicionais</strong></td>
+        <td>R$ {{ "%.2f"|format(extras) }}</td>
+    </tr>
+
+    <tr>
+        <td colspan="2" class="center"><strong>Total Geral</strong></td>
+    </tr>
+
+    <tr>
+        <td colspan="2" class="center">
+            <strong style="font-size: 18px;">R$ {{ "%.2f"|format(total) }}</strong>
+        </td>
+    </tr>
+</table>
+
+<div class="divider"></div>
+
+<h3>CONDIÇÕES DE PAGAMENTO</h3>
+
+<ul>
+    <li>50% após finalização do serviço de campo.</li>
+    <li>50% após entrega das peças técnicas.</li>
+</ul>
+
+<div class="divider"></div>
+
+<p class="center" style="margin-top:40px;">
+    _________________________________________<br>
+    <strong>ISAAC ALMEIDA LACERDA</strong><br>
+    Eng. Civil – CREA 16.268/D-RO – INCRA RJNE
+</p>
+
+</body>
+</html>

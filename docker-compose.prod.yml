@@ -1,0 +1,25 @@
+services:
+  geoincra_backend:
+    build: .
+    container_name: geoincra_backend
+    env_file:
+      - .env.production
+    restart: always
+    expose:
+      - "8000"
+    depends_on:
+      - geoincra_postgres
+
+  geoincra_postgres:
+    image: postgres:16
+    container_name: geoincra_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: geoincra_user
+      POSTGRES_PASSWORD: domboscojacutinga33
+      POSTGRES_DB: geoincra_db
+    volumes:
+      - geoincra_pgdata:/var/lib/postgresql/data
+
+volumes:
+  geoincra_pgdata:

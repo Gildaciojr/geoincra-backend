@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  geoincra_backend:
+    build: .
+    container_name: geoincra_backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - geoincra_postgres
+
+  geoincra_postgres:
+    image: postgres:16
+    container_name: geoincra_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: geoincra_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - geoincra_pgdata:/var/lib/postgresql/data
+      - ./app/uploads:/app/app/uploads
+
+volumes:
+  geoincra_pgdata:

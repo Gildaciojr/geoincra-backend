@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8" />
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; }
+        .center { text-align: center; }
+        .divider { margin: 20px 0; border-bottom: 2px solid #444; }
+        .logo { width: 160px; margin: 10px auto; display:block; }
+        .indent { margin-left: 20px; }
+    </style>
+</head>
+
+<body>
+
+<img src="{{ logo_path }}" class="logo" alt="Logo GeoFácil" />
+
+<p class="center">
+    <strong>CONTRATO DE PRESTAÇÃO DE SERVIÇOS TÉCNICOS</strong><br>
+    Cacoal, {{ data_atual }}
+</p>
+
+<div class="divider"></div>
+
+<h3>1. DAS PARTES</h3>
+
+<p><strong>CONTRATANTE:</strong> {{ cliente }},
+proprietário(a) do imóvel {{ descricao_imovel }}, localizado no município de {{ municipio }} – RO.</p>
+
+<p>
+<strong>CONTRATADA:</strong> GeoFácil – Serviços de Georreferenciamento,
+representada pelo Eng. Civil <strong>ISAAC ALMEIDA LACERDA</strong>,
+CREA 16.268/D-RO – Credenciado INCRA RJNE.
+</p>
+
+<div class="divider"></div>
+
+<h3>2. OBJETO</h3>
+
+<p>
+O presente contrato tem por objeto a execução dos serviços técnicos de
+<strong>Georreferenciamento de Imóvel Rural</strong>,
+incluindo memorial descritivo, planta, peças técnicas e submissão ao SIGEF/INCRA.
+</p>
+
+<div class="divider"></div>
+
+<h3>3. VALOR E PAGAMENTO</h3>
+
+<p>
+Valor total contratado:
+</p>
+
+<p class="center" style="font-size: 18px;">
+    <strong>R$ {{ "%.2f"|format(total) }}</strong>
+</p>
+
+<p>Inclui:</p>
+<ul class="indent">
+    <li>Serviços técnicos (R$ {{ "%.2f"|format(valor_base) }})</li>
+    <li>ART – {{ arts }} unidade(s) (R$ {{ "%.2f"|format(valor_art) }})</li>
+    <li>Custos adicionais (R$ {{ "%.2f"|format(extras) }})</li>
+</ul>
+
+<div class="divider"></div>
+
+<h3>4. PRAZO</h3>
+
+<p>
+O prazo para execução será informado após o levantamento inicial,
+podendo variar conforme acesso e condições climáticas.
+</p>
+
+<div class="divider"></div>
+
+<h3>5. CONDIÇÕES GERAIS</h3>
+
+<ul class="indent">
+    <li>Locais de difícil acesso podem exigir orçamento adicional.</li>
+    <li>O contratante declara ciência dos valores e escopo.</li>
+    <li>Este contrato entra em vigor na data de sua assinatura.</li>
+</ul>
+
+<div class="divider"></div>
+
+<p class="center">
+    Cacoal, {{ data_atual }}
+</p>
+
+<br><br>
+
+<p class="center">
+    ___________________________________________<br>
+    <strong>{{ cliente }}</strong><br>
+    CONTRATANTE
+</p>
+
+<br><br>
+
+<p class="center">
+    ___________________________________________<br>
+    <strong>ISAAC ALMEIDA LACERDA</strong><br>
+    Engenheiro Civil – CREA 16.268/D-RO – INCRA RJNE
+</p>
+
+</body>
+</html>
