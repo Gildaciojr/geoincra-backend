@@ -18,8 +18,8 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
     db_user = create_user(db, user)
 
-    # auth_routes.py
-    token = create_access_token(subject=str(user.id))
+    token = create_access_token(subject=str(db_user.id))
+
 
 
     return {
@@ -37,7 +37,7 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
             detail="E-mail ou senha inválidos.",
         )
 
-    token = create_access_token(subject=user.id)
+    token = create_access_token(subject=str(user.id))
 
     return {
         "access_token": token,
