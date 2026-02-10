@@ -23,6 +23,7 @@ class Pagamento(Base):
         Index("ix_pagamento_project", "project_id"),
         Index("ix_pagamento_status", "status"),
         Index("ix_pagamento_vencimento", "data_vencimento"),
+        Index("ix_pagamento_modelo", "modelo"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -41,7 +42,16 @@ class Pagamento(Base):
     # DADOS FINANCEIROS
     # =========================================================
     descricao = Column(String(255), nullable=False)
+
+    # valor operacional (mantido por compatibilidade)
     valor = Column(Float, nullable=False)
+
+    # valor total do pagamento (base de cálculo das parcelas)
+    total = Column(
+        Float,
+        nullable=False,
+        default=0.00,
+    )
 
     # ENTRADA | PARCELA | QUITACAO
     tipo = Column(
@@ -59,13 +69,7 @@ class Pagamento(Base):
     modelo = Column(
         String(20),
         nullable=False,
-        default="100",                  # modelo padrão
-    )
-
-    total = Column(
-        Float,
-        nullable=False,
-        default=0.00,
+        default="100",
     )
 
     data_vencimento = Column(DateTime(timezone=True), nullable=False)
@@ -109,6 +113,7 @@ class Pagamento(Base):
         "Project",
         backref="pagamentos",
         lazy="joined",
+        passive_deletes=True,
     )
 
     eventos = relationship(
@@ -116,6 +121,7 @@ class Pagamento(Base):
         back_populates="pagamento",
         cascade="all, delete-orphan",
         lazy="joined",
+        passive_deletes=True,
     )
 
     parcelas = relationship(
@@ -123,6 +129,7 @@ class Pagamento(Base):
         back_populates="pagamento",
         cascade="all, delete-orphan",
         lazy="joined",
+        passive_deletes=True,
     )
 
     def __repr__(self) -> str:

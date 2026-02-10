@@ -61,3 +61,18 @@ class ProjectResponse(ProjectBase):
 
     class Config:
         from_attributes = True
+
+class ProjectCardResponse(BaseModel):
+    id: int
+    name: str
+    municipio: str | None
+    uf: str | None
+    status: str
+    created_at: datetime
+
+    total_documents: int = 0
+    total_proposals: int = 0
+
+    class Config:
+        from_attributes = True
+

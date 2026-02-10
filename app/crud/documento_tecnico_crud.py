@@ -11,6 +11,10 @@ from app.schemas.documento_tecnico import (
     DocumentoTecnicoNovaVersaoRequest,
 )
 
+# NOVOS IMPORTS — automação do workflow
+from app.services.project_fluxo_service import ProjectFluxoService
+from app.services.project_automacao_service import ProjectAutomacaoService
+
 
 # =========================================================
 # HELPERS
@@ -67,13 +71,12 @@ def create_documento_tecnico(
     imovel_id: int,
     data: DocumentoTecnicoCreate,
 ) -> DocumentoTecnico:
-    _validar_imovel(db, imovel_id)
+    imovel = _validar_imovel(db, imovel_id)
 
     versao = data.versao
     if versao is None:
         versao = _get_max_versao(db, imovel_id, data.document_group_key) + 1
 
-    # Desativa versão atual anterior (se existir)
     anterior = _get_versao_atual(db, imovel_id, data.document_group_key)
     if anterior:
         anterior.is_versao_atual = False
@@ -96,6 +99,12 @@ def create_documento_tecnico(
     db.add(obj)
     db.commit()
     db.refresh(obj)
+
+    # ======== NOVO BLOCO — AUTOMAÇÃO DO WORKFLOW =========
+    project_id = imovel.project_id
+    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
+    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+
     return obj
 
 
@@ -170,11 +179,17 @@ def update_documento_tecnico(
 
     db.commit()
     db.refresh(obj)
+
+    # ======== NOVO BLOCO — AUTOMAÇÃO =========
+    project_id = obj.imovel.project_id
+    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
+    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+
     return obj
 
 
 # =========================================================
-# VERSIONAMENTO (NOVA VERSÃO)
+# VERSIONAMENTO
 # =========================================================
 def criar_nova_versao(
     db: Session,
@@ -185,7 +200,6 @@ def criar_nova_versao(
     if not anterior:
         raise ValueError("Documento técnico não encontrado.")
 
-    # Desativa a versão atual anterior
     anterior.is_versao_atual = False
 
     prox_versao = _get_max_versao(
@@ -212,6 +226,12 @@ def criar_nova_versao(
     db.add(obj)
     db.commit()
     db.refresh(obj)
+
+    # ======== NOVO BLOCO — AUTOMAÇÃO =========
+    project_id = obj.imovel.project_id
+    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
+    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+
     return obj
 
 
@@ -230,10 +250,11 @@ def delete_documento_tecnico(
     group_key = obj.document_group_key
     deleting_is_atual = bool(obj.is_versao_atual)
 
+    project_id = obj.imovel.project_id
+
     db.delete(obj)
     db.commit()
 
-    # Se deletou a versão atual, precisamos promover a última versão restante como atual
     if deleting_is_atual:
         novo_atual = (
             db.query(DocumentoTecnico)
@@ -249,5 +270,9 @@ def delete_documento_tecnico(
         if novo_atual:
             novo_atual.is_versao_atual = True
             db.commit()
+
+    # ======== NOVO BLOCO — AUTOMAÇÃO =========
+    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
+    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
 
     return True

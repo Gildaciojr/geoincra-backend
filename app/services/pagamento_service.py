@@ -7,6 +7,10 @@ from app.models.pagamento import Pagamento
 from app.models.parcela_pagamento import ParcelaPagamento
 from app.models.pagamento_evento import PagamentoEvento
 
+# NOVOS IMPORTS (workflow automático)
+from app.services.pagamento_automacao_service import PagamentoAutomacaoService
+from app.services.project_automacao_service import ProjectAutomacaoService
+
 
 class PagamentoService:
     MODELOS_PADRAO = {
@@ -36,14 +40,7 @@ class PagamentoService:
     PARCELA_CANCELADA = "CANCELADA"
 
     @staticmethod
-    def registrar_evento(
-        db: Session,
-        pagamento_id: int,
-        tipo: str,
-        descricao: str | None = None,
-        metadata_json: dict | None = None,
-        criado_por_usuario_id: int | None = None,
-    ) -> PagamentoEvento:
+    def registrar_evento(db: Session, pagamento_id: int, tipo: str, descricao=None, metadata_json=None, criado_por_usuario_id=None):
         ev = PagamentoEvento(
             pagamento_id=pagamento_id,
             tipo=tipo,
@@ -58,7 +55,6 @@ class PagamentoService:
 
     @staticmethod
     def _gerar_vencimento_padrao(indice: int) -> datetime:
-        # Padrão simples (sem calendário externo): 0=hoje+2d, 1=+15d, 2=+30d
         base = datetime.utcnow()
         if indice == 0:
             return base + timedelta(days=2)
@@ -67,10 +63,7 @@ class PagamentoService:
         return base + timedelta(days=30)
 
     @staticmethod
-    def gerar_parcelas_padrao(
-        db: Session,
-        pagamento: Pagamento,
-    ) -> list[ParcelaPagamento]:
+    def gerar_parcelas_padrao(db: Session, pagamento: Pagamento):
         if pagamento.status == PagamentoService.STATUS_CANCELADO:
             raise ValueError("Pagamento cancelado não pode gerar parcelas.")
 
@@ -81,7 +74,7 @@ class PagamentoService:
         existentes = (
             db.query(ParcelaPagamento)
             .filter(ParcelaPagamento.pagamento_id == pagamento.id)
-            .order_by(ParcelaPagamento.numero.asc())
+            .order_by(ParcelaPagamento.ordem.asc())
             .all()
         )
         if existentes:
@@ -92,22 +85,23 @@ class PagamentoService:
 
         definicao = PagamentoService.MODELOS_PADRAO[modelo]
 
-        parcelas: list[ParcelaPagamento] = []
+        parcelas = []
         for idx, (ref, pct) in enumerate(definicao, start=1):
-         valor = round((pagamento.total * pct) / 100.0, 2)
-        parcela = ParcelaPagamento(
-        pagamento_id=pagamento.id,
-        ordem=idx,
-        percentual=pct,
-        valor=valor,
-        vencimento=PagamentoService._gerar_vencimento_padrao(idx - 1),
-        status=PagamentoService.PARCELA_PENDENTE,
-        referencia_interna=ref,
-        liberada=False,
-        )
-        db.add(parcela)
-        parcelas.append(parcela)
+            valor = round((pagamento.total * pct) / 100.0, 2)
 
+            parcela = ParcelaPagamento(
+                pagamento_id=pagamento.id,
+                ordem=idx,
+                percentual=pct,
+                valor=valor,
+                vencimento=PagamentoService._gerar_vencimento_padrao(idx - 1),
+                status=PagamentoService.PARCELA_PENDENTE,
+                referencia_interna=ref,
+                liberada=False,
+            )
+
+            db.add(parcela)
+            parcelas.append(parcela)
 
         db.commit()
         for p in parcelas:
@@ -122,13 +116,15 @@ class PagamentoService:
         )
 
         PagamentoService.recalcular_status_pagamento(db, pagamento.id)
+
+        # NOVO — atualizar automação de liberação financeira
+        PagamentoAutomacaoService.avaliar_liberacao_pagamento(db, pagamento)
+
         return parcelas
 
+
     @staticmethod
-    def recalcular_status_pagamento(
-        db: Session,
-        pagamento_id: int,
-    ) -> Pagamento:
+    def recalcular_status_pagamento(db: Session, pagamento_id: int) -> Pagamento:
         pagamento = db.query(Pagamento).filter(Pagamento.id == pagamento_id).first()
         if not pagamento:
             raise ValueError("Pagamento não encontrado.")
@@ -136,11 +132,7 @@ class PagamentoService:
         if pagamento.status == PagamentoService.STATUS_CANCELADO:
             return pagamento
 
-        parcelas = (
-            db.query(ParcelaPagamento)
-            .filter(ParcelaPagamento.pagamento_id == pagamento_id)
-            .all()
-        )
+        parcelas = db.query(ParcelaPagamento).filter(ParcelaPagamento.pagamento_id == pagamento_id).all()
 
         if not parcelas:
             pagamento.status = PagamentoService.STATUS_PENDENTE
@@ -151,17 +143,12 @@ class PagamentoService:
         total_pago = sum(p.valor for p in parcelas if p.status == PagamentoService.PARCELA_PAGA)
         total_geral = sum(p.valor for p in parcelas if p.status != PagamentoService.PARCELA_CANCELADA)
 
-        # atrasos atualizar de modo automático pelo vencimento
         now = datetime.utcnow()
-        mudou_alguma = False
+
         for p in parcelas:
             if p.status == PagamentoService.PARCELA_PENDENTE and p.vencimento and p.vencimento < now:
                 p.status = PagamentoService.PARCELA_ATRASADA
                 p.updated_at = now
-                mudou_alguma = True
-
-        if mudou_alguma:
-            db.commit()
 
         parcelas_atrasadas = any(p.status == PagamentoService.PARCELA_ATRASADA for p in parcelas)
 
@@ -177,6 +164,9 @@ class PagamentoService:
         pagamento.updated_at = now
         db.commit()
         db.refresh(pagamento)
+
+        # NOVO — recalcular status global do projeto automaticamente
+        ProjectAutomacaoService.aplicar_status_automatico(db, pagamento.project_id)
 
         return pagamento
 
@@ -211,28 +201,26 @@ class PagamentoService:
             db=db,
             pagamento_id=pagamento.id,
             tipo="PARCELA_PAGA",
-            descricao=f"Parcela {parcela.numero} marcada como paga.",
+            descricao=f"Parcela {parcela.ordem} marcada como paga.",
             metadata_json={
                 "parcela_id": parcela.id,
-                "numero": parcela.numero,
+                "numero": parcela.ordem,
                 "valor": parcela.valor,
                 "forma": forma_pagamento,
             },
         )
 
         PagamentoService.recalcular_status_pagamento(db, pagamento.id)
+
+        # NOVO — automação financeira e técnica
+        PagamentoAutomacaoService.avaliar_liberacao_pagamento(db, pagamento)
+        ProjectAutomacaoService.aplicar_status_automatico(db, pagamento.project_id)
+
         return parcela
 
     @staticmethod
-    def obter_percentual_pago(
-        db: Session,
-        pagamento_id: int,
-    ) -> float:
-        parcelas = (
-            db.query(ParcelaPagamento)
-            .filter(ParcelaPagamento.pagamento_id == pagamento_id)
-            .all()
-        )
+    def obter_percentual_pago(db: Session, pagamento_id: int) -> float:
+        parcelas = db.query(ParcelaPagamento).filter(ParcelaPagamento.pagamento_id == pagamento_id).all()
         if not parcelas:
             return 0.0
 
@@ -245,17 +233,7 @@ class PagamentoService:
         return round((total_pago / total_geral) * 100.0, 2)
 
     @staticmethod
-    def liberar_condicional(
-        db: Session,
-        pagamento_id: int,
-    ) -> dict:
-        """
-        Liberações internas (sem API):
-        - liberar_iniciar: >= 20% pago
-        - liberar_meio: >= 50% pago
-        - liberar_final: >= 100% pago
-        """
-
+    def liberar_condicional(db: Session, pagamento_id: int) -> dict:
         pagamento = db.query(Pagamento).filter(Pagamento.id == pagamento_id).first()
         if not pagamento:
             raise ValueError("Pagamento não encontrado.")

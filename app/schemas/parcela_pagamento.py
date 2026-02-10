@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class ParcelaPagamentoBase(BaseModel):
-    numero: int = Field(..., ge=1)
+    ordem: int = Field(..., ge=1)
     percentual: float = Field(..., gt=0, le=100)
     valor: float = Field(..., gt=0)
 

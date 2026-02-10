@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.database import Base, engine
 from app.routes.auth_routes import router as auth_router
 
+
 # ============================================================
 # IMPORTAÇÃO DOS MODELS
 # ============================================================
@@ -64,10 +65,6 @@ app = FastAPI(
 
 # ============================================================
 # 🔐 SWAGGER AUTH (Bearer JWT)
-# - Adiciona botão "Authorize" no Swagger
-# - Permite colar: Bearer <token>
-# - Faz o Swagger enviar Authorization: Bearer <token>
-# - NÃO altera regras de autenticação nem rotas
 # ============================================================
 
 def custom_openapi():
@@ -89,7 +86,6 @@ def custom_openapi():
         "bearerFormat": "JWT",
     }
 
-    # Define segurança global (Swagger passa a enviar o header em todas as rotas ao autorizar)
     openapi_schema["security"] = [{"BearerAuth": []}]
 
     app.openapi_schema = openapi_schema
@@ -99,7 +95,7 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 # ============================================================
-# STARTUP EVENT — GARANTE BANCO DISPONÍVEL (FIX DO DOCKER)
+# STARTUP EVENT — GARANTE BANCO DISPONÍVEL
 # ============================================================
 
 @app.on_event("startup")
@@ -145,6 +141,7 @@ from app.routes.project_automacao_routes import router as project_automacao_rout
 from app.routes.imovel_routes import router as imovel_router
 from app.routes.matricula_routes import router as matricula_router
 
+from app.routes.requerimentos_routes import router as requerimentos_router
 from app.routes.document_routes import router as document_router
 from app.routes.documento_tecnico_routes import router as documento_tecnico_router
 from app.routes.documento_tecnico_checklist_routes import (
@@ -182,6 +179,10 @@ from app.routes.sigef_export_routes import router as sigef_export_router
 
 from app.routes.ocr_routes import router as ocr_router
 from app.routes.map_routes import router as map_router
+
+# 🔥 NOVO IMPORT (TEMPLATES)
+from app.routes.template_routes import router as template_router
+
 
 # ============================================================
 # ROTAS
@@ -231,9 +232,14 @@ app.include_router(projeto_profissional_router, prefix="/api", tags=["Projeto �
 app.include_router(profissional_selecao_router, prefix="/api", tags=["Seleção Profissional"])
 app.include_router(profissional_avaliacao_router, prefix="/api", tags=["Avaliação Profissional"])
 app.include_router(profissional_ranking_router, prefix="/api", tags=["Ranking Profissional"])
+app.include_router(requerimentos_router)
 
 app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
+
+# 🔥 NOVA ROTA DE TEMPLATES
+app.include_router(template_router, prefix="/api", tags=["Templates"])
+
 
 # ============================================================
 # ROOT

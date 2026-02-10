@@ -5,22 +5,14 @@ from app.models.documento_tecnico import DocumentoTecnico
 from app.models.geometria import Geometria
 from app.crud.project_status_crud import definir_status_projeto
 from app.schemas.project_status import ProjectStatusCreate
+from app.services.timeline_service import TimelineService
 
 
 class ProjectStatusAutomationService:
-    """
-    Motor de decisão automática do status do projeto.
-    """
 
     @staticmethod
     def avaliar_e_atualizar_status(db: Session, project_id: int):
-        """
-        Avalia o estado atual do projeto e define o status correto.
-        """
 
-        # =====================================================
-        # 1️⃣ Buscar documentos técnicos ATUAIS
-        # =====================================================
         docs = (
             db.query(DocumentoTecnico)
             .join(DocumentoTecnico.imovel)
@@ -38,9 +30,6 @@ class ProjectStatusAutomationService:
             )
             return
 
-        # =====================================================
-        # 2️⃣ Se algum documento exigir correção
-        # =====================================================
         if any(doc.status_tecnico == "CORRIGIR" for doc in docs):
             ProjectStatusAutomationService._definir(
                 db,
@@ -50,9 +39,6 @@ class ProjectStatusAutomationService:
             )
             return
 
-        # =====================================================
-        # 3️⃣ Se ainda houver documentos em análise
-        # =====================================================
         if any(doc.status_tecnico in ("RASCUNHO", "EM_ANALISE") for doc in docs):
             ProjectStatusAutomationService._definir(
                 db,
@@ -62,9 +48,6 @@ class ProjectStatusAutomationService:
             )
             return
 
-        # =====================================================
-        # 4️⃣ Todos os documentos técnicos aprovados
-        # =====================================================
         if all(doc.status_tecnico == "APROVADO" for doc in docs):
             ProjectStatusAutomationService._definir(
                 db,
@@ -73,9 +56,6 @@ class ProjectStatusAutomationService:
                 descricao="Todos os documentos técnicos foram aprovados.",
             )
 
-        # =====================================================
-        # 5️⃣ Verificar prontidão SIGEF
-        # =====================================================
         geometrias = (
             db.query(Geometria)
             .join(Geometria.imovel)
@@ -100,17 +80,9 @@ class ProjectStatusAutomationService:
                 descricao="Projeto tecnicamente completo e pronto para envio ao SIGEF.",
             )
 
-    # =====================================================
-    # MÉTODO INTERNO
-    # =====================================================
     @staticmethod
-    def _definir(
-        db: Session,
-        project_id: int,
-        status: str,
-        descricao: str,
-    ):
-        definir_status_projeto(
+    def _definir(db: Session, project_id: int, status: str, descricao: str):
+        obj = definir_status_projeto(
             db,
             project_id,
             ProjectStatusCreate(
@@ -118,4 +90,12 @@ class ProjectStatusAutomationService:
                 descricao=descricao,
                 definido_automaticamente=True,
             ),
+        )
+
+        TimelineService.registrar_evento(
+            db=db,
+            project_id=project_id,
+            titulo=f"Status do projeto atualizado: {status}",
+            descricao=descricao,
+            status=status,
         )

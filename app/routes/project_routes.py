@@ -7,14 +7,22 @@ from app.core.deps import (
     get_current_user_required,
 )
 from app.models.user import User
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectResponse,
+    ProjectCardResponse,
+)
 from app.crud.project_crud import (
     create_project,
     list_projects,
     get_project,
     update_project,
     delete_project,
+    list_projects_card,
 )
+
+from app.services.project_dashboard_service import ProjectDashboardService
 
 router = APIRouter(prefix="/projects", tags=["Projetos"])
 
@@ -34,17 +42,12 @@ def create_project_route(
 # ============================================================
 # 🔓 LISTAR PROJETOS → visitante ou usuário
 # ============================================================
-@router.get("/", response_model=list[ProjectResponse])
-def list_projects_route(
+@router.get("/cards", response_model=list[ProjectCardResponse])
+def list_projects_cards(
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user_required),
 ):
-    # Visitante → lista pública (ou vazia, conforme regra de negócio)
-    if not current_user:
-        return []
-
-    # Usuário logado → apenas seus projetos
-    return list_projects(db, owner_id=current_user.id)
+    return list_projects_card(db, owner_id=current_user.id)
 
 
 # ============================================================
@@ -66,6 +69,22 @@ def get_project_route(
 
     # Visitante pode visualizar se existir
     return project
+
+
+# ============================================================
+# 🔒 DASHBOARD DO PROJETO
+# ============================================================
+@router.get("/{project_id}/dashboard")
+def project_dashboard(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_required),
+):
+    project = get_project(db, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    return ProjectDashboardService.obter_diagnostico(db, project_id)
 
 
 # ============================================================

@@ -10,6 +10,10 @@ from app.schemas.proposal_out import ProposalOut
 from app.services.proposal_service import generate_full_proposal
 from app.services.proposal_history_service import save_proposal, list_proposals
 
+# PAGAMENTO
+from app.services.proposal_payment_service import criar_pagamento_para_proposta
+from app.services.pagamento_service import PagamentoService
+
 router = APIRouter(prefix="/propostas", tags=["Propostas"])
 
 
@@ -41,6 +45,9 @@ def generate_proposal(
 ):
     _check_project_owner(db, project_id, current_user.id)
 
+    # ================================
+    # GERAR PROPOSTA
+    # ================================
     try:
         generated = generate_full_proposal(
             db=db,
@@ -56,6 +63,9 @@ def generate_proposal(
             detail="Falha ao gerar proposta/contrato. Verifique os logs.",
         )
 
+    # ================================
+    # SALVAR PROPOSTA
+    # ================================
     try:
         saved = save_proposal(
             db=db,
@@ -67,6 +77,25 @@ def generate_proposal(
         raise HTTPException(
             status_code=500,
             detail="Falha ao salvar a proposta.",
+        )
+
+    # ================================
+    # CRIAR PAGAMENTO AUTOMÁTICO
+    # ================================
+    try:
+        pagamento = criar_pagamento_para_proposta(
+            db=db,
+            proposal=saved,
+        )
+
+        # gerar parcelas automaticamente se modelo padrão
+        if pagamento.modelo != "CUSTOM":
+            PagamentoService.gerar_parcelas_padrao(db, pagamento)
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Proposta criada, mas falha ao gerar pagamento automático.",
         )
 
     proposta_filename = Path(saved.pdf_path).name if saved.pdf_path else None

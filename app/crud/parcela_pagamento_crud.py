@@ -19,7 +19,7 @@ def criar_parcela_manual(
 
     parcela = ParcelaPagamento(
         pagamento_id=pagamento_id,
-        numero=data.numero,
+        ordem=data.ordem,  # ✔ corrigido
         percentual=data.percentual,
         valor=data.valor,
         vencimento=data.vencimento,
@@ -39,7 +39,11 @@ def criar_parcela_manual(
         pagamento_id=pagamento_id,
         tipo="PARCELAS_GERADAS",
         descricao="Parcela criada manualmente (modelo CUSTOM).",
-        metadata_json={"parcela_id": parcela.id, "numero": parcela.numero, "valor": parcela.valor},
+        metadata_json={
+            "parcela_id": parcela.id,
+            "ordem": parcela.ordem,
+            "valor": parcela.valor,
+        },
     )
 
     PagamentoService.recalcular_status_pagamento(db, pagamento_id)
@@ -50,7 +54,7 @@ def listar_parcelas(db: Session, pagamento_id: int) -> list[ParcelaPagamento]:
     return (
         db.query(ParcelaPagamento)
         .filter(ParcelaPagamento.pagamento_id == pagamento_id)
-        .order_by(ParcelaPagamento.numero.asc())
+        .order_by(ParcelaPagamento.ordem.asc())  # ✔ corrigido
         .all()
     )
 

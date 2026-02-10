@@ -1,15 +1,4 @@
 services:
-  geoincra_backend:
-    build: .
-    container_name: geoincra_backend
-    env_file:
-      - .env.production
-    restart: always
-    expose:
-      - "8000"
-    depends_on:
-      - geoincra_postgres
-
   geoincra_postgres:
     image: postgres:16
     container_name: geoincra_postgres
@@ -20,6 +9,27 @@ services:
       POSTGRES_DB: geoincra_db
     volumes:
       - geoincra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geoincra_user -d geoincra_db -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  geoincra_backend:
+    build: .
+    container_name: geoincra_backend
+    env_file:
+      - .env.production
+    restart: always
+    expose:
+      - "8000"
+    depends_on:
+      geoincra_postgres:
+        condition: service_healthy
+    volumes:
+      # ✅ PERSISTÊNCIA OBRIGATÓRIA PARA UPLOADS E TEMPLATES
+      - geoincra_uploads:/app/app/uploads
 
 volumes:
   geoincra_pgdata:
+  geoincra_uploads:
