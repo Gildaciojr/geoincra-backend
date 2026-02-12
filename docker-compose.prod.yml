@@ -21,11 +21,12 @@ services:
     env_file:
       - .env.production
     restart: always
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"
     depends_on:
       geoincra_postgres:
         condition: service_healthy
+
     volumes:
       # ✅ PERSISTÊNCIA OBRIGATÓRIA PARA UPLOADS E TEMPLATES
       - geoincra_uploads:/app/app/uploads
