@@ -36,6 +36,10 @@ def _check_project_owner(db: Session, project_id: int, user_id: int):
     return project
 
 
+# ============================================================
+# 🔒 GERAR PROPOSTA
+# POST /api/propostas/generate/{project_id}
+# ============================================================
 @router.post("/generate/{project_id}")
 def generate_proposal(
     project_id: int,
@@ -45,9 +49,6 @@ def generate_proposal(
 ):
     _check_project_owner(db, project_id, current_user.id)
 
-    # ================================
-    # GERAR PROPOSTA
-    # ================================
     try:
         generated = generate_full_proposal(
             db=db,
@@ -63,9 +64,6 @@ def generate_proposal(
             detail="Falha ao gerar proposta/contrato. Verifique os logs.",
         )
 
-    # ================================
-    # SALVAR PROPOSTA
-    # ================================
     try:
         saved = save_proposal(
             db=db,
@@ -79,16 +77,12 @@ def generate_proposal(
             detail="Falha ao salvar a proposta.",
         )
 
-    # ================================
-    # CRIAR PAGAMENTO AUTOMÁTICO
-    # ================================
     try:
         pagamento = criar_pagamento_para_proposta(
             db=db,
             proposal=saved,
         )
 
-        # gerar parcelas automaticamente se modelo padrão
         if pagamento.modelo != "CUSTOM":
             PagamentoService.gerar_parcelas_padrao(db, pagamento)
 
@@ -97,10 +91,25 @@ def generate_proposal(
             status_code=500,
             detail="Proposta criada, mas falha ao gerar pagamento automático.",
         )
+    # 🔥 Atualiza status automático do projeto após gerar proposta
+    from app.services.project_automacao_service import ProjectAutomacaoService
+
+    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+
 
     proposta_filename = Path(saved.pdf_path).name if saved.pdf_path else None
-    contrato_filename = (
-        Path(saved.contract_pdf_path).name if saved.contract_pdf_path else None
+    contrato_filename = Path(saved.contract_pdf_path).name if saved.contract_pdf_path else None
+
+    # ✅ Agora o PDF fica em /uploads/propostas/project_{project_id}/...
+    pdf_url = (
+        f"/api/files/pdf?path=propostas/project_{project_id}/{proposta_filename}"
+        if proposta_filename
+        else None
+    )
+    contract_url = (
+        f"/api/files/pdf?path=propostas/project_{project_id}/{contrato_filename}"
+        if contrato_filename
+        else None
     )
 
     return {
@@ -109,19 +118,15 @@ def generate_proposal(
         "valor_base": generated["dados"]["valor_base"],
         "extras": generated["dados"]["extras"],
         "total": generated["dados"]["total"],
-        "pdf_path": (
-            f"/files/pdf?path=propostas/{proposta_filename}"
-            if proposta_filename
-            else None
-        ),
-        "contract_pdf_path": (
-            f"/files/pdf?path=propostas/{contrato_filename}"
-            if contrato_filename
-            else None
-        ),
+        "pdf_url": pdf_url,
+        "contract_url": contract_url,
     }
 
 
+# ============================================================
+# 🔒 HISTÓRICO DE PROPOSTAS
+# GET /api/propostas/history/{project_id}
+# ============================================================
 @router.get(
     "/history/{project_id}",
     response_model=list[ProposalOut],
@@ -132,4 +137,40 @@ def list_history(
     current_user: User = Depends(get_current_user_required),
 ):
     _check_project_owner(db, project_id, current_user.id)
-    return list_proposals(db, project_id)
+
+    proposals = list_proposals(db, project_id)
+
+    resultado = []
+
+    for p in proposals:
+        proposta_filename = (
+            Path(p.pdf_path).name if p.pdf_path else None
+        )
+        contrato_filename = (
+            Path(p.contract_pdf_path).name if p.contract_pdf_path else None
+        )
+
+        resultado.append(
+            {
+                "id": p.id,
+                "project_id": p.project_id,
+                "area": p.area,
+                "valor_base": p.valor_base,
+                "valor_art": p.valor_art,
+                "extras": p.extras,
+                "total": p.total,
+                "pdf_url": (
+                    f"/api/files/pdf?path=propostas/project_{p.project_id}/{proposta_filename}"
+                    if proposta_filename
+                    else None
+                ),
+                "contract_url": (
+                    f"/api/files/pdf?path=propostas/project_{p.project_id}/{contrato_filename}"
+                    if contrato_filename
+                    else None
+                ),
+                "created_at": p.created_at,
+            }
+        )
+
+    return resultado

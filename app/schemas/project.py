@@ -29,6 +29,22 @@ class ProjectBase(BaseModel):
 class ProjectCreate(ProjectBase):
     name: str
 
+    # =============================
+    # IMÓVEL
+    # =============================
+    area_hectares: float
+    municipio_id: int
+    ccir: Optional[str] = None
+    matricula_principal: Optional[str] = None
+
+    # =============================
+    # PROPRIETÁRIO
+    # =============================
+    proprietario_nome: str
+    proprietario_cpf: Optional[str] = None
+    proprietario_cnpj: Optional[str] = None
+    proprietario_tipo: str = "FISICA"
+
 
 # ============================================
 # UPDATE

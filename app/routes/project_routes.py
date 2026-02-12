@@ -40,7 +40,18 @@ def create_project_route(
 
 
 # ============================================================
-# 🔓 LISTAR PROJETOS → visitante ou usuário
+# 🔒 LISTAR PROJETOS DO USUÁRIO → exige login
+# ============================================================
+@router.get("/", response_model=list[ProjectResponse])
+def list_projects_route(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_required),
+):
+    return list_projects(db, owner_id=current_user.id)
+
+
+# ============================================================
+# 🔒 LISTAR PROJETOS (CARDS) DO USUÁRIO → exige login
 # ============================================================
 @router.get("/cards", response_model=list[ProjectCardResponse])
 def list_projects_cards(
@@ -52,6 +63,7 @@ def list_projects_cards(
 
 # ============================================================
 # 🔓 DETALHAR PROJETO → visitante ou usuário
+# (Se logado, valida dono; se visitante, retorna se existir)
 # ============================================================
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project_route(
@@ -72,7 +84,7 @@ def get_project_route(
 
 
 # ============================================================
-# 🔒 DASHBOARD DO PROJETO
+# 🔒 DASHBOARD DO PROJETO → exige login
 # ============================================================
 @router.get("/{project_id}/dashboard")
 def project_dashboard(

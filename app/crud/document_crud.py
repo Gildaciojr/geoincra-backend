@@ -1,3 +1,4 @@
+from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
@@ -39,6 +40,17 @@ def delete_document(db: Session, document_id: int) -> bool:
     doc = get_document(db, document_id)
     if not doc:
         return False
+
+    # 🔥 REMOVE ARQUIVO FÍSICO
+    try:
+        if doc.file_path:
+            file_path = Path(doc.file_path)
+            if file_path.exists():
+                file_path.unlink()
+    except Exception:
+        # não interrompe delete se falhar exclusão física
+        pass
+
     db.delete(doc)
     db.commit()
     return True

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, get_current_user
+from app.core.deps import get_db, get_current_user_required
 from app.models.user import User
 from app.schemas.project_status import (
     ProjectStatusCreate,
@@ -14,15 +14,15 @@ from app.crud.project_status_crud import (
 )
 from app.crud.project_crud import get_project
 
-router = APIRouter()
+router = APIRouter(prefix="/projects", tags=["Projetos - Status"])
 
 
-@router.post("/projects/{project_id}/status", response_model=ProjectStatusResponse)
+@router.post("/{project_id}/status", response_model=ProjectStatusResponse)
 def definir_status(
     project_id: int,
     payload: ProjectStatusCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_required),
 ):
     project = get_project(db, project_id)
     if not project or project.owner_id != current_user.id:
@@ -32,13 +32,13 @@ def definir_status(
 
 
 @router.get(
-    "/projects/{project_id}/status/atual",
+    "/{project_id}/status/atual",
     response_model=ProjectStatusResponse,
 )
 def status_atual(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_required),
 ):
     project = get_project(db, project_id)
     if not project or project.owner_id != current_user.id:
@@ -52,13 +52,13 @@ def status_atual(
 
 
 @router.get(
-    "/projects/{project_id}/status/historico",
+    "/{project_id}/status/historico",
     response_model=list[ProjectStatusResponse],
 )
 def historico_status(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_required),
 ):
     project = get_project(db, project_id)
     if not project or project.owner_id != current_user.id:

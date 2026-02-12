@@ -132,12 +132,14 @@ app.add_middleware(
 
 from app.routes.health import router as health_router
 from app.routes.user_routes import router as user_router
+from app.routes.auth_routes import router as auth_router
 
 from app.routes.project_routes import router as project_router
 from app.routes.project_status_routes import router as project_status_router
 from app.routes.project_marcos_routes import router as project_marcos_router
 from app.routes.project_automacao_routes import router as project_automacao_router
 
+# ✅ NOVAS ROTAS CORRETAS
 from app.routes.imovel_routes import router as imovel_router
 from app.routes.matricula_routes import router as matricula_router
 
@@ -159,13 +161,13 @@ from app.routes.confrontante_routes import router as confrontante_router
 
 from app.routes.timeline_routes import router as timeline_router
 from app.routes.upload_routes import router as upload_router
+from app.routes import files_routes
 
 from app.routes.calculation_routes import router as calculation_router
 from app.routes.calculation_parameter_routes import router as calculation_parameter_router
 
 from app.routes.proposal_routes import router as proposal_router
 from app.routes.pagamento_routes import router as pagamento_router
-from app.routes import files_routes
 
 from app.routes.profissional_routes import router as profissional_router
 from app.routes.proposta_profissional_routes import router as proposta_profissional_router
@@ -176,11 +178,8 @@ from app.routes.profissional_ranking_routes import router as profissional_rankin
 
 from app.routes.audit_log_routes import router as audit_log_router
 from app.routes.sigef_export_routes import router as sigef_export_router
-
-from app.routes.ocr_routes import router as ocr_router
 from app.routes.map_routes import router as map_router
 
-# 🔥 NOVO IMPORT (TEMPLATES)
 from app.routes.template_routes import router as template_router
 
 
@@ -197,6 +196,7 @@ app.include_router(project_status_router, prefix="/api", tags=["Project Status"]
 app.include_router(project_marcos_router, prefix="/api", tags=["Project Marcos"])
 app.include_router(project_automacao_router, prefix="/api", tags=["Project Automação"])
 
+# ✅ ROTAS NOVAS E CORRETAS
 app.include_router(imovel_router, prefix="/api", tags=["Imóveis"])
 app.include_router(matricula_router, prefix="/api", tags=["Matrículas"])
 
@@ -210,7 +210,6 @@ app.include_router(memorial_router, prefix="/api", tags=["Memorial"])
 app.include_router(croqui_router, prefix="/api", tags=["Croqui"])
 
 app.include_router(map_router, prefix="/api", tags=["Map"])
-app.include_router(ocr_router, prefix="/api", tags=["OCR"])
 
 app.include_router(cartorio_router, prefix="/api", tags=["Cartórios"])
 app.include_router(municipio_router, prefix="/api", tags=["Municípios"])
@@ -218,7 +217,7 @@ app.include_router(confrontante_router, prefix="/api", tags=["Confrontantes"])
 
 app.include_router(timeline_router, prefix="/api", tags=["Timeline"])
 app.include_router(upload_router, prefix="/api", tags=["Uploads"])
-app.include_router(files_routes.router)
+app.include_router(files_routes.router, prefix="/api", tags=["Arquivos"])
 
 app.include_router(calculation_router, prefix="/api", tags=["Cálculo"])
 app.include_router(calculation_parameter_router, prefix="/api", tags=["Parâmetros"])
@@ -232,13 +231,13 @@ app.include_router(projeto_profissional_router, prefix="/api", tags=["Projeto �
 app.include_router(profissional_selecao_router, prefix="/api", tags=["Seleção Profissional"])
 app.include_router(profissional_avaliacao_router, prefix="/api", tags=["Avaliação Profissional"])
 app.include_router(profissional_ranking_router, prefix="/api", tags=["Ranking Profissional"])
-app.include_router(requerimentos_router)
 
+app.include_router(requerimentos_router, prefix="/api", tags=["Requerimentos"])
 app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
 
-# 🔥 NOVA ROTA DE TEMPLATES
 app.include_router(template_router, prefix="/api", tags=["Templates"])
+
 
 
 # ============================================================

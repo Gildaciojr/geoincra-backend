@@ -1,14 +1,21 @@
-# geoincra_backend/app/services/pdf_service.py
-import os
+from pathlib import Path
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
-BASE_UPLOAD_PATH = "/app/app/uploads/propostas"  # ✅ caminho absoluto correto
+
+DOCKER_BASE = Path("/app/app/uploads/propostas")
+LOCAL_BASE = Path("app/uploads/propostas")
 
 
-def _ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
+def _resolve_base() -> Path:
+    if DOCKER_BASE.exists():
+        return DOCKER_BASE
+    return LOCAL_BASE
+
+
+def _ensure_dir(path: Path):
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def _limpar_html_simples(html: str) -> list[str]:
@@ -38,12 +45,16 @@ def _limpar_html_simples(html: str) -> list[str]:
 
 
 def gerar_pdf_proposta(project_id: int, html_simples: str) -> str:
-    _ensure_dir(BASE_UPLOAD_PATH)
+    base = _resolve_base()
+
+    # 🔥 PASTA DO PROJETO
+    project_dir = base / f"project_{project_id}"
+    _ensure_dir(project_dir)
 
     filename = f"proposta_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
-    file_path = os.path.join(BASE_UPLOAD_PATH, filename)
+    file_path = project_dir / filename
 
-    c = canvas.Canvas(file_path, pagesize=A4)
+    c = canvas.Canvas(str(file_path), pagesize=A4)
     width, height = A4
     y = height - 40
 
@@ -60,16 +71,21 @@ def gerar_pdf_proposta(project_id: int, html_simples: str) -> str:
             y = height - 40
 
     c.save()
-    return file_path
+
+    return str(file_path)
 
 
 def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
-    _ensure_dir(BASE_UPLOAD_PATH)
+    base = _resolve_base()
+
+    # 🔥 PASTA DO PROJETO
+    project_dir = base / f"project_{project_id}"
+    _ensure_dir(project_dir)
 
     filename = f"contrato_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
-    file_path = os.path.join(BASE_UPLOAD_PATH, filename)
+    file_path = project_dir / filename
 
-    c = canvas.Canvas(file_path, pagesize=A4)
+    c = canvas.Canvas(str(file_path), pagesize=A4)
     width, height = A4
     y = height - 40
 
@@ -86,4 +102,5 @@ def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
             y = height - 40
 
     c.save()
-    return file_path
+
+    return str(file_path)

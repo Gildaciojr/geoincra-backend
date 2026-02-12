@@ -1,4 +1,3 @@
-# app/routes/requerimentos_routes.py
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -7,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_db, get_current_user_required
 from app.models.user import User
 from app.models.project import Project
-from app.models.template import Template  # seu model existente
+from app.models.template import Template
 from app.crud.requerimento_crud import (
     list_by_project,
     get_by_project_and_tipo,
@@ -17,7 +16,10 @@ from app.crud.requerimento_crud import (
 from app.schemas.requerimento import RequerimentoUpsert, RequerimentoOut
 from app.services.docx_fill_service import fill_docx_template
 
-router = APIRouter(prefix="/requerimentos", tags=["Requerimentos"])
+router = APIRouter(
+    prefix="/projects/{project_id}/requerimentos",
+    tags=["Requerimentos"],
+)
 
 BASE_UPLOAD_PATH = Path("/app/app/uploads")
 GENERATED_DIR = (BASE_UPLOAD_PATH / "generated").resolve()
@@ -38,7 +40,11 @@ def _check_project_owner(db: Session, project_id: int, user_id: int) -> Project:
     return project
 
 
-@router.get("/project/{project_id}", response_model=list[RequerimentoOut])
+# ============================================================
+# LISTAR REQUERIMENTOS DO PROJETO
+# GET /api/projects/{project_id}/requerimentos
+# ============================================================
+@router.get("", response_model=list[RequerimentoOut])
 def list_project_requerimentos(
     project_id: int,
     db: Session = Depends(get_db),
@@ -48,7 +54,11 @@ def list_project_requerimentos(
     return list_by_project(db, project_id)
 
 
-@router.get("/project/{project_id}/one", response_model=RequerimentoOut)
+# ============================================================
+# OBTER UM REQUERIMENTO POR TIPO
+# GET /api/projects/{project_id}/requerimentos/one?tipo=X
+# ============================================================
+@router.get("/one", response_model=RequerimentoOut)
 def get_one(
     project_id: int,
     tipo: str = Query(...),
@@ -62,7 +72,11 @@ def get_one(
     return obj
 
 
-@router.put("/project/{project_id}", response_model=RequerimentoOut)
+# ============================================================
+# CRIAR / ATUALIZAR REQUERIMENTO
+# PUT /api/projects/{project_id}/requerimentos
+# ============================================================
+@router.put("", response_model=RequerimentoOut)
 def upsert_one(
     project_id: int,
     payload: RequerimentoUpsert,
@@ -82,7 +96,11 @@ def upsert_one(
     return obj
 
 
-@router.delete("/project/{project_id}")
+# ============================================================
+# REMOVER REQUERIMENTO
+# DELETE /api/projects/{project_id}/requerimentos?tipo=X
+# ============================================================
+@router.delete("")
 def delete_one(
     project_id: int,
     tipo: str = Query(...),
@@ -97,7 +115,11 @@ def delete_one(
     return {"mensagem": "Requerimento removido"}
 
 
-@router.post("/project/{project_id}/generate")
+# ============================================================
+# GERAR DOCX A PARTIR DO TEMPLATE
+# POST /api/projects/{project_id}/requerimentos/generate
+# ============================================================
+@router.post("/generate")
 def generate_docx(
     project_id: int,
     tipo: str = Query(...),
@@ -111,7 +133,11 @@ def generate_docx(
     if not req:
         raise HTTPException(status_code=404, detail="Dados do requerimento não encontrados")
 
-    template = db.query(Template).filter(Template.id == template_id, Template.ativo == True).first()
+    template = (
+        db.query(Template)
+        .filter(Template.id == template_id, Template.ativo == True)
+        .first()
+    )
     if not template:
         raise HTTPException(status_code=404, detail="Template não encontrado")
 
@@ -119,8 +145,11 @@ def generate_docx(
     if not template_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo do template não existe no servidor")
 
-    # gera docx preenchido
-    out = fill_docx_template(template_path=template_path, data=req.dados_json, output_dir=GENERATED_DIR)
+    out = fill_docx_template(
+        template_path=template_path,
+        data=req.dados_json,
+        output_dir=GENERATED_DIR,
+    )
 
     return FileResponse(
         path=str(out),

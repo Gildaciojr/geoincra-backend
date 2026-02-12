@@ -81,7 +81,6 @@ async def upload_template_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_required),
 ):
-
     if not file.filename:
         raise HTTPException(status_code=400, detail="Arquivo inválido")
 
