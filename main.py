@@ -168,6 +168,8 @@ from app.routes.calculation_parameter_routes import router as calculation_parame
 
 from app.routes.proposal_routes import router as proposal_router
 from app.routes.pagamento_routes import router as pagamento_router
+from app.routes.checkout_routes import router as checkout_router
+from app.routes.pagamento_webhook_routes import router as webhook_router
 
 from app.routes.profissional_routes import router as profissional_router
 from app.routes.proposta_profissional_routes import router as proposta_profissional_router
@@ -224,6 +226,10 @@ app.include_router(calculation_parameter_router, prefix="/api", tags=["Parâmetr
 
 app.include_router(proposal_router, prefix="/api", tags=["Propostas"])
 app.include_router(pagamento_router, prefix="/api", tags=["Pagamentos"])
+
+app.include_router(checkout_router, prefix="/api", tags=["Pagamentos"])
+app.include_router(webhook_router, prefix="/api", tags=["Pagamentos Webhook"])
+
 
 app.include_router(profissional_router, prefix="/api", tags=["Profissionais"])
 app.include_router(proposta_profissional_router, prefix="/api", tags=["Propostas Profissionais"])

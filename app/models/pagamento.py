@@ -21,6 +21,7 @@ class Pagamento(Base):
 
     __table_args__ = (
         Index("ix_pagamento_project", "project_id"),
+        Index("ix_pagamento_proposal", "proposal_id"),
         Index("ix_pagamento_status", "status"),
         Index("ix_pagamento_vencimento", "data_vencimento"),
         Index("ix_pagamento_modelo", "modelo"),
@@ -29,12 +30,20 @@ class Pagamento(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # =========================================================
-    # RELAÇÃO COM PROJETO
+    # RELAÇÕES PRINCIPAIS
     # =========================================================
     project_id = Column(
         Integer,
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+
+    # 🔗 VÍNCULO COM A PROPOSTA (ACEITE FORMAL)
+    proposal_id = Column(
+        Integer,
+        ForeignKey("proposals.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 
@@ -60,12 +69,14 @@ class Pagamento(Base):
         default="PARCELA",
     )
 
+    # PENDENTE | PARCIAL | PAGO | ATRASADO | CANCELADO
     status = Column(
         String(30),
         nullable=False,
         default="PENDENTE",
     )
 
+    # 100 | 50_50 | 20_30_50 | CUSTOM
     modelo = Column(
         String(20),
         nullable=False,
@@ -76,7 +87,7 @@ class Pagamento(Base):
     data_pagamento = Column(DateTime(timezone=True), nullable=True)
 
     # =========================================================
-    # CONTROLE
+    # CONTROLE DE FLUXO
     # =========================================================
     bloqueia_fluxo = Column(
         Boolean,
@@ -116,6 +127,11 @@ class Pagamento(Base):
         passive_deletes=True,
     )
 
+    proposal = relationship(
+        "Proposal",
+        lazy="joined",
+    )
+
     eventos = relationship(
         "PagamentoEvento",
         back_populates="pagamento",
@@ -136,6 +152,7 @@ class Pagamento(Base):
         return (
             f"<Pagamento id={self.id} "
             f"project_id={self.project_id} "
-            f"valor={self.valor} "
+            f"proposal_id={self.proposal_id} "
+            f"total={self.total} "
             f"status={self.status}>"
         )

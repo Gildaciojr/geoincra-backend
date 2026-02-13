@@ -10,13 +10,15 @@ from app.schemas.proposal_out import ProposalOut
 from app.services.proposal_service import generate_full_proposal
 from app.services.proposal_history_service import save_proposal, list_proposals
 
-# PAGAMENTO
-from app.services.proposal_payment_service import criar_pagamento_para_proposta
-from app.services.pagamento_service import PagamentoService
+# ACEITE + PAGAMENTO
+from app.services.proposal_acceptance_service import ProposalAcceptanceService
 
 router = APIRouter(prefix="/propostas", tags=["Propostas"])
 
 
+# ============================================================
+# 🔒 HELPERS
+# ============================================================
 def _check_project_owner(db: Session, project_id: int, user_id: int):
     project = (
         db.query(Project)
@@ -37,7 +39,7 @@ def _check_project_owner(db: Session, project_id: int, user_id: int):
 
 
 # ============================================================
-# 🔒 GERAR PROPOSTA
+# 🔒 GERAR PROPOSTA + CONTRATO (PDF)
 # POST /api/propostas/generate/{project_id}
 # ============================================================
 @router.post("/generate/{project_id}")
@@ -49,6 +51,7 @@ def generate_proposal(
 ):
     _check_project_owner(db, project_id, current_user.id)
 
+    # 1️⃣ GERA PROPOSTA (CÁLCULO + PDFs)
     try:
         generated = generate_full_proposal(
             db=db,
@@ -61,9 +64,10 @@ def generate_proposal(
     except Exception:
         raise HTTPException(
             status_code=500,
-            detail="Falha ao gerar proposta/contrato. Verifique os logs.",
+            detail="Falha ao gerar proposta/contrato.",
         )
 
+    # 2️⃣ SALVA PROPOSTA NO BANCO
     try:
         saved = save_proposal(
             db=db,
@@ -77,30 +81,13 @@ def generate_proposal(
             detail="Falha ao salvar a proposta.",
         )
 
-    try:
-        pagamento = criar_pagamento_para_proposta(
-            db=db,
-            proposal=saved,
-        )
-
-        if pagamento.modelo != "CUSTOM":
-            PagamentoService.gerar_parcelas_padrao(db, pagamento)
-
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Proposta criada, mas falha ao gerar pagamento automático.",
-        )
-    # 🔥 Atualiza status automático do projeto após gerar proposta
+    # 3️⃣ ATUALIZA STATUS AUTOMÁTICO DO PROJETO
     from app.services.project_automacao_service import ProjectAutomacaoService
-
     ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
-
 
     proposta_filename = Path(saved.pdf_path).name if saved.pdf_path else None
     contrato_filename = Path(saved.contract_pdf_path).name if saved.contract_pdf_path else None
 
-    # ✅ Agora o PDF fica em /uploads/propostas/project_{project_id}/...
     pdf_url = (
         f"/api/files/pdf?path=propostas/project_{project_id}/{proposta_filename}"
         if proposta_filename
@@ -124,6 +111,37 @@ def generate_proposal(
 
 
 # ============================================================
+# 🔒 ACEITAR PROPOSTA (LIBERA PAGAMENTO)
+# POST /api/propostas/accept/{proposal_id}
+# ============================================================
+@router.post("/accept/{proposal_id}")
+def accept_proposal(
+    proposal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_required),
+):
+    try:
+        pagamento = ProposalAcceptanceService.accept_proposal(
+            db=db,
+            proposal_id=proposal_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Erro ao aceitar proposta.",
+        )
+
+    return {
+        "mensagem": "Proposta aceita com sucesso. Pagamento liberado.",
+        "pagamento_id": pagamento.id,
+        "status_pagamento": pagamento.status,
+    }
+
+
+# ============================================================
 # 🔒 HISTÓRICO DE PROPOSTAS
 # GET /api/propostas/history/{project_id}
 # ============================================================
@@ -143,12 +161,8 @@ def list_history(
     resultado = []
 
     for p in proposals:
-        proposta_filename = (
-            Path(p.pdf_path).name if p.pdf_path else None
-        )
-        contrato_filename = (
-            Path(p.contract_pdf_path).name if p.contract_pdf_path else None
-        )
+        proposta_filename = Path(p.pdf_path).name if p.pdf_path else None
+        contrato_filename = Path(p.contract_pdf_path).name if p.contract_pdf_path else None
 
         resultado.append(
             {
