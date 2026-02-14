@@ -52,6 +52,11 @@ import app.models.proposal
 import app.models.ocr_result
 import app.models.template
 
+import app.models.external_credential
+import app.models.automation_job
+import app.models.automation_result
+
+
 
 # ============================================================
 # FASTAPI APP
@@ -183,6 +188,8 @@ from app.routes.sigef_export_routes import router as sigef_export_router
 from app.routes.map_routes import router as map_router
 
 from app.routes.template_routes import router as template_router
+from app.routes.automacoes_routes import router as automacoes_router
+
 
 
 # ============================================================
@@ -243,7 +250,7 @@ app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
 
 app.include_router(template_router, prefix="/api", tags=["Templates"])
-
+app.include_router(automacoes_router, prefix="/api", tags=["Automações"])
 
 
 # ============================================================
