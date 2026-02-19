@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.external_credential import ExternalCredential
 from app.models.automation_job import AutomationJob
 from app.models.automation_result import AutomationResult
+from app.services.timeline_service import TimelineService
 
 router = APIRouter(prefix="/automacoes")
 
@@ -159,14 +160,21 @@ def criar_job_consulta_matriculas(
     db.commit()
     db.refresh(job)
 
+    # 🧠 Timeline (se houver projeto)
+    if project_id:
+        TimelineService.registrar_evento(
+            db=db,
+            project_id=project_id,
+            titulo="Automação RI Digital — Matrículas",
+            descricao=f"Consulta de matrículas de {data_inicio} até {data_fim}",
+            status="Pendente",
+        )
+
     return {"job_id": str(job.id), "status": job.status}
 
 
 # =========================================================
 # 🤖 JOB — ONR / SIG-RI (CONSULTA)
-# - OBRIGATÓRIO project_id (multiusuário + vínculo)
-# - modo: "CAR" ou "ENDERECO"
-# - valor: car ou texto do endereço
 # =========================================================
 @router.post("/onr/consulta/jobs")
 def criar_job_onr_consulta(
@@ -176,7 +184,6 @@ def criar_job_onr_consulta(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # 🔒 valida projeto e dono (multiusuário)
     project = (
         db.query(Project)
         .filter(Project.id == project_id, Project.owner_id == user.id)
@@ -208,6 +215,15 @@ def criar_job_onr_consulta(
     db.commit()
     db.refresh(job)
 
+    # 🧠 Timeline
+    TimelineService.registrar_evento(
+        db=db,
+        project_id=project_id,
+        titulo="Automação ONR / SIG-RI",
+        descricao=f"Consulta por {modo_norm}: {valor_norm}",
+        status="Pendente",
+    )
+
     return {"job_id": str(job.id), "status": job.status}
 
 
@@ -218,13 +234,12 @@ def criar_job_onr_consulta(
 def listar_jobs(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    type: str | None = Query(None, description="Filtro opcional: RI_DIGITAL_MATRICULA | ONR_SIGRI_CONSULTA"),
+    type: str | None = Query(None),
 ):
     q = db.query(AutomationJob).filter(AutomationJob.user_id == user.id)
     if type:
         q = q.filter(AutomationJob.type == type)
-    jobs = q.order_by(AutomationJob.created_at.desc()).all()
-    return jobs
+    return q.order_by(AutomationJob.created_at.desc()).all()
 
 
 @router.get("/jobs/{job_id}")
@@ -256,10 +271,7 @@ def detalhe_job(
 
 
 # =========================================================
-# 📥 DOWNLOAD SEGURO DO ARQUIVO DO RESULTADO
-# (PDF RI Digital / KMZ ONR)
-# - valida dono via job.user_id
-# - não expõe path sem permissão
+# 📥 DOWNLOAD DO RESULTADO
 # =========================================================
 @router.get("/results/{result_id}/download")
 def download_resultado(
@@ -281,20 +293,17 @@ def download_resultado(
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
     file_path = Path(result.file_path)
-
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")
 
-    # Filename “bonito” para download
-    filename = file_path.name
     media_type = "application/octet-stream"
-    if filename.lower().endswith(".pdf"):
+    if file_path.suffix.lower() == ".pdf":
         media_type = "application/pdf"
-    elif filename.lower().endswith(".kmz"):
+    elif file_path.suffix.lower() == ".kmz":
         media_type = "application/vnd.google-earth.kmz"
 
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
-        filename=filename,
+        filename=file_path.name,
     )

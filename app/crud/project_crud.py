@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.models.imovel import Imovel
@@ -73,9 +73,6 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: int):
         # ===================================
         # 5️⃣ STATUS INICIAL (HISTÓRICO)
         # ===================================
-        from app.schemas.project_status import ProjectStatusCreate
-        from app.crud.project_status_crud import definir_status_projeto
-
         definir_status_projeto(
             db=db,
             project_id=project.id,
@@ -97,14 +94,26 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: int):
         raise
 
 
-
 def list_projects(db: Session, owner_id: int):
-    return db.query(Project).filter(Project.owner_id == owner_id).all()
+    return (
+        db.query(Project)
+        .filter(Project.owner_id == owner_id)
+        .all()
+    )
 
 
 def list_projects_card(db: Session, owner_id: int):
+    """
+    Lista projetos no formato de cards do dashboard.
+    Usa eager loading para evitar lazy-load fora do contexto da sessão,
+    eliminando erros 500 intermitentes.
+    """
     projects = (
         db.query(Project)
+        .options(
+            selectinload(Project.documents),
+            selectinload(Project.proposals),
+        )
         .filter(Project.owner_id == owner_id)
         .all()
     )
@@ -126,7 +135,11 @@ def list_projects_card(db: Session, owner_id: int):
 
 
 def get_project(db: Session, project_id: int):
-    return db.query(Project).filter(Project.id == project_id).first()
+    return (
+        db.query(Project)
+        .filter(Project.id == project_id)
+        .first()
+    )
 
 
 def update_project(db: Session, project_id: int, payload: ProjectUpdate):

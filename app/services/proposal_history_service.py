@@ -36,6 +36,8 @@ def save_proposal(
     pdf_path = generated.get("pdf_proposta")
     contract_pdf_path = generated.get("pdf_contrato")
 
+
+
     proposal = Proposal(
         project_id=project_id,
         area=area,

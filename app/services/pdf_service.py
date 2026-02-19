@@ -90,57 +90,59 @@ def gerar_pdf_orcamento(calculation) -> str:
 # 📄 PROPOSTA
 # =========================================================
 def gerar_pdf_proposta(project_id: int, html_simples: str) -> str:
-    base = _resolve_base() / "propostas" / f"project_{project_id}"
+    base_root = _resolve_base()
+    base = base_root / "propostas" / f"project_{project_id}"
     _ensure_dir(base)
 
     filename = f"proposta_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
     file_path = base / filename
 
     c = canvas.Canvas(str(file_path), pagesize=A4)
-    width, height = A4
-    y = height - 40
+    y = A4[1] - 40
 
     for linha in _limpar_html_simples(html_simples):
         if not linha.strip():
             y -= 10
             continue
-
         c.drawString(40, y, linha.strip())
         y -= 14
-
         if y < 40:
             c.showPage()
-            y = height - 40
+            y = A4[1] - 40
 
     c.save()
-    return str(file_path)
+
+    # ✅ RETORNO RELATIVO
+    return str(file_path.relative_to(base_root))
+
 
 
 # =========================================================
 # 📄 CONTRATO
 # =========================================================
 def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
-    base = _resolve_base() / "propostas" / f"project_{project_id}"
+    base_root = _resolve_base()
+    base = base_root / "propostas" / f"project_{project_id}"
     _ensure_dir(base)
 
     filename = f"contrato_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
     file_path = base / filename
 
     c = canvas.Canvas(str(file_path), pagesize=A4)
-    width, height = A4
-    y = height - 40
+    y = A4[1] - 40
 
     for linha in _limpar_html_simples(html_simples):
         if not linha.strip():
             y -= 10
             continue
-
         c.drawString(40, y, linha.strip())
         y -= 14
-
         if y < 40:
             c.showPage()
-            y = height - 40
+            y = A4[1] - 40
 
     c.save()
-    return str(file_path)
+
+    # ✅ RETORNO RELATIVO
+    return str(file_path.relative_to(base_root))
+

@@ -142,7 +142,7 @@ def accept_proposal(
 
 
 # ============================================================
-# 🔒 HISTÓRICO DE PROPOSTAS
+# 🔒 HISTÓRICO DE PROPOSTAS (ESTÁVEL)
 # GET /api/propostas/history/{project_id}
 # ============================================================
 @router.get(
@@ -158,33 +158,22 @@ def list_history(
 
     proposals = list_proposals(db, project_id)
 
-    resultado = []
+    resultado: list[ProposalOut] = []
 
     for p in proposals:
-        proposta_filename = Path(p.pdf_path).name if p.pdf_path else None
-        contrato_filename = Path(p.contract_pdf_path).name if p.contract_pdf_path else None
-
         resultado.append(
-            {
-                "id": p.id,
-                "project_id": p.project_id,
-                "area": p.area,
-                "valor_base": p.valor_base,
-                "valor_art": p.valor_art,
-                "extras": p.extras,
-                "total": p.total,
-                "pdf_url": (
-                    f"/api/files/pdf?path=propostas/project_{p.project_id}/{proposta_filename}"
-                    if proposta_filename
-                    else None
-                ),
-                "contract_url": (
-                    f"/api/files/pdf?path=propostas/project_{p.project_id}/{contrato_filename}"
-                    if contrato_filename
-                    else None
-                ),
-                "created_at": p.created_at,
-            }
+            ProposalOut(
+                id=p.id,
+                project_id=p.project_id,
+                area=p.area,
+                valor_base=p.valor_base,
+                valor_art=p.valor_art,
+                extras=p.extras,
+                total=p.total,
+                pdf_path=p.pdf_path,
+                contract_pdf_path=p.contract_pdf_path,
+                created_at=p.created_at,
+            )
         )
 
     return resultado
