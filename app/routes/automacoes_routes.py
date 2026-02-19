@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from uuid import UUID
 from pathlib import Path
+from typing import Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -21,12 +23,67 @@ router = APIRouter(prefix="/automacoes")
 
 
 # =========================================================
-# 🔐 CREDENCIAIS — RI DIGITAL
+# Schemas (Pydantic) — PROFISSIONAL / PRODUÇÃO
+# =========================================================
+class RiDigitalCredenciaisPayload(BaseModel):
+    login: str = Field(..., min_length=3)
+    senha: str = Field(..., min_length=1)
+
+
+class RiDigitalJobPayload(BaseModel):
+    data_inicio: str = Field(..., description="YYYY-MM-DD")
+    data_fim: str = Field(..., description="YYYY-MM-DD")
+    project_id: Optional[int] = None
+    usar_credencial_salva: bool = True
+    login: Optional[str] = None
+    senha: Optional[str] = None
+
+
+class OnrConsultaPayload(BaseModel):
+    project_id: int
+    modo: str
+    valor: str
+
+
+def _serialize_job(job: AutomationJob, resultados: list[AutomationResult] | None = None) -> dict[str, Any]:
+    """
+    Serialização segura para o frontend (evita problemas com JSON/UUID/datetime).
+    """
+    return {
+        "id": str(job.id),
+        "user_id": job.user_id,
+        "project_id": job.project_id,
+        "type": job.type,
+        "status": job.status,
+        "payload_json": job.payload_json,
+        "created_at": job.created_at.isoformat() if getattr(job, "created_at", None) else None,
+        "started_at": job.started_at.isoformat() if getattr(job, "started_at", None) else None,
+        "finished_at": job.finished_at.isoformat() if getattr(job, "finished_at", None) else None,
+        "error_message": job.error_message,
+        "resultados": [
+            {
+                "id": str(r.id),
+                "job_id": str(r.job_id),
+                "protocolo": r.protocolo,
+                "matricula": r.matricula,
+                "cnm": r.cnm,
+                "cartorio": r.cartorio,
+                "data_pedido": r.data_pedido.isoformat() if getattr(r, "data_pedido", None) else None,
+                "file_path": r.file_path,
+                "metadata_json": getattr(r, "metadata_json", None),
+                "created_at": r.created_at.isoformat() if getattr(r, "created_at", None) else None,
+            }
+            for r in (resultados or [])
+        ],
+    }
+
+
+# =========================================================
+# 🔐 CREDENCIAIS — RI DIGITAL (JSON BODY)
 # =========================================================
 @router.post("/credenciais/ri-digital")
 def salvar_credenciais_ri_digital(
-    login: str,
-    senha: str,
+    payload: RiDigitalCredenciaisPayload = Body(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -40,15 +97,15 @@ def salvar_credenciais_ri_digital(
     )
 
     if cred:
-        cred.login = login
-        cred.password_encrypted = senha
+        cred.login = payload.login
+        cred.password_encrypted = payload.senha
         cred.active = True
     else:
         cred = ExternalCredential(
             user_id=user.id,
             provider="RI_DIGITAL",
-            login=login,
-            password_encrypted=senha,
+            login=payload.login,
+            password_encrypted=payload.senha,
             active=True,
         )
         db.add(cred)
@@ -57,7 +114,7 @@ def salvar_credenciais_ri_digital(
 
     return {
         "provider": "RI_DIGITAL",
-        "login": login[:3] + "***",
+        "login": payload.login[:3] + "***",
         "active": True,
     }
 
@@ -82,7 +139,7 @@ def obter_credenciais_ri_digital(
 
     return {
         "exists": True,
-        "login": cred.login[:3] + "***",
+        "login": (cred.login[:3] + "***") if cred.login else "***",
         "active": cred.active,
     }
 
@@ -109,19 +166,36 @@ def remover_credenciais_ri_digital(
 
 
 # =========================================================
-# 🤖 JOB — RI DIGITAL (MATRÍCULAS)
+# 🤖 JOB — RI DIGITAL (ACEITA JSON e TAMBÉM QUERY PARAMS)
 # =========================================================
 @router.post("/ri-digital/matriculas/jobs")
 def criar_job_consulta_matriculas(
-    data_inicio: str,
-    data_fim: str,
-    project_id: int | None = None,
+    # ✅ Compatibilidade: se vier JSON, usa payload. Se não vier, usa query params.
+    payload: Optional[RiDigitalJobPayload] = Body(None),
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    project_id: Optional[int] = None,
     usar_credencial_salva: bool = True,
-    login: str | None = None,
-    senha: str | None = None,
+    login: Optional[str] = None,
+    senha: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # Normaliza entrada (JSON > query)
+    if payload:
+        data_inicio = payload.data_inicio
+        data_fim = payload.data_fim
+        project_id = payload.project_id
+        usar_credencial_salva = payload.usar_credencial_salva
+        login = payload.login
+        senha = payload.senha
+
+    if not data_inicio or not data_fim:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="data_inicio e data_fim são obrigatórios",
+        )
+
     if usar_credencial_salva:
         cred = (
             db.query(ExternalCredential)
@@ -160,7 +234,6 @@ def criar_job_consulta_matriculas(
     db.commit()
     db.refresh(job)
 
-    # 🧠 Timeline (se houver projeto)
     if project_id:
         TimelineService.registrar_evento(
             db=db,
@@ -174,35 +247,46 @@ def criar_job_consulta_matriculas(
 
 
 # =========================================================
-# 🤖 JOB — ONR / SIG-RI (CONSULTA)
+# 🤖 JOB — ONR / SIG-RI (JSON BODY PROFISSIONAL)
 # =========================================================
 @router.post("/onr/consulta/jobs")
 def criar_job_onr_consulta(
-    project_id: int,
-    modo: str,
-    valor: str,
+    payload: OnrConsultaPayload,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     project = (
         db.query(Project)
-        .filter(Project.id == project_id, Project.owner_id == user.id)
+        .filter(
+            Project.id == payload.project_id,
+            Project.owner_id == user.id,
+        )
         .first()
     )
+
     if not project:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou acesso negado")
+        raise HTTPException(
+            status_code=404,
+            detail="Projeto não encontrado ou acesso negado",
+        )
 
-    modo_norm = (modo or "").upper().strip()
+    modo_norm = (payload.modo or "").upper().strip()
     if modo_norm not in {"CAR", "ENDERECO"}:
-        raise HTTPException(status_code=400, detail="Modo inválido. Use CAR ou ENDERECO")
+        raise HTTPException(
+            status_code=400,
+            detail="Modo inválido. Use CAR ou ENDERECO",
+        )
 
-    valor_norm = (valor or "").strip()
+    valor_norm = (payload.valor or "").strip()
     if len(valor_norm) < 3:
-        raise HTTPException(status_code=400, detail="Valor inválido para consulta")
+        raise HTTPException(
+            status_code=400,
+            detail="Valor inválido para consulta",
+        )
 
     job = AutomationJob(
         user_id=user.id,
-        project_id=project_id,
+        project_id=payload.project_id,
         type="ONR_SIGRI_CONSULTA",
         status="PENDING",
         payload_json={
@@ -215,10 +299,9 @@ def criar_job_onr_consulta(
     db.commit()
     db.refresh(job)
 
-    # 🧠 Timeline
     TimelineService.registrar_evento(
         db=db,
-        project_id=project_id,
+        project_id=payload.project_id,
         titulo="Automação ONR / SIG-RI",
         descricao=f"Consulta por {modo_norm}: {valor_norm}",
         status="Pendente",
@@ -228,7 +311,7 @@ def criar_job_onr_consulta(
 
 
 # =========================================================
-# 📋 JOBS — LISTAGEM E DETALHE
+# 📋 JOBS — LISTAGEM (JÁ VEM COM RESULTADOS)
 # =========================================================
 @router.get("/jobs")
 def listar_jobs(
@@ -239,9 +322,29 @@ def listar_jobs(
     q = db.query(AutomationJob).filter(AutomationJob.user_id == user.id)
     if type:
         q = q.filter(AutomationJob.type == type)
-    return q.order_by(AutomationJob.created_at.desc()).all()
+
+    jobs = q.order_by(AutomationJob.created_at.desc()).all()
+
+    # ✅ Embute resultados para o frontend (job.resultados existir)
+    job_ids = [j.id for j in jobs]
+    results_map: dict[UUID, list[AutomationResult]] = {jid: [] for jid in job_ids}
+
+    if job_ids:
+        results = (
+            db.query(AutomationResult)
+            .filter(AutomationResult.job_id.in_(job_ids))
+            .order_by(AutomationResult.created_at.desc())
+            .all()
+        )
+        for r in results:
+            results_map.setdefault(r.job_id, []).append(r)
+
+    return [_serialize_job(j, results_map.get(j.id, [])) for j in jobs]
 
 
+# =========================================================
+# 📋 JOB — DETALHE (COM RESULTADOS)
+# =========================================================
 @router.get("/jobs/{job_id}")
 def detalhe_job(
     job_id: UUID,
@@ -267,7 +370,7 @@ def detalhe_job(
         .all()
     )
 
-    return {"job": job, "resultados": resultados}
+    return _serialize_job(job, resultados)
 
 
 # =========================================================
@@ -292,14 +395,18 @@ def download_resultado(
     if not result:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
+    if not result.file_path:
+        raise HTTPException(status_code=404, detail="Resultado não possui arquivo")
+
     file_path = Path(result.file_path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")
 
+    suffix = file_path.suffix.lower()
     media_type = "application/octet-stream"
-    if file_path.suffix.lower() == ".pdf":
+    if suffix == ".pdf":
         media_type = "application/pdf"
-    elif file_path.suffix.lower() == ".kmz":
+    elif suffix == ".kmz":
         media_type = "application/vnd.google-earth.kmz"
 
     return FileResponse(
