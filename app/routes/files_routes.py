@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
 
-from app.core.deps import get_db
+from app.core.deps import get_db, get_current_user_required
 from app.models.document import Document
 from app.models.project import Project
 from app.models.user import User
