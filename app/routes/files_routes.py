@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
 
-from app.core.deps import get_db, get_current_user_required
+from app.core.deps import get_db
 from app.models.document import Document
 from app.models.project import Project
 from app.models.user import User
@@ -15,7 +15,7 @@ BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
 
 
 # =========================================================
-# DOWNLOAD DE DOCUMENTOS DO PROJETO
+# DOWNLOAD DE DOCUMENTOS DO PROJETO (PROTEGIDO)
 # =========================================================
 @router.get("/documents/{document_id}")
 def download_document(
@@ -27,7 +27,6 @@ def download_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
 
-    # valida dono
     if doc.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
@@ -44,38 +43,37 @@ def download_document(
 
 
 # =========================================================
-# DOWNLOAD DE PDF DE PROPOSTAS / CONTRATOS (PROTEGIDO)
+# DOWNLOAD DE PDF DE PROPOSTAS / CONTRATOS (PÚBLICO + SEGURO)
 # =========================================================
 @router.get("/pdf")
 def download_pdf(
     path: str = Query(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_required),
 ):
-    # protege contra path traversal
+    # 🔒 Normaliza e protege contra path traversal
     file_path = (BASE_UPLOAD_PATH / path).resolve()
 
     if not str(file_path).startswith(str(BASE_UPLOAD_PATH)):
-        raise HTTPException(status_code=403, detail="Acesso inválido")
+        raise HTTPException(status_code=403, detail="Caminho inválido")
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
-    # ✅ Proteção multiusuário: exige que PDF esteja dentro de /propostas/project_{id}/...
+    # 🔒 Exige estrutura: propostas/project_{id}/arquivo.pdf
     parts = Path(path).parts
-    # esperado: ("propostas", "project_{id}", "arquivo.pdf")
-    if len(parts) < 3 or parts[0] != "propostas" or not str(parts[1]).startswith("project_"):
+    if len(parts) < 3 or parts[0] != "propostas" or not parts[1].startswith("project_"):
         raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
 
-    project_id_str = str(parts[1]).replace("project_", "").strip()
+    project_id_str = parts[1].replace("project_", "")
     if not project_id_str.isdigit():
         raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
 
     project_id = int(project_id_str)
 
+    # 🔒 Garante que o projeto existe
     project = db.query(Project).filter(Project.id == project_id).first()
-    if not project or project.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Acesso negado")
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
     return FileResponse(
         path=str(file_path),
