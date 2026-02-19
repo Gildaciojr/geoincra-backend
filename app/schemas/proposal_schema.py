@@ -10,7 +10,12 @@ class ProposalCreate(BaseModel):
     valor_art: float
     extras: float
     total: float
+
     html_proposta: str
     html_contrato: str
+
+    # 🔒 paths internos (storage)
     pdf_path: Optional[str] = None
     contract_pdf_path: Optional[str] = None
+
+    created_at: Optional[datetime] = None
