@@ -20,7 +20,7 @@ class AutomationResult(Base):
     data_pedido = Column(Date, nullable=True)
 
     # Arquivo principal salvo (PDF RI Digital / KMZ ONR)
-    file_path = Column(Text, nullable=False)
+    file_path = Column(Text, nullable=True)
 
     # ONR/SIG-RI: dados oficiais do modal aqui
     metadata_json = Column(JSONB, nullable=True)
