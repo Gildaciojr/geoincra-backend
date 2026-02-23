@@ -271,7 +271,7 @@ def criar_job_onr_consulta(
         )
 
     modo_norm = (payload.modo or "").upper().strip()
-    if modo_norm not in {"CAR", "ENDERECO"}:
+    if modo_norm not in {"CAR", "ENDERECO", "LAT_LNG"}:
         raise HTTPException(
             status_code=400,
             detail="Modo inválido. Use CAR ou ENDERECO",
