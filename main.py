@@ -149,6 +149,9 @@ from app.routes.imovel_routes import router as imovel_router
 from app.routes.matricula_routes import router as matricula_router
 
 from app.routes.requerimentos_routes import router as requerimentos_router
+from app.routes.requerimentos_user_routes import (
+    router as requerimentos_user_router
+)
 from app.routes.document_routes import router as document_router
 from app.routes.documento_tecnico_routes import router as documento_tecnico_router
 from app.routes.documento_tecnico_checklist_routes import (
@@ -246,6 +249,12 @@ app.include_router(profissional_avaliacao_router, prefix="/api", tags=["Avaliaç
 app.include_router(profissional_ranking_router, prefix="/api", tags=["Ranking Profissional"])
 
 app.include_router(requerimentos_router, prefix="/api", tags=["Requerimentos"])
+
+app.include_router(
+    requerimentos_user_router,
+    prefix="/api",
+    tags=["Requerimentos (Usuário)"],
+)
 app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
 
