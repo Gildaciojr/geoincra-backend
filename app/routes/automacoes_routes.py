@@ -245,6 +245,83 @@ def criar_job_consulta_matriculas(
 
     return {"job_id": str(job.id), "status": job.status}
 
+# =========================================================
+# 🤖 JOB — RI DIGITAL SOLICITAR CERTIDÃO
+# =========================================================
+class RiDigitalSolicitarCertidaoPayload(BaseModel):
+    project_id: int
+    cidade: str
+    cartorio: str
+    matricula: str
+    finalidade: int
+
+
+@router.post("/ri-digital/solicitar/jobs")
+def criar_job_solicitar_certidao(
+    payload: RiDigitalSolicitarCertidaoPayload,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == payload.project_id,
+            Project.owner_id == user.id,
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail="Projeto não encontrado ou acesso negado",
+        )
+
+    cred = (
+        db.query(ExternalCredential)
+        .filter(
+            ExternalCredential.user_id == user.id,
+            ExternalCredential.provider == "RI_DIGITAL",
+            ExternalCredential.active.is_(True),
+        )
+        .first()
+    )
+
+    if not cred:
+        raise HTTPException(
+            status_code=400,
+            detail="Credenciais do RI Digital não encontradas",
+        )
+
+    job = AutomationJob(
+        user_id=user.id,
+        project_id=payload.project_id,
+        type="RI_DIGITAL_SOLICITAR_CERTIDAO",
+        status="PENDING",
+        payload_json={
+            "cidade": payload.cidade,
+            "cartorio": payload.cartorio,
+            "matricula": payload.matricula,
+            "finalidade": payload.finalidade,
+        },
+    )
+
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    TimelineService.registrar_evento(
+        db=db,
+        project_id=payload.project_id,
+        titulo="Automação RI Digital — Solicitação de Certidão",
+        descricao=f"Matrícula {payload.matricula} — {payload.cartorio}",
+        status="Pendente",
+    )
+
+    return {
+        "job_id": str(job.id),
+        "status": job.status,
+    }
 
 # =========================================================
 # 🤖 JOB — ONR / SIG-RI (JSON BODY PROFISSIONAL)

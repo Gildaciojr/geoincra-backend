@@ -7,6 +7,7 @@ from app.models.proprietario import Proprietario
 
 from app.schemas.project_status import ProjectStatusCreate
 from app.crud.project_status_crud import definir_status_projeto
+from app.services.project_structure_service import create_project_structure
 
 
 def create_project(db: Session, payload: ProjectCreate, owner_id: int):
@@ -31,6 +32,11 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: int):
 
         db.add(project)
         db.flush()
+
+        # ===================================
+        # 📁 ESTRUTURA DE PASTAS DO PROJETO
+        # ===================================
+        create_project_structure(project.id)
 
         # ===================================
         # 2️⃣ IMÓVEL
