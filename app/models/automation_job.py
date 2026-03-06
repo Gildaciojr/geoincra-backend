@@ -12,6 +12,8 @@ from app.core.database import Base
 AutomationTypeEnum = SAEnum(
     "RI_DIGITAL_MATRICULA",
     "ONR_SIGRI_CONSULTA",
+    "RI_DIGITAL_SOLICITAR_CERTIDAO",
+    "OCR_DOCUMENT",
     name="automation_type",
     native_enum=True,
     create_type=False,
