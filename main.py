@@ -190,6 +190,9 @@ from app.routes.audit_log_routes import router as audit_log_router
 from app.routes.sigef_export_routes import router as sigef_export_router
 from app.routes.map_routes import router as map_router
 
+from app.routes.sigef_ods_routes import router as sigef_ods_router
+from app.routes.cad_export_routes import router as cad_export_router
+
 from app.routes.template_routes import router as template_router
 from app.routes.automacoes_routes import router as automacoes_router
 
@@ -257,6 +260,9 @@ app.include_router(
 )
 app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
+
+app.include_router(sigef_ods_router, prefix="/api", tags=["SIGEF ODS"])
+app.include_router(cad_export_router, prefix="/api", tags=["CAD"])
 
 app.include_router(template_router, prefix="/api", tags=["Templates"])
 app.include_router(automacoes_router, prefix="/api", tags=["Automações"])

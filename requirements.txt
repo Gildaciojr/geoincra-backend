@@ -24,6 +24,13 @@ mercadopago
 # ==============================
 shapely
 pyproj
-# fiona        # habilitar quando usar arquivos SIGEF/SHP
-# geopandas    # habilitar para análises espaciais avançadas
-# rtree        # habilitar se precisar de indexação espacial
+
+# SIGEF / Planilhas
+odfpy
+
+# CAD (opcional futuro)
+# ezdxf
+
+# fiona
+# geopandas
+# rtree
