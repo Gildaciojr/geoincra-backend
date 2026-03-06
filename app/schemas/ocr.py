@@ -5,7 +5,8 @@ from typing import Optional
 
 class OcrRequest(BaseModel):
     document_id: int
-    provider: str = "NONE"
+    provider: str = "GOOGLE"
+    prompt_id: Optional[int] = None
 
 
 class OcrResponse(BaseModel):

@@ -8,6 +8,7 @@ from app.schemas.ocr import OcrRequest, OcrResponse
 from app.services.ocr_service import OcrService
 from app.crud.ocr_crud import get_ocr_result, list_ocr_by_document
 from app.crud.document_crud import get_document
+from app.crud.ocr_prompt_crud import list_active_prompts
 
 router = APIRouter()
 
@@ -28,7 +29,12 @@ def iniciar_ocr(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
+    if not payload.prompt_id:
+        raise HTTPException(status_code=400, detail="Prompt OCR não informado.")
+
     doc = get_document(db, payload.document_id)
+
     if not doc:
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
@@ -37,6 +43,8 @@ def iniciar_ocr(
     return OcrService.iniciar_ocr(
         db=db,
         document_id=payload.document_id,
+        user_id=current_user.id,
+        prompt_id=payload.prompt_id,
         provider=payload.provider,
     )
 
@@ -67,3 +75,10 @@ def list_ocr_document(
 
     _check_project_owner(db, doc.project_id, current_user.id)
     return list_ocr_by_document(db, document_id)
+
+@router.get("/ocr/prompts")
+def list_prompts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return list_active_prompts(db)
