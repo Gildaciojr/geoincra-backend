@@ -323,6 +323,89 @@ def criar_job_solicitar_certidao(
         "status": job.status,
     }
 
+
+# =========================================================
+# 🤖 JOB — RI DIGITAL CONSULTAR CERTIDÃO
+# =========================================================
+class RiDigitalConsultarCertidaoPayload(BaseModel):
+    project_id: int
+    protocolo: Optional[str] = None
+    data: Optional[str] = None
+
+
+@router.post("/ri-digital/consultar/jobs")
+def criar_job_consultar_certidao(
+    payload: RiDigitalConsultarCertidaoPayload,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == payload.project_id,
+            Project.owner_id == user.id,
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail="Projeto não encontrado ou acesso negado",
+        )
+
+    if not payload.protocolo and not payload.data:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe protocolo ou data para consulta",
+        )
+
+    cred = (
+        db.query(ExternalCredential)
+        .filter(
+            ExternalCredential.user_id == user.id,
+            ExternalCredential.provider == "RI_DIGITAL",
+            ExternalCredential.active.is_(True),
+        )
+        .first()
+    )
+
+    if not cred:
+        raise HTTPException(
+            status_code=400,
+            detail="Credenciais do RI Digital não encontradas",
+        )
+
+    job = AutomationJob(
+        user_id=user.id,
+        project_id=payload.project_id,
+        type="RI_DIGITAL_CONSULTAR_CERTIDAO",
+        status="PENDING",
+        payload_json={
+            "protocolo": payload.protocolo,
+            "data": payload.data,
+        },
+    )
+
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    TimelineService.registrar_evento(
+        db=db,
+        project_id=payload.project_id,
+        titulo="Automação RI Digital — Consulta de Certidão",
+        descricao=f"Consulta protocolo {payload.protocolo or 'por data'}",
+        status="Pendente",
+    )
+
+    return {
+        "job_id": str(job.id),
+        "status": job.status,
+    }
+
+
 # =========================================================
 # 🤖 JOB — ONR / SIG-RI (JSON BODY PROFISSIONAL)
 # =========================================================
@@ -397,12 +480,12 @@ def listar_jobs(
     type: str | None = Query(None),
 ):
     q = db.query(AutomationJob).filter(AutomationJob.user_id == user.id)
+
     if type:
         q = q.filter(AutomationJob.type == type)
 
     jobs = q.order_by(AutomationJob.created_at.desc()).all()
 
-    # ✅ Embute resultados para o frontend (job.resultados existir)
     job_ids = [j.id for j in jobs]
     results_map: dict[UUID, list[AutomationResult]] = {jid: [] for jid in job_ids}
 
@@ -413,6 +496,7 @@ def listar_jobs(
             .order_by(AutomationResult.created_at.desc())
             .all()
         )
+
         for r in results:
             results_map.setdefault(r.job_id, []).append(r)
 
@@ -476,13 +560,16 @@ def download_resultado(
         raise HTTPException(status_code=404, detail="Resultado não possui arquivo")
 
     file_path = Path(result.file_path)
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")
 
     suffix = file_path.suffix.lower()
     media_type = "application/octet-stream"
+
     if suffix == ".pdf":
         media_type = "application/pdf"
+
     elif suffix == ".kmz":
         media_type = "application/vnd.google-earth.kmz"
 
