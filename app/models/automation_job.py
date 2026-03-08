@@ -13,6 +13,7 @@ AutomationTypeEnum = SAEnum(
     "RI_DIGITAL_MATRICULA",
     "ONR_SIGRI_CONSULTA",
     "RI_DIGITAL_SOLICITAR_CERTIDAO",
+    "RI_DIGITAL_CONSULTAR_CERTIDAO",
     "OCR_DOCUMENT",
     name="automation_type",
     native_enum=True,
