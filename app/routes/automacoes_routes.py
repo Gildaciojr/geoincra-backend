@@ -331,6 +331,7 @@ class RiDigitalConsultarCertidaoPayload(BaseModel):
     project_id: int
     protocolo: Optional[str] = None
     data: Optional[str] = None
+    status: Optional[str] = None
 
 
 @router.post("/ri-digital/consultar/jobs")
@@ -385,6 +386,7 @@ def criar_job_consultar_certidao(
         payload_json={
             "protocolo": payload.protocolo,
             "data": payload.data,
+            "status": payload.status,
         },
     )
 
