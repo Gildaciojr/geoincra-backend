@@ -5,10 +5,30 @@ from app.models.requerimento_campo import RequerimentoCampo
 
 
 # =========================================================
+# LISTAR POR USUÁRIO
+# =========================================================
+
+def list_by_user(
+    db: Session,
+    user_id: int,
+):
+
+    return (
+        db.query(RequerimentoCampo)
+        .filter(RequerimentoCampo.user_id == user_id)
+        .order_by(RequerimentoCampo.updated_at.desc())
+        .all()
+    )
+
+
+# =========================================================
 # LISTAR POR PROJETO
 # =========================================================
 
-def list_by_project(db: Session, project_id: int):
+def list_by_project(
+    db: Session,
+    project_id: int,
+):
 
     return (
         db.query(RequerimentoCampo)
