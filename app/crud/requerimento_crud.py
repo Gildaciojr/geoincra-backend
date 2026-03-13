@@ -59,6 +59,35 @@ def get_by_project_and_tipo(
 
 
 # =========================================================
+# ATTACH REQUERIMENTO A UM PROJETO
+# =========================================================
+
+def attach_to_project(
+    db: Session,
+    *,
+    requerimento_id: int,
+    project_id: int,
+):
+
+    obj = (
+        db.query(RequerimentoCampo)
+        .filter(RequerimentoCampo.id == requerimento_id)
+        .first()
+    )
+
+    if not obj:
+        return None
+
+    obj.project_id = project_id
+    obj.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(obj)
+
+    return obj
+
+
+# =========================================================
 # UPSERT POR PROJETO
 # =========================================================
 
