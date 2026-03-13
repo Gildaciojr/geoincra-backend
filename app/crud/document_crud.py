@@ -36,6 +36,9 @@ def list_documents_by_project(db: Session, project_id: int) -> list[Document]:
     )
 
 
+BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
+
+
 def delete_document(db: Session, document_id: int) -> bool:
     doc = get_document(db, document_id)
     if not doc:
@@ -44,9 +47,15 @@ def delete_document(db: Session, document_id: int) -> bool:
     # 🔥 REMOVE ARQUIVO FÍSICO
     try:
         if doc.file_path:
-            file_path = Path(doc.file_path)
-            if file_path.exists():
-                file_path.unlink()
+
+            file_path = (BASE_UPLOAD_PATH / doc.file_path).resolve()
+
+            # proteção contra path traversal
+            if str(file_path).startswith(str(BASE_UPLOAD_PATH)):
+
+                if file_path.exists():
+                    file_path.unlink()
+
     except Exception:
         # não interrompe delete se falhar exclusão física
         pass

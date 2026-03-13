@@ -1,50 +1,63 @@
 from pathlib import Path
 
-BASE_PROJECT_PATH = Path("/app/app/uploads/projects")
+# =========================================================
+# BASE DO STORAGE
+# =========================================================
+BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
+
+PROJECTS_ROOT = BASE_UPLOAD_PATH / "projects"
 
 
+# =========================================================
+# CRIAR ESTRUTURA DE PASTAS DO PROJETO
+# =========================================================
 def create_project_structure(project_id: int):
 
-    root = BASE_PROJECT_PATH / f"project_{project_id}"
+    root = PROJECTS_ROOT / f"project_{project_id}"
 
     folders = [
 
         # =================================================
-        # DADOS DO IMÓVEL GEOREFERENCIADO
+        # 1️⃣ DADOS DO IMÓVEL GEOREFERENCIADO
         # =================================================
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/DOCUMENTOS",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/PESSOAIS_PROPRIETARIO",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/CERTIDOES",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/MAPAS",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/CCIR",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/CAR",
-        "DADOS_DO_IMOVEL_GEOREFERENCIADO/ITR",
+        "1_dados_imovel_georreferenciado/documentos",
+        "1_dados_imovel_georreferenciado/pessoais_proprietario",
+        "1_dados_imovel_georreferenciado/certidoes",
+        "1_dados_imovel_georreferenciado/mapas",
+        "1_dados_imovel_georreferenciado/ccir",
+        "1_dados_imovel_georreferenciado/car",
+        "1_dados_imovel_georreferenciado/itr",
 
         # =================================================
-        # CONFRONTANTES
+        # 2️⃣ CONFRONTANTES
         # =================================================
-        "DADOS_IMOVEIS_CONFRONTANTES/IMOVEL_01/DOCUMENTOS",
-        "DADOS_IMOVEIS_CONFRONTANTES/IMOVEL_01/PESSOAIS_PROPRIETARIO",
-        "DADOS_IMOVEIS_CONFRONTANTES/IMOVEL_01/CERTIDOES",
-        "DADOS_IMOVEIS_CONFRONTANTES/IMOVEL_01/MAPAS",
+        "2_dados_imoveis_confrontantes/imovel_01",
+        "2_dados_imoveis_confrontantes/imovel_02",
+        "2_dados_imoveis_confrontantes/imovel_03",
+        "2_dados_imoveis_confrontantes/imovel_04",
 
         # =================================================
-        # CONTRATANTE
+        # 3️⃣ CONTRATANTE
         # =================================================
-        "CONTRATANTE",
+        "3_contratante",
 
         # =================================================
-        # PEÇAS TÉCNICAS
+        # 4️⃣ PEÇAS TÉCNICAS
         # =================================================
-        "PECAS_TECNICAS/ART",
-        "PECAS_TECNICAS/MAPAS_CERTIFICADOS",
+        "4_pecas_tecnicas/art",
+        "4_pecas_tecnicas/mapas",
+        "4_pecas_tecnicas/requerimentos",
 
         # =================================================
-        # OUTROS
+        # 5️⃣ DOCUMENTOS PROCESSADOS (IA / OCR)
         # =================================================
-        "OUTROS/REQUERIMENTOS",
+        "5_documentos_processados",
     ]
 
+    # garante raiz
+    root.mkdir(parents=True, exist_ok=True)
+
+    # cria subpastas
     for folder in folders:
         path = root / folder
         path.mkdir(parents=True, exist_ok=True)

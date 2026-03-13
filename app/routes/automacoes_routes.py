@@ -561,7 +561,9 @@ def download_resultado(
     if not result.file_path:
         raise HTTPException(status_code=404, detail="Resultado não possui arquivo")
 
-    file_path = Path(result.file_path)
+    BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
+
+    file_path = (BASE_UPLOAD_PATH / result.file_path).resolve()
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")

@@ -13,7 +13,7 @@ class RequerimentoUpsert(BaseModel):
 
 class RequerimentoOut(BaseModel):
     id: int
-    project_id: int
+    project_id: int | None
     tipo: str
     template_id: int | None
     status: str

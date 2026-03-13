@@ -5,13 +5,13 @@ from pathlib import Path
 
 from app.core.deps import get_db
 from app.models.geometria import Geometria
-from app.services.cad_export_service import CadExportService
+from app.services.csv_export_service import CsvExportService
 
 router = APIRouter()
 
 
-@router.post("/cad/export/scr/{geometria_id}")
-def export_cad_scr(
+@router.post("/cad/export/csv/{geometria_id}")
+def export_csv(
     geometria_id: int,
     db: Session = Depends(get_db),
 ):
@@ -24,20 +24,20 @@ def export_cad_scr(
     if not geom.geojson:
         raise HTTPException(status_code=400, detail="Geometria sem GeoJSON")
 
-    scr = CadExportService.gerar_scr(geom.geojson)
+    csv = CsvExportService.gerar_csv(geom.geojson)
 
-    path = CadExportService.salvar_scr(
+    path = CsvExportService.salvar_csv(
         imovel_id=geom.imovel_id,
-        scr=scr,
+        csv=csv,
     )
 
     file_path = Path(path)
 
     if not file_path.exists():
-        raise HTTPException(status_code=500, detail="Erro ao gerar arquivo SCR")
+        raise HTTPException(status_code=500, detail="Erro ao gerar CSV")
 
     return FileResponse(
         path=file_path,
         filename=file_path.name,
-        media_type="text/plain"
+        media_type="text/csv"
     )

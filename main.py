@@ -46,6 +46,7 @@ import app.models.projeto_profissional
 import app.models.profissional_selecao
 import app.models.profissional_ranking
 import app.models.avaliacao_profissional
+import app.models.visita_tecnica
 
 import app.models.calculation_parameter
 import app.models.proposal
@@ -185,6 +186,9 @@ from app.routes.projeto_profissional_routes import router as projeto_profissiona
 from app.routes.profissional_selecao_routes import router as profissional_selecao_router
 from app.routes.profissional_avaliacao_routes import router as profissional_avaliacao_router
 from app.routes.profissional_ranking_routes import router as profissional_ranking_router
+from app.routes.visita_tecnica_routes import router as visita_tecnica_router
+from app.routes.memorial_parse_routes import router as memorial_parse_router
+from app.routes.csv_export_routes import router as csv_export_router
 
 from app.routes.audit_log_routes import router as audit_log_router
 from app.routes.sigef_export_routes import router as sigef_export_router
@@ -223,6 +227,8 @@ app.include_router(geometria_router, prefix="/api", tags=["Geometrias"])
 app.include_router(sobreposicao_router, prefix="/api", tags=["Sobreposição"])
 app.include_router(memorial_router, prefix="/api", tags=["Memorial"])
 app.include_router(croqui_router, prefix="/api", tags=["Croqui"])
+app.include_router(memorial_parse_router, prefix="/api", tags=["Memorial Parser"])
+app.include_router(csv_export_router, prefix="/api", tags=["CSV Export"])
 
 app.include_router(map_router, prefix="/api", tags=["Map"])
 
@@ -250,6 +256,11 @@ app.include_router(projeto_profissional_router, prefix="/api", tags=["Projeto �
 app.include_router(profissional_selecao_router, prefix="/api", tags=["Seleção Profissional"])
 app.include_router(profissional_avaliacao_router, prefix="/api", tags=["Avaliação Profissional"])
 app.include_router(profissional_ranking_router, prefix="/api", tags=["Ranking Profissional"])
+app.include_router(
+    visita_tecnica_router,
+    prefix="/api",
+    tags=["Visitas Técnicas"],
+)
 
 app.include_router(requerimentos_router, prefix="/api", tags=["Requerimentos"])
 

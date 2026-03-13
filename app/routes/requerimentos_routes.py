@@ -87,12 +87,13 @@ def upsert_one(
 
     obj = upsert_req(
         db=db,
-        project_id=project_id,
-        tipo=payload.tipo,
-        dados_json=payload.dados_json,
-        template_id=payload.template_id,
-        status=payload.status,
-    )
+     user_id=current_user.id,
+     project_id=project_id,
+     tipo=payload.tipo,
+     dados_json=payload.dados_json,
+     template_id=payload.template_id,
+     status=payload.status,
+)
     return obj
 
 
