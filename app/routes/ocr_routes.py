@@ -18,11 +18,27 @@ def _check_project_owner(db: Session, project_id: int, user_id: int):
         Project.id == project_id,
         Project.owner_id == user_id,
     ).first()
+
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
     return project
 
 
+# =========================================================
+# LISTAR PROMPTS OCR (IMPORTANTE: VIR ANTES DAS ROTAS COM { })
+# =========================================================
+@router.get("/ocr/prompts")
+def list_prompts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return list_active_prompts(db)
+
+
+# =========================================================
+# INICIAR OCR
+# =========================================================
 @router.post("/ocr", response_model=OcrResponse)
 def iniciar_ocr(
     payload: OcrRequest,
@@ -49,36 +65,41 @@ def iniciar_ocr(
     )
 
 
+# =========================================================
+# BUSCAR RESULTADO OCR
+# =========================================================
 @router.get("/ocr/{ocr_id}", response_model=OcrResponse)
 def get_ocr(
     ocr_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
     obj = get_ocr_result(db, ocr_id)
+
     if not obj:
         raise HTTPException(status_code=404, detail="OCR não encontrado.")
 
     _check_project_owner(db, obj.document.project_id, current_user.id)
+
     return obj
 
 
+# =========================================================
+# LISTAR OCR DE UM DOCUMENTO
+# =========================================================
 @router.get("/documents/{document_id}/ocr", response_model=list[OcrResponse])
 def list_ocr_document(
     document_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
     doc = get_document(db, document_id)
+
     if not doc:
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
     _check_project_owner(db, doc.project_id, current_user.id)
-    return list_ocr_by_document(db, document_id)
 
-@router.get("/ocr/prompts")
-def list_prompts(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return list_active_prompts(db)
+    return list_ocr_by_document(db, document_id)
