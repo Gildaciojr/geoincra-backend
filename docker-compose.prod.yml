@@ -35,3 +35,4 @@ services:
 volumes:
   geoincra_pgdata:
   geoincra_uploads:
+    external: true
