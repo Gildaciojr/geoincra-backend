@@ -8,6 +8,10 @@ from shapely.geometry import shape
 
 class CadExportService:
 
+    # =========================================================
+    # GERAR SCRIPT AUTOCAD
+    # =========================================================
+
     @staticmethod
     def gerar_scr(geojson: str):
 
@@ -25,6 +29,10 @@ class CadExportService:
         lines.append("C")
 
         return "\n".join(lines)
+
+    # =========================================================
+    # SALVAR SCRIPT
+    # =========================================================
 
     @staticmethod
     def salvar_scr(

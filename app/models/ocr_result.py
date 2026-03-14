@@ -1,6 +1,8 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
+
 from app.core.database import Base
 
 
@@ -29,16 +31,26 @@ class OcrResult(Base):
     )
 
     texto_extraido = Column(Text, nullable=True)
-    dados_extraidos_json = Column(Text, nullable=True)
+
+    # 🔥 agora JSON real no banco
+    dados_extraidos_json = Column(JSONB, nullable=True)
 
     erro = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False
+    )
+
     updated_at = Column(
         DateTime(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        nullable=False,
+        nullable=False
     )
 
-    document = relationship("Document", lazy="joined")
+    document = relationship(
+        "Document",
+        lazy="joined"
+    )
