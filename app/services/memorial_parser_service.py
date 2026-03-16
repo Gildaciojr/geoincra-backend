@@ -3,43 +3,42 @@
 from __future__ import annotations
 
 import re
-from math import sin, cos, radians
+from math import cos, radians, sin
+from typing import Any
+
 from shapely.geometry import Polygon
 
 
 class MemorialParserService:
     """
-    Parser de memorial descritivo capaz de interpretar:
+    Parser de memorial descritivo com suporte a:
 
-    - Rumo quadrantal:
-        Rumo N 45°00'00" E — Distância 120.50 m
+    - rumo quadrantal
+      Ex.: N 45°00'00" E
 
-    - Azimute direto:
-        Azimute 01°22'35" — Distância 495.50 m
+    - azimute direto
+      Ex.: 01°22'35"
 
-    Gera coordenadas relativas e retorna GeoJSON.
+    - linhas com distância em ponto ou vírgula
+
+    Retorna geometria relativa em GeoJSON.
     """
 
-    # ---------------------------------------------------------
-    # UTILIDADES
-    # ---------------------------------------------------------
-
     @staticmethod
-    def _dms_para_decimal(g: float, m: float, s: float) -> float:
-        return g + (m / 60) + (s / 3600)
-
-    # ---------------------------------------------------------
-    # RUMO -> AZIMUTE
-    # ---------------------------------------------------------
+    def _dms_para_decimal(
+        graus: float,
+        minutos: float,
+        segundos: float,
+    ) -> float:
+        return graus + (minutos / 60) + (segundos / 3600)
 
     @staticmethod
     def _rumo_para_azimute(rumo: str) -> float:
-
-        rumo = rumo.upper()
+        rumo_normalizado = " ".join(rumo.upper().strip().split())
 
         match = re.search(
             r"([NS])\s*(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?\s*([EW])",
-            rumo
+            rumo_normalizado,
         )
 
         if not match:
@@ -47,138 +46,156 @@ class MemorialParserService:
 
         ns, g, m, s, ew = match.groups()
 
-        g = float(g)
-        m = float(m)
-        s = float(s or 0)
+        graus = float(g)
+        minutos = float(m)
+        segundos = float(s or 0)
 
-        ang = MemorialParserService._dms_para_decimal(g, m, s)
+        angulo = MemorialParserService._dms_para_decimal(
+            graus,
+            minutos,
+            segundos,
+        )
 
         if ns == "N" and ew == "E":
-            az = ang
-        elif ns == "S" and ew == "E":
-            az = 180 - ang
-        elif ns == "S" and ew == "W":
-            az = 180 + ang
-        elif ns == "N" and ew == "W":
-            az = 360 - ang
-        else:
-            raise ValueError("Rumo inválido")
+            return angulo
+        if ns == "S" and ew == "E":
+            return 180 - angulo
+        if ns == "S" and ew == "W":
+            return 180 + angulo
+        if ns == "N" and ew == "W":
+            return 360 - angulo
 
-        return az
-
-    # ---------------------------------------------------------
-    # AZIMUTE DIRETO
-    # ---------------------------------------------------------
+        raise ValueError(f"Rumo inválido: {rumo}")
 
     @staticmethod
-    def _azimute_dms_para_decimal(az_str: str) -> float:
+    def _azimute_dms_para_decimal(azimute: str) -> float:
+        azimute_normalizado = " ".join(azimute.strip().split())
 
         match = re.search(
             r"(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?",
-            az_str
+            azimute_normalizado,
         )
 
         if not match:
-            raise ValueError(f"Azimute inválido: {az_str}")
+            raise ValueError(f"Azimute inválido: {azimute}")
 
         g, m, s = match.groups()
 
-        g = float(g)
-        m = float(m)
-        s = float(s or 0)
-
-        return MemorialParserService._dms_para_decimal(g, m, s)
-
-    # ---------------------------------------------------------
-    # EXTRAÇÃO DE SEGMENTOS
-    # ---------------------------------------------------------
+        return MemorialParserService._dms_para_decimal(
+            float(g),
+            float(m),
+            float(s or 0),
+        )
 
     @staticmethod
-    def extrair_segmentos(memorial_texto: str):
+    def _parse_distancia(valor: Any) -> float:
+        if isinstance(valor, (int, float)):
+            return float(valor)
 
-        segmentos = []
+        texto = str(valor).strip()
 
-        # -----------------------------
-        # RUMO + DISTANCIA
-        # -----------------------------
+        # remove milhar e padroniza decimal
+        texto = texto.replace(".", "").replace(",", ".")
+
+        return float(texto)
+
+    @staticmethod
+    def extrair_segmentos(memorial_texto: str) -> list[dict[str, Any]]:
+        """
+        Suporta padrões como:
+
+        - Rumo N 45°00'00" E — Distância 120,50
+        - Azimute 01°22'35" — Distância 495,50
+        - com azimute de 01°22'35", na distância de 495,50 metros
+        """
+        if not memorial_texto or not memorial_texto.strip():
+            raise ValueError("Memorial vazio")
+
+        segmentos: list[dict[str, Any]] = []
+
+        # -----------------------------------------------------
+        # PADRÃO 1: RUMO + DISTÂNCIA
+        # -----------------------------------------------------
 
         pattern_rumo = re.compile(
-            r"Rumo\s*(.*?)\s*[—-]\s*Dist[aâ]ncia\s*(\d+(?:[.,]\d+)?)",
+            r"Rumo\s*(.*?)\s*[—-]?\s*Dist[aâ]ncia\s*(\d+(?:[.,]\d+)?)",
             re.IGNORECASE,
         )
 
         for rumo, distancia in pattern_rumo.findall(memorial_texto):
-
-            distancia = float(distancia.replace(",", "."))
-
             az = MemorialParserService._rumo_para_azimute(rumo)
+            dist = MemorialParserService._parse_distancia(distancia)
 
-            segmentos.append({
-                "tipo": "rumo",
-                "rumo": rumo,
-                "azimute": az,
-                "distancia": distancia
-            })
+            segmentos.append(
+                {
+                    "tipo": "rumo",
+                    "rumo": rumo.strip(),
+                    "azimute": az,
+                    "distancia": dist,
+                }
+            )
 
-        # -----------------------------
-        # AZIMUTE + DISTANCIA
-        # -----------------------------
+        # -----------------------------------------------------
+        # PADRÃO 2: AZIMUTE + DISTÂNCIA
+        # -----------------------------------------------------
 
-        pattern_az = re.compile(
-            r"Azimute\s*(.*?)\s*[—-]\s*Dist[aâ]ncia\s*(\d+(?:[.,]\d+)?)",
-            re.IGNORECASE,
+        pattern_azimute_livre = re.compile(
+            r"azimute\s*(?:de)?\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
+            r".{0,40}?"
+            r"dist[âa]ncia\s*(?:de)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
         )
 
-        for az_str, distancia in pattern_az.findall(memorial_texto):
-
-            distancia = float(distancia.replace(",", "."))
-
+        for az_str, distancia in pattern_azimute_livre.findall(memorial_texto):
             az = MemorialParserService._azimute_dms_para_decimal(az_str)
+            dist = MemorialParserService._parse_distancia(distancia)
 
-            segmentos.append({
-                "tipo": "azimute",
-                "azimute": az,
-                "distancia": distancia
-            })
+            segmentos.append(
+                {
+                    "tipo": "azimute",
+                    "rumo": az_str.strip(),
+                    "azimute": az,
+                    "distancia": dist,
+                }
+            )
 
         if not segmentos:
-            raise ValueError("Nenhum segmento reconhecido no memorial")
+            raise ValueError("Nenhum segmento encontrado no memorial")
 
         return segmentos
 
-    # ---------------------------------------------------------
-    # GEOMETRIA
-    # ---------------------------------------------------------
-
     @staticmethod
-    def gerar_geometria(memorial_texto: str):
-
+    def gerar_geometria(memorial_texto: str) -> dict[str, Any]:
         segmentos = MemorialParserService.extrair_segmentos(memorial_texto)
 
         x = 0.0
         y = 0.0
-
-        coords = [(x, y)]
+        coords: list[tuple[float, float]] = [(x, y)]
 
         for seg in segmentos:
+            az = radians(float(seg["azimute"]))
 
-            az = radians(seg["azimute"])
-
-            dx = seg["distancia"] * sin(az)
-            dy = seg["distancia"] * cos(az)
+            dx = float(seg["distancia"]) * sin(az)
+            dy = float(seg["distancia"]) * cos(az)
 
             x += dx
             y += dy
 
             coords.append((x, y))
 
+        if len(coords) < 4:
+            raise ValueError("Quantidade insuficiente de vértices para polígono")
+
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
         poly = Polygon(coords)
 
-        if not poly.is_valid:
+        if poly.is_empty or not poly.is_valid:
             raise ValueError("Geometria inválida gerada do memorial")
 
         return {
             "geojson": poly.__geo_interface__,
             "coords": coords,
-            "segmentos": segmentos
+            "segmentos": segmentos,
         }
