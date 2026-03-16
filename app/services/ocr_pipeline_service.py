@@ -19,35 +19,10 @@ from app.crud.sigef_export_crud import exportar_sigef_csv
 from app.services.memorial_service import MemorialService
 from app.services.croqui_service import CroquiService
 from app.services.cad_export_service import CadExportService
+from app.services.memorial_parser_service import MemorialParserService
 
 
 class OcrPipelineService:
-    """
-    Pipeline pós-OCR responsável por transformar dados estruturados
-    em entidades técnicas do sistema.
-
-    Fluxo completo:
-
-    OCR
-      ↓
-    Interpretação OpenAI
-      ↓
-    Matrícula
-      ↓
-    Geometria
-      ↓
-    Memorial Descritivo
-      ↓
-    Croqui SVG
-      ↓
-    Script CAD
-      ↓
-    Planilha SIGEF
-    """
-
-    # =========================================================
-    # ENTRYPOINT
-    # =========================================================
 
     @staticmethod
     def executar_pipeline(
@@ -79,9 +54,9 @@ class OcrPipelineService:
 
         return None
 
-    # =========================================================
+    # -----------------------------------------------------
     # PIPELINE MATRÍCULA
-    # =========================================================
+    # -----------------------------------------------------
 
     @staticmethod
     def _pipeline_matricula(
@@ -92,18 +67,10 @@ class OcrPipelineService:
 
         print(f"🔎 Iniciando pipeline de matrícula para documento {document_id}")
 
-        # -----------------------------------------------------
-        # DOCUMENTO
-        # -----------------------------------------------------
-
         doc = db.query(Document).filter(Document.id == document_id).first()
 
         if not doc:
             raise Exception("Documento não encontrado")
-
-        # -----------------------------------------------------
-        # IMÓVEL DO PROJETO
-        # -----------------------------------------------------
 
         imovel: Optional[Imovel] = (
             db.query(Imovel)
@@ -114,9 +81,9 @@ class OcrPipelineService:
         if not imovel:
             raise Exception("Projeto não possui imóvel cadastrado")
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # MATRÍCULA
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         numero_matricula = (
             dados.get("numero_matricula")
@@ -151,32 +118,37 @@ class OcrPipelineService:
 
                 print(f"✅ Matrícula criada: {numero_matricula}")
 
-            else:
-
-                print(f"ℹ️ Matrícula já existente: {numero_matricula}")
-
-        else:
-
-            print("⚠️ OCR não retornou número de matrícula")
-
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # GEOMETRIA
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         geojson = dados.get("geojson") or dados.get("geometria")
 
         if isinstance(geojson, dict):
             geojson = json.dumps(geojson)
 
+        # fallback: gerar a partir do memorial
+        if not geojson:
+
+            memorial_texto = dados.get("memorial_texto")
+
+            if memorial_texto:
+
+                try:
+
+                    resultado = MemorialParserService.gerar_geometria(
+                        memorial_texto
+                    )
+
+                    geojson = json.dumps(resultado["geojson"])
+
+                    print("✅ GeoJSON gerado a partir do memorial")
+
+                except Exception as e:
+
+                    print("⚠️ Falha ao gerar geometria do memorial:", str(e))
+
         geometria: Optional[Geometria] = None
-
-        if geojson:
-
-            try:
-                json.loads(geojson)
-            except Exception:
-                print("⚠️ GeoJSON inválido recebido do OCR")
-                geojson = None
 
         if geojson:
 
@@ -192,9 +164,9 @@ class OcrPipelineService:
 
             print(f"✅ Geometria criada ID {geometria.id}")
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # MEMORIAL
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if geometria:
 
@@ -207,9 +179,9 @@ class OcrPipelineService:
 
             print("✅ Memorial descritivo gerado")
 
-        # -----------------------------------------------------
-        # CROQUI SVG
-        # -----------------------------------------------------
+        # -------------------------------------------------
+        # CROQUI
+        # -------------------------------------------------
 
         if geometria:
 
@@ -226,9 +198,9 @@ class OcrPipelineService:
 
             print(f"✅ Croqui salvo: {path_svg}")
 
-        # -----------------------------------------------------
-        # CAD SCRIPT
-        # -----------------------------------------------------
+        # -------------------------------------------------
+        # CAD
+        # -------------------------------------------------
 
         if geometria:
 
@@ -241,9 +213,9 @@ class OcrPipelineService:
 
             print(f"✅ Script CAD salvo: {path_scr}")
 
-        # -----------------------------------------------------
-        # SIGEF EXPORT
-        # -----------------------------------------------------
+        # -------------------------------------------------
+        # SIGEF
+        # -------------------------------------------------
 
         if geometria:
 
