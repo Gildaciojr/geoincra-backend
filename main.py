@@ -200,6 +200,7 @@ from app.routes.cad_export_routes import router as cad_export_router
 from app.routes.template_routes import router as template_router
 from app.routes.automacoes_routes import router as automacoes_router
 from app.routes.ocr_routes import router as ocr_router
+from app.routes.internal_ocr_pipeline import router as internal_ocr_pipeline_router
 
 
 
@@ -276,6 +277,7 @@ app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
 app.include_router(sigef_ods_router, prefix="/api", tags=["SIGEF ODS"])
 app.include_router(cad_export_router, prefix="/api", tags=["CAD"])
 app.include_router(ocr_router, prefix="/api", tags=["OCR"])
+app.include_router(internal_ocr_pipeline_router)
 
 app.include_router(template_router, prefix="/api", tags=["Templates"])
 app.include_router(automacoes_router, prefix="/api", tags=["Automações"])
