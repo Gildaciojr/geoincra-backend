@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -23,9 +24,25 @@ from app.services.cad_export_service import CadExportService
 class OcrPipelineService:
     """
     Pipeline pós-OCR responsável por transformar dados estruturados
-    em entidades técnicas do sistema:
+    em entidades técnicas do sistema.
 
-    OCR → Matrícula → Geometria → Memorial → Croqui → CAD → SIGEF
+    Fluxo completo:
+
+    OCR
+      ↓
+    Interpretação OpenAI
+      ↓
+    Matrícula
+      ↓
+    Geometria
+      ↓
+    Memorial Descritivo
+      ↓
+    Croqui SVG
+      ↓
+    Script CAD
+      ↓
+    Planilha SIGEF
     """
 
     # =========================================================
@@ -45,11 +62,15 @@ class OcrPipelineService:
 
         categoria = prompt_categoria.lower().strip()
 
-        if categoria in [
+        categorias_matricula = [
+            "matricula_imovel",
+            "analise_matricula_completa",
+            "analise_matricula",
             "analise de matricula de imovel",
             "analise tecnica completa de matricula",
-            "analise_matricula",
-        ]:
+        ]
+
+        if categoria in categorias_matricula:
             return OcrPipelineService._pipeline_matricula(
                 db,
                 document_id,
@@ -68,6 +89,8 @@ class OcrPipelineService:
         document_id: int,
         dados: dict,
     ):
+
+        print(f"🔎 Iniciando pipeline de matrícula para documento {document_id}")
 
         # -----------------------------------------------------
         # DOCUMENTO
@@ -95,7 +118,12 @@ class OcrPipelineService:
         # MATRÍCULA
         # -----------------------------------------------------
 
-        numero_matricula = dados.get("numero_matricula")
+        numero_matricula = (
+            dados.get("numero_matricula")
+            or dados.get("matricula")
+        )
+
+        matricula: Optional[Matricula] = None
 
         if numero_matricula:
 
@@ -121,6 +149,16 @@ class OcrPipelineService:
                 db.commit()
                 db.refresh(matricula)
 
+                print(f"✅ Matrícula criada: {numero_matricula}")
+
+            else:
+
+                print(f"ℹ️ Matrícula já existente: {numero_matricula}")
+
+        else:
+
+            print("⚠️ OCR não retornou número de matrícula")
+
         # -----------------------------------------------------
         # GEOMETRIA
         # -----------------------------------------------------
@@ -130,13 +168,14 @@ class OcrPipelineService:
         if isinstance(geojson, dict):
             geojson = json.dumps(geojson)
 
-        geometria = None
+        geometria: Optional[Geometria] = None
 
         if geojson:
 
             try:
                 json.loads(geojson)
             except Exception:
+                print("⚠️ GeoJSON inválido recebido do OCR")
                 geojson = None
 
         if geojson:
@@ -151,6 +190,8 @@ class OcrPipelineService:
             db.commit()
             db.refresh(geometria)
 
+            print(f"✅ Geometria criada ID {geometria.id}")
+
         # -----------------------------------------------------
         # MEMORIAL
         # -----------------------------------------------------
@@ -164,8 +205,7 @@ class OcrPipelineService:
                 perimetro_m=geometria.perimetro_m or 0,
             )
 
-            # salvar memorial como texto no documento técnico
-            # (caso queira exportar depois)
+            print("✅ Memorial descritivo gerado")
 
         # -----------------------------------------------------
         # CROQUI SVG
@@ -176,7 +216,6 @@ class OcrPipelineService:
             svg = CroquiService.gerar_svg(geometria.geojson)
 
             folder = f"app/uploads/imoveis/{imovel.id}/croqui"
-            import os
 
             os.makedirs(folder, exist_ok=True)
 
@@ -185,21 +224,25 @@ class OcrPipelineService:
             with open(path_svg, "w") as f:
                 f.write(svg)
 
+            print(f"✅ Croqui salvo: {path_svg}")
+
         # -----------------------------------------------------
-        # CAD (SCRIPT AUTOCAD)
+        # CAD SCRIPT
         # -----------------------------------------------------
 
         if geometria:
 
             scr = CadExportService.gerar_scr(geometria.geojson)
 
-            CadExportService.salvar_scr(
+            path_scr = CadExportService.salvar_scr(
                 imovel_id=imovel.id,
                 scr=scr,
             )
 
+            print(f"✅ Script CAD salvo: {path_scr}")
+
         # -----------------------------------------------------
-        # SIGEF CSV + ODS
+        # SIGEF EXPORT
         # -----------------------------------------------------
 
         if geometria:
@@ -214,5 +257,9 @@ class OcrPipelineService:
             )
 
             exportar_sigef_csv(db, payload)
+
+            print("✅ Planilha SIGEF gerada")
+
+        print("🏁 Pipeline OCR concluído")
 
         return True
