@@ -31,7 +31,7 @@ class GeometriaService:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
         if not geom.is_valid:
-            # 🔥 tenta corrigir automaticamente
+            # 🔥 tentativa automática de correção topológica
             geom = geom.buffer(0)
 
         if geom.is_empty or not geom.is_valid:
@@ -57,9 +57,6 @@ class GeometriaService:
 
         geom = GeometriaService._parse_polygon_geojson(geojson)
 
-        if epsg_origem <= 0:
-            raise HTTPException(status_code=400, detail="EPSG de origem inválido.")
-
         centroid = geom.centroid
 
         lon = float(centroid.x)
@@ -68,10 +65,39 @@ class GeometriaService:
         if math.isnan(lon) or math.isnan(lat):
             raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
 
+        # =========================================================
+        # 🔥 DETECÇÃO DE SISTEMA LOCAL (MEMORIAL / SEGMENTOS)
+        # =========================================================
+        minx, miny, maxx, maxy = geom.bounds
+
+        is_local = (
+            abs(minx) < 1000
+            and abs(miny) < 1000
+            and abs(maxx) < 1000
+            and abs(maxy) < 1000
+        )
+
+        if is_local:
+            # 🚀 NÃO PROJETAR → já está em sistema plano
+            area_m2 = GeometriaService._safe_float(geom.area)
+            perimetro_m = GeometriaService._safe_float(geom.length)
+            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+
+            return 0, area_ha, perimetro_m
+
+        # =========================================================
+        # 🔥 FLUXO GEOGRÁFICO NORMAL (WGS84 → UTM)
+        # =========================================================
+        if epsg_origem <= 0:
+            raise HTTPException(status_code=400, detail="EPSG de origem inválido.")
+
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
-        crs_src = CRS.from_epsg(epsg_origem)
-        crs_dst = CRS.from_epsg(epsg_utm)
+        try:
+            crs_src = CRS.from_epsg(epsg_origem)
+            crs_dst = CRS.from_epsg(epsg_utm)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Erro ao definir CRS.") from exc
 
         transformer = Transformer.from_crs(crs_src, crs_dst, always_xy=True)
 
@@ -81,14 +107,19 @@ class GeometriaService:
         for x, y in coords:
             try:
                 X, Y = transformer.transform(float(x), float(y))
+
                 X = GeometriaService._safe_float(X)
                 Y = GeometriaService._safe_float(Y)
+
                 proj_coords.append((X, Y))
             except Exception:
                 continue
 
         if len(proj_coords) < 4:
-            raise HTTPException(status_code=400, detail="Falha ao projetar coordenadas suficientes.")
+            raise HTTPException(
+                status_code=400,
+                detail="Falha ao projetar coordenadas suficientes.",
+            )
 
         geom_utm = Polygon(proj_coords)
 
@@ -96,7 +127,10 @@ class GeometriaService:
             geom_utm = geom_utm.buffer(0)
 
         if geom_utm.is_empty or not geom_utm.is_valid:
-            raise HTTPException(status_code=400, detail="Falha ao projetar a geometria (UTM inválida).")
+            raise HTTPException(
+                status_code=400,
+                detail="Falha ao projetar a geometria (UTM inválida).",
+            )
 
         area_m2 = GeometriaService._safe_float(geom_utm.area)
         perimetro_m = GeometriaService._safe_float(geom_utm.length)
