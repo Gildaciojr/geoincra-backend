@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from math import cos, radians, sin
+from math import cos, radians, sin, sqrt
 from typing import Any, Optional
 
 from shapely.geometry import Polygon
@@ -24,32 +24,7 @@ from app.services.memorial_service import MemorialService
 
 
 class OcrPipelineService:
-    """
-    Pipeline pós-OCR responsável por transformar dados estruturados
-    em entidades técnicas do sistema.
-
-    Fluxo completo:
-
-    OCR
-      ↓
-    Interpretação OpenAI
-      ↓
-    Matrícula
-      ↓
-    Geometria
-      ↓
-    Memorial Descritivo
-      ↓
-    Croqui SVG
-      ↓
-    Script CAD
-      ↓
-    Planilha SIGEF
-    """
-
-    # =========================================================
-    # ENTRYPOINT
-    # =========================================================
+    FECHAMENTO_TOLERANCIA_METROS = 2.0
 
     @staticmethod
     def executar_pipeline(
@@ -62,7 +37,7 @@ class OcrPipelineService:
             print("⚠️ Pipeline ignorado: categoria de prompt ausente")
             return None
 
-        categoria = prompt_categoria.lower().strip()
+        categoria = OcrPipelineService._normalizar_categoria(prompt_categoria)
 
         categorias_matricula = [
             "matricula_imovel",
@@ -74,19 +49,28 @@ class OcrPipelineService:
             "análise técnica completa de matrícula",
         ]
 
-        if categoria in categorias_matricula:
+        categorias_matricula_normalizadas = [
+            OcrPipelineService._normalizar_categoria(item)
+            for item in categorias_matricula
+        ]
+
+        if categoria in categorias_matricula_normalizadas:
             return OcrPipelineService._pipeline_matricula(
                 db=db,
                 document_id=document_id,
                 dados=dados_extraidos,
             )
 
-        print(f"ℹ️ Pipeline sem tratamento para categoria: {categoria}")
+        print(f"ℹ️ Pipeline sem tratamento para categoria: {prompt_categoria}")
         return None
 
-    # =========================================================
-    # PIPELINE MATRÍCULA
-    # =========================================================
+    @staticmethod
+    def _normalizar_categoria(texto: str) -> str:
+        mapa = str.maketrans(
+            "áàãâäéèêëíìîïóòõôöúùûüç",
+            "aaaaaeeeeiiiiooooouuuuc",
+        )
+        return texto.lower().strip().translate(mapa)
 
     @staticmethod
     def _pipeline_matricula(
@@ -108,10 +92,6 @@ class OcrPipelineService:
         if not imovel:
             raise Exception("Projeto não possui imóvel cadastrado")
 
-        # -----------------------------------------------------
-        # MATRÍCULA
-        # -----------------------------------------------------
-
         matricula = OcrPipelineService._upsert_matricula(
             db=db,
             imovel=imovel,
@@ -122,10 +102,6 @@ class OcrPipelineService:
             print(f"✅ Matrícula pronta: {matricula.numero_matricula}")
         else:
             print("⚠️ OCR não retornou número de matrícula")
-
-        # -----------------------------------------------------
-        # GEOMETRIA
-        # -----------------------------------------------------
 
         geojson = OcrPipelineService._resolver_geojson(dados)
 
@@ -146,10 +122,6 @@ class OcrPipelineService:
         else:
             print("⚠️ Nenhuma geometria pôde ser gerada a partir do OCR")
 
-        # -----------------------------------------------------
-        # MEMORIAL
-        # -----------------------------------------------------
-
         if geometria:
             memorial = MemorialService.gerar_memorial(
                 geometria_id=geometria.id,
@@ -159,10 +131,6 @@ class OcrPipelineService:
             )
             print("✅ Memorial descritivo gerado")
             _ = memorial
-
-        # -----------------------------------------------------
-        # CROQUI SVG
-        # -----------------------------------------------------
 
         if geometria:
             svg = CroquiService.gerar_svg(geometria.geojson)
@@ -177,10 +145,6 @@ class OcrPipelineService:
 
             print(f"✅ Croqui salvo: {path_svg}")
 
-        # -----------------------------------------------------
-        # CAD SCRIPT
-        # -----------------------------------------------------
-
         if geometria:
             scr = CadExportService.gerar_scr(geometria.geojson)
 
@@ -190,10 +154,6 @@ class OcrPipelineService:
             )
 
             print(f"✅ Script CAD salvo: {path_scr}")
-
-        # -----------------------------------------------------
-        # SIGEF EXPORT
-        # -----------------------------------------------------
 
         if geometria:
             payload = SigefCsvExportRequest(
@@ -210,10 +170,6 @@ class OcrPipelineService:
 
         print("🏁 Pipeline OCR concluído")
         return True
-
-    # =========================================================
-    # MATRÍCULA HELPERS
-    # =========================================================
 
     @staticmethod
     def _upsert_matricula(
@@ -275,20 +231,8 @@ class OcrPipelineService:
 
         return matricula
 
-    # =========================================================
-    # GEOMETRIA HELPERS
-    # =========================================================
-
     @staticmethod
     def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
-        """
-        Resolve a geometria em ordem de prioridade:
-
-        1. geojson
-        2. geometria
-        3. segmentos_memorial
-        4. memorial_texto
-        """
         geojson = dados.get("geojson") or dados.get("geometria")
 
         geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
@@ -336,6 +280,37 @@ class OcrPipelineService:
         return None
 
     @staticmethod
+    def _distancia_entre_pontos(
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+    ) -> float:
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        return sqrt((dx * dx) + (dy * dy))
+
+    @staticmethod
+    def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if len(coords) < 3:
+            return coords
+
+        primeiro = coords[0]
+        ultimo = coords[-1]
+
+        distancia_fechamento = OcrPipelineService._distancia_entre_pontos(
+            primeiro,
+            ultimo,
+        )
+
+        if distancia_fechamento <= OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS:
+            coords[-1] = primeiro
+            return coords
+
+        if primeiro != ultimo:
+            coords.append(primeiro)
+
+        return coords
+
+    @staticmethod
     def _gerar_geojson_por_segmentos(
         segmentos_memorial: Any,
     ) -> Optional[str]:
@@ -371,9 +346,7 @@ class OcrPipelineService:
                     distancia_raw
                 )
             except Exception as exc:
-                print(
-                    f"⚠️ Falha ao interpretar segmento {index}: {str(exc)}"
-                )
+                print(f"⚠️ Falha ao interpretar segmento {index}: {str(exc)}")
                 return None
 
             azimute_rad = radians(azimute)
@@ -390,10 +363,16 @@ class OcrPipelineService:
             print("⚠️ Segmentos insuficientes para formar polígono")
             return None
 
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
+        coords = OcrPipelineService._fechar_anel(coords)
 
         polygon = Polygon(coords)
+
+        if polygon.is_empty:
+            print("⚠️ Polígono vazio gerado a partir dos segmentos")
+            return None
+
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
 
         if polygon.is_empty or not polygon.is_valid:
             print("⚠️ Polígono inválido gerado a partir dos segmentos")
@@ -413,9 +392,7 @@ class OcrPipelineService:
                 memorial_texto.strip()
             )
         except Exception as exc:
-            print(
-                f"⚠️ Falha ao gerar geometria a partir do memorial: {str(exc)}"
-            )
+            print(f"⚠️ Falha ao gerar geometria a partir do memorial: {str(exc)}")
             return None
 
         geojson = resultado.get("geojson")
@@ -430,20 +407,12 @@ class OcrPipelineService:
             return float(valor)
 
         texto = str(valor).strip()
-
-        # remove separador de milhar e padroniza decimal
         texto = texto.replace(".", "").replace(",", ".")
 
         return float(texto)
 
     @staticmethod
     def _parse_angulo_para_graus(valor: str) -> float:
-        """
-        Aceita:
-        - azimute DMS: 01°22'35"
-        - rumo quadrantal: N 45°00'00" E
-        - decimal simples
-        """
         valor_limpo = " ".join(valor.strip().upper().split())
 
         if re.match(r"^[NS]\s*.+\s*[EW]$", valor_limpo):

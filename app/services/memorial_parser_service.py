@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from math import cos, radians, sin
+from math import cos, radians, sin, sqrt
 from typing import Any
 
 from shapely.geometry import Polygon
@@ -23,6 +23,8 @@ class MemorialParserService:
 
     Retorna geometria relativa em GeoJSON.
     """
+
+    FECHAMENTO_TOLERANCIA_METROS = 2.0
 
     @staticmethod
     def _dms_para_decimal(
@@ -93,29 +95,47 @@ class MemorialParserService:
             return float(valor)
 
         texto = str(valor).strip()
-
-        # remove milhar e padroniza decimal
         texto = texto.replace(".", "").replace(",", ".")
 
         return float(texto)
 
     @staticmethod
-    def extrair_segmentos(memorial_texto: str) -> list[dict[str, Any]]:
-        """
-        Suporta padrões como:
+    def _distancia_entre_pontos(
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+    ) -> float:
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        return sqrt((dx * dx) + (dy * dy))
 
-        - Rumo N 45°00'00" E — Distância 120,50
-        - Azimute 01°22'35" — Distância 495,50
-        - com azimute de 01°22'35", na distância de 495,50 metros
-        """
+    @staticmethod
+    def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if len(coords) < 3:
+            raise ValueError("Quantidade insuficiente de vértices para polígono")
+
+        primeiro = coords[0]
+        ultimo = coords[-1]
+
+        distancia_fechamento = MemorialParserService._distancia_entre_pontos(
+            primeiro,
+            ultimo,
+        )
+
+        if distancia_fechamento <= MemorialParserService.FECHAMENTO_TOLERANCIA_METROS:
+            coords[-1] = primeiro
+            return coords
+
+        if primeiro != ultimo:
+            coords.append(primeiro)
+
+        return coords
+
+    @staticmethod
+    def extrair_segmentos(memorial_texto: str) -> list[dict[str, Any]]:
         if not memorial_texto or not memorial_texto.strip():
             raise ValueError("Memorial vazio")
 
         segmentos: list[dict[str, Any]] = []
-
-        # -----------------------------------------------------
-        # PADRÃO 1: RUMO + DISTÂNCIA
-        # -----------------------------------------------------
 
         pattern_rumo = re.compile(
             r"Rumo\s*(.*?)\s*[—-]?\s*Dist[aâ]ncia\s*(\d+(?:[.,]\d+)?)",
@@ -134,10 +154,6 @@ class MemorialParserService:
                     "distancia": dist,
                 }
             )
-
-        # -----------------------------------------------------
-        # PADRÃO 2: AZIMUTE + DISTÂNCIA
-        # -----------------------------------------------------
 
         pattern_azimute_livre = re.compile(
             r"azimute\s*(?:de)?\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
@@ -183,19 +199,21 @@ class MemorialParserService:
 
             coords.append((x, y))
 
-        if len(coords) < 4:
-            raise ValueError("Quantidade insuficiente de vértices para polígono")
+        coords = MemorialParserService._fechar_anel(coords)
 
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
+        polygon = Polygon(coords)
 
-        poly = Polygon(coords)
+        if polygon.is_empty:
+            raise ValueError("Geometria vazia gerada do memorial")
 
-        if poly.is_empty or not poly.is_valid:
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+
+        if polygon.is_empty or not polygon.is_valid:
             raise ValueError("Geometria inválida gerada do memorial")
 
         return {
-            "geojson": poly.__geo_interface__,
+            "geojson": polygon.__geo_interface__,
             "coords": coords,
             "segmentos": segmentos,
         }
