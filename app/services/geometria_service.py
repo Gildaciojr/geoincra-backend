@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from math import floor
 from typing import Tuple
 
@@ -25,48 +26,81 @@ class GeometriaService:
 
         if not isinstance(geom, Polygon):
             raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
+
+        if geom.is_empty:
+            raise HTTPException(status_code=400, detail="Geometria vazia.")
+
+        if not geom.is_valid:
+            # 🔥 tenta corrigir automaticamente
+            geom = geom.buffer(0)
+
         if geom.is_empty or not geom.is_valid:
-            raise HTTPException(status_code=400, detail="Geometria vazia ou inválida.")
+            raise HTTPException(status_code=400, detail="Geometria inválida após correção.")
+
         return geom
+
+    @staticmethod
+    def _safe_float(value: float) -> float:
+        try:
+            v = float(value)
+            if math.isnan(v) or math.isinf(v):
+                return 0.0
+            return v
+        except Exception:
+            return 0.0
 
     @staticmethod
     def calcular_area_perimetro(
         geojson: str,
         epsg_origem: int = 4326,
     ) -> Tuple[int, float, float]:
-        """
-        Retorna: (epsg_utm, area_ha, perimetro_m)
-        - Converte a geometria para UTM apropriado (pela posição do centróide)
-        - Calcula área (ha) e perímetro (m) em UTM (metros)
-        """
+
         geom = GeometriaService._parse_polygon_geojson(geojson)
 
-        # Se origem não for 4326, você pode manter — mas aqui o padrão do projeto é 4326.
-        # Não quebramos, apenas validamos que é EPSG numérico.
         if epsg_origem <= 0:
             raise HTTPException(status_code=400, detail="EPSG de origem inválido.")
 
         centroid = geom.centroid
+
         lon = float(centroid.x)
         lat = float(centroid.y)
+
+        if math.isnan(lon) or math.isnan(lat):
+            raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
         crs_src = CRS.from_epsg(epsg_origem)
         crs_dst = CRS.from_epsg(epsg_utm)
+
         transformer = Transformer.from_crs(crs_src, crs_dst, always_xy=True)
 
-        # Projetar coords do exterior
         coords = list(geom.exterior.coords)
-        proj_coords = [transformer.transform(float(x), float(y)) for x, y in coords]
+
+        proj_coords = []
+        for x, y in coords:
+            try:
+                X, Y = transformer.transform(float(x), float(y))
+                X = GeometriaService._safe_float(X)
+                Y = GeometriaService._safe_float(Y)
+                proj_coords.append((X, Y))
+            except Exception:
+                continue
+
+        if len(proj_coords) < 4:
+            raise HTTPException(status_code=400, detail="Falha ao projetar coordenadas suficientes.")
+
         geom_utm = Polygon(proj_coords)
+
+        if geom_utm.is_empty or not geom_utm.is_valid:
+            geom_utm = geom_utm.buffer(0)
 
         if geom_utm.is_empty or not geom_utm.is_valid:
             raise HTTPException(status_code=400, detail="Falha ao projetar a geometria (UTM inválida).")
 
-        area_m2 = float(geom_utm.area)
-        perimetro_m = float(geom_utm.length)
+        area_m2 = GeometriaService._safe_float(geom_utm.area)
+        perimetro_m = GeometriaService._safe_float(geom_utm.length)
 
-        area_ha = area_m2 / 10000.0
+        area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
 
         return epsg_utm, area_ha, perimetro_m

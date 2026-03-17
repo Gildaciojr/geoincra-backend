@@ -21,6 +21,7 @@ from app.services.cad_export_service import CadExportService
 from app.services.croqui_service import CroquiService
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
+from app.services.geometria_service import GeometriaService  # ✅ ADICIONADO
 
 
 class OcrPipelineService:
@@ -107,18 +108,32 @@ class OcrPipelineService:
 
         geometria: Optional[Geometria] = None
 
+        # ✅ BLOCO CORRIGIDO
         if geojson:
-            geometria = Geometria(
-                imovel_id=imovel.id,
-                geojson=geojson,
-                epsg_origem=4326,
-            )
+            try:
+                epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
+                    geojson=geojson,
+                    epsg_origem=4326,
+                )
 
-            db.add(geometria)
-            db.commit()
-            db.refresh(geometria)
+                geometria = Geometria(
+                    imovel_id=imovel.id,
+                    geojson=geojson,
+                    epsg_origem=4326,
+                    epsg_utm=epsg_utm,
+                    area_hectares=area_ha,
+                    perimetro_m=perimetro_m,
+                )
 
-            print(f"✅ Geometria criada ID {geometria.id}")
+                db.add(geometria)
+                db.commit()
+                db.refresh(geometria)
+
+                print(f"✅ Geometria criada ID {geometria.id}")
+
+            except Exception as exc:
+                print(f"❌ Falha ao calcular geometria: {str(exc)}")
+                geometria = None
         else:
             print("⚠️ Nenhuma geometria pôde ser gerada a partir do OCR")
 

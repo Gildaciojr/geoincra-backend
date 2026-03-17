@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -10,11 +11,33 @@ from app.schemas.documento_tecnico import DocumentoTecnicoCreate
 from app.crud.documento_tecnico_crud import create_documento_tecnico
 
 
+def _safe_float(value):
+    try:
+        v = float(value)
+        if math.isnan(v) or math.isinf(v):
+            return 0.0
+        return v
+    except Exception:
+        return 0.0
+
+
+def _safe_int(value, default=0):
+    try:
+        v = float(value)
+        if math.isnan(v) or math.isinf(v):
+            return default
+        return int(v)
+    except Exception:
+        return default
+
+
 def exportar_sigef_csv(
     db: Session,
     payload: SigefCsvExportRequest,
 ) -> dict:
+
     geom = db.query(Geometria).filter(Geometria.id == payload.geometria_id).first()
+
     if not geom:
         raise ValueError("Geometria não encontrada.")
 
@@ -24,7 +47,8 @@ def exportar_sigef_csv(
     if geom.imovel_id is None:
         raise ValueError("Geometria sem imovel_id.")
 
-    epsg_origem = int(geom.epsg_origem or 4326)
+    # 🔥 PROTEÇÃO EPSG
+    epsg_origem = _safe_int(geom.epsg_origem, 4326)
 
     csv_str, epsg_utm, metadata = SigefExportService.gerar_csv_sigef(
         geojson=geom.geojson,
@@ -33,13 +57,12 @@ def exportar_sigef_csv(
     )
 
     arquivo_path = SigefExportService.salvar_csv_em_disco(
-        imovel_id=int(geom.imovel_id),
+        imovel_id=_safe_int(geom.imovel_id),
         csv_str=csv_str,
     )
 
     now = datetime.utcnow()
 
-    # Salva como Documento Técnico versionado
     doc_create = DocumentoTecnicoCreate(
         document_group_key=payload.document_group_key,
         tipo=payload.tipo,
@@ -50,24 +73,23 @@ def exportar_sigef_csv(
         arquivo_path=arquivo_path,
         metadata_json=metadata,
         gerado_em=now,
-        versao=None,  # auto
+        versao=None,
     )
 
-    doc = create_documento_tecnico(db, int(geom.imovel_id), doc_create)
+    doc = create_documento_tecnico(db, _safe_int(geom.imovel_id), doc_create)
 
-    # Usa área/perímetro já calculados na geometria (se existir)
-    area_ha = float(geom.area_hectares) if geom.area_hectares is not None else 0.0
-    per_m = float(geom.perimetro_m) if geom.perimetro_m is not None else 0.0
+    area_ha = _safe_float(geom.area_hectares)
+    per_m = _safe_float(geom.perimetro_m)
 
     return {
-        "geometria_id": int(geom.id),
-        "imovel_id": int(geom.imovel_id),
+        "geometria_id": _safe_int(geom.id),
+        "imovel_id": _safe_int(geom.imovel_id),
         "epsg_origem": epsg_origem,
-        "epsg_utm": int(epsg_utm),
+        "epsg_utm": _safe_int(epsg_utm),
         "area_hectares": area_ha,
         "perimetro_m": per_m,
-        "documento_tecnico_id": int(doc.id),
-        "versao": int(doc.versao),
+        "documento_tecnico_id": _safe_int(doc.id),
+        "versao": _safe_int(doc.versao),
         "arquivo_path": str(arquivo_path),
         "gerado_em": now,
         "conteudo_csv": csv_str if payload.incluir_conteudo else None,
