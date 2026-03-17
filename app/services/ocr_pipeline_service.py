@@ -8,7 +8,7 @@ import re
 from math import cos, radians, sin, sqrt
 from typing import Any, Optional
 
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, shape
 from sqlalchemy.orm import Session
 
 from app.crud.sigef_export_crud import exportar_sigef_csv
@@ -21,7 +21,7 @@ from app.services.cad_export_service import CadExportService
 from app.services.croqui_service import CroquiService
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
-from app.services.geometria_service import GeometriaService  # ✅ ADICIONADO
+from app.services.geometria_service import GeometriaService
 
 
 class OcrPipelineService:
@@ -108,22 +108,54 @@ class OcrPipelineService:
 
         geometria: Optional[Geometria] = None
 
-        # ✅ BLOCO CORRIGIDO
         if geojson:
             try:
-                epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
-                    geojson=geojson,
-                    epsg_origem=4326,
+                obj = json.loads(geojson)
+                geom = shape(obj)
+
+                if geom.is_empty or not geom.is_valid:
+                    geom = geom.buffer(0)
+
+                # 🔥 DETECÇÃO: coordenadas locais (0,0 → pequeno range)
+                minx, miny, maxx, maxy = geom.bounds
+
+                is_local = (
+                    abs(minx) < 1000
+                    and abs(miny) < 1000
+                    and abs(maxx) < 1000
+                    and abs(maxy) < 1000
                 )
 
-                geometria = Geometria(
-                    imovel_id=imovel.id,
-                    geojson=geojson,
-                    epsg_origem=4326,
-                    epsg_utm=epsg_utm,
-                    area_hectares=area_ha,
-                    perimetro_m=perimetro_m,
-                )
+                if is_local:
+                    print("⚠️ Geometria detectada como sistema local (não geográfico)")
+
+                    area_m2 = geom.area
+                    perimetro_m = geom.length
+                    area_ha = area_m2 / 10000.0
+
+                    geometria = Geometria(
+                        imovel_id=imovel.id,
+                        geojson=geojson,
+                        epsg_origem=0,
+                        epsg_utm=None,
+                        area_hectares=area_ha,
+                        perimetro_m=perimetro_m,
+                    )
+
+                else:
+                    epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
+                        geojson=geojson,
+                        epsg_origem=4326,
+                    )
+
+                    geometria = Geometria(
+                        imovel_id=imovel.id,
+                        geojson=geojson,
+                        epsg_origem=4326,
+                        epsg_utm=epsg_utm,
+                        area_hectares=area_ha,
+                        perimetro_m=perimetro_m,
+                    )
 
                 db.add(geometria)
                 db.commit()
