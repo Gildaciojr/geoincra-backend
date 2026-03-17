@@ -1,38 +1,32 @@
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime
-from typing import Tuple, List
+from typing import Tuple
 
 from odf.opendocument import OpenDocumentSpreadsheet
-from odf.table import Table, TableRow, TableCell
+from odf.table import Table, TableCell, TableRow
 from odf.text import P
 
 from app.services.sigef_export_service import SigefExportService
 
 
 class SigefOdsService:
-
     @staticmethod
     def gerar_ods_sigef(
         geojson: str,
         epsg_origem: int,
         prefixo_vertice: str = "V",
-    ) -> Tuple[str, int, dict]:
-
+    ) -> Tuple[OpenDocumentSpreadsheet, int, dict]:
         csv_str, epsg_utm, metadata = SigefExportService.gerar_csv_sigef(
             geojson=geojson,
             epsg_origem=epsg_origem,
             prefixo_vertice=prefixo_vertice,
         )
 
-        rows = []
-        for line in csv_str.strip().split("\n"):
-            rows.append(line.split(";"))
+        rows = [line.split(";") for line in csv_str.strip().split("\n")]
 
         ods = OpenDocumentSpreadsheet()
-
         table = Table(name="SIGEF")
 
         for row_data in rows:
@@ -46,6 +40,7 @@ class SigefOdsService:
         ods.spreadsheet.addElement(table)
 
         metadata["formato"] = "ODS"
+        metadata["tipo_referencial"] = "GEOGRAFICA"
 
         return ods, epsg_utm, metadata
 
@@ -55,14 +50,12 @@ class SigefOdsService:
         ods,
         base_dir: str = "app/uploads/imoveis",
     ) -> str:
-
         ts = int(datetime.utcnow().timestamp())
 
         folder = os.path.join(base_dir, str(imovel_id), "sigef")
         os.makedirs(folder, exist_ok=True)
 
         filename = f"planilha_sigef_{ts}.ods"
-
         path = os.path.join(folder, filename)
 
         ods.save(path)

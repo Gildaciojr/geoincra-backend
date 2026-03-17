@@ -1,8 +1,7 @@
-# app/schemas/memorial.py
+from datetime import datetime
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
-from typing import List
-from datetime import datetime
 
 
 class MemorialLinha(BaseModel):
@@ -16,7 +15,8 @@ class MemorialLinha(BaseModel):
 
 class MemorialResponse(BaseModel):
     geometria_id: int
-    epsg_utm: int
+    epsg_utm: Optional[int] = None
+    tipo_referencial: str
     area_hectares: float
     perimetro_m: float
     linhas: List[MemorialLinha]

@@ -1,5 +1,3 @@
-# app/services/ocr_pipeline_service.py
-
 from __future__ import annotations
 
 import json
@@ -8,7 +6,7 @@ import re
 from math import cos, radians, sin, sqrt
 from typing import Any, Optional
 
-from shapely.geometry import Polygon, shape
+from shapely.geometry import Polygon
 from sqlalchemy.orm import Session
 
 from app.crud.sigef_export_crud import exportar_sigef_csv
@@ -19,9 +17,9 @@ from app.models.matricula import Matricula
 from app.schemas.sigef_export import SigefCsvExportRequest
 from app.services.cad_export_service import CadExportService
 from app.services.croqui_service import CroquiService
+from app.services.geometria_service import GeometriaService
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
-from app.services.geometria_service import GeometriaService
 
 
 class OcrPipelineService:
@@ -31,12 +29,22 @@ class OcrPipelineService:
     def executar_pipeline(
         db: Session,
         document_id: int,
+        ocr_result_id: int | None,
         prompt_categoria: str,
         dados_extraidos: dict[str, Any],
-    ) -> bool | None:
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "categoria": prompt_categoria,
+            "steps": {},
+            "errors": [],
+        }
+
         if not prompt_categoria:
-            print("⚠️ Pipeline ignorado: categoria de prompt ausente")
-            return None
+            result["errors"].append("Categoria de prompt ausente.")
+            return result
 
         categoria = OcrPipelineService._normalizar_categoria(prompt_categoria)
 
@@ -59,11 +67,14 @@ class OcrPipelineService:
             return OcrPipelineService._pipeline_matricula(
                 db=db,
                 document_id=document_id,
+                ocr_result_id=ocr_result_id,
                 dados=dados_extraidos,
             )
 
-        print(f"ℹ️ Pipeline sem tratamento para categoria: {prompt_categoria}")
-        return None
+        result["errors"].append(
+            f"Pipeline sem tratamento para categoria: {prompt_categoria}"
+        )
+        return result
 
     @staticmethod
     def _normalizar_categoria(texto: str) -> str:
@@ -77,9 +88,26 @@ class OcrPipelineService:
     def _pipeline_matricula(
         db: Session,
         document_id: int,
+        ocr_result_id: int | None,
         dados: dict[str, Any],
-    ) -> bool:
+    ) -> dict[str, Any]:
         print(f"🔎 Iniciando pipeline de matrícula para documento {document_id}")
+
+        result: dict[str, Any] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "pipeline": "MATRICULA",
+            "steps": {
+                "matricula": {},
+                "geometria": {},
+                "memorial": {},
+                "croqui": {},
+                "cad": {},
+                "sigef_csv": {},
+            },
+            "errors": [],
+        }
 
         doc = db.query(Document).filter(Document.id == document_id).first()
         if not doc:
@@ -93,130 +121,290 @@ class OcrPipelineService:
         if not imovel:
             raise Exception("Projeto não possui imóvel cadastrado")
 
-        matricula = OcrPipelineService._upsert_matricula(
-            db=db,
-            imovel=imovel,
-            dados=dados,
-        )
+        # =========================================================
+        # MATRÍCULA
+        # =========================================================
+        try:
+            matricula = OcrPipelineService._upsert_matricula(
+                db=db,
+                imovel=imovel,
+                dados=dados,
+            )
 
-        if matricula:
-            print(f"✅ Matrícula pronta: {matricula.numero_matricula}")
-        else:
-            print("⚠️ OCR não retornou número de matrícula")
+            if matricula:
+                result["steps"]["matricula"] = {
+                    "success": True,
+                    "matricula_id": matricula.id,
+                    "numero_matricula": matricula.numero_matricula,
+                    "message": f"Matrícula pronta: {matricula.numero_matricula}",
+                }
+                print(f"✅ Matrícula pronta: {matricula.numero_matricula}")
+            else:
+                result["steps"]["matricula"] = {
+                    "success": False,
+                    "matricula_id": None,
+                    "numero_matricula": None,
+                    "message": "OCR não retornou número de matrícula.",
+                }
+                result["errors"].append("OCR não retornou número de matrícula.")
+                print("⚠️ OCR não retornou número de matrícula")
+        except Exception as exc:
+            result["steps"]["matricula"] = {
+                "success": False,
+                "message": f"Falha ao upsert de matrícula: {str(exc)}",
+            }
+            result["errors"].append(str(exc))
+            print(f"❌ Falha na matrícula: {str(exc)}")
 
+        # =========================================================
+        # GEOJSON / GEOMETRIA
+        # =========================================================
         geojson = OcrPipelineService._resolver_geojson(dados)
-
         geometria: Optional[Geometria] = None
+        tipo_referencial: Optional[str] = None
 
         if geojson:
             try:
-                obj = json.loads(geojson)
-                geom = shape(obj)
-
-                if geom.is_empty or not geom.is_valid:
-                    geom = geom.buffer(0)
-
-                # 🔥 DETECÇÃO: coordenadas locais (0,0 → pequeno range)
-                minx, miny, maxx, maxy = geom.bounds
-
-                is_local = (
-                    abs(minx) < 1000
-                    and abs(miny) < 1000
-                    and abs(maxx) < 1000
-                    and abs(maxy) < 1000
+                epsg_origem_inferido = 4326
+                analise = GeometriaService.analisar_referencial(
+                    geojson=geojson,
+                    epsg_origem=epsg_origem_inferido,
                 )
 
-                if is_local:
-                    print("⚠️ Geometria detectada como sistema local (não geográfico)")
+                tipo_referencial = str(analise["tipo_referencial"])
 
-                    area_m2 = geom.area
-                    perimetro_m = geom.length
-                    area_ha = area_m2 / 10000.0
-
-                    geometria = Geometria(
-                        imovel_id=imovel.id,
-                        geojson=geojson,
-                        epsg_origem=0,
-                        epsg_utm=None,
-                        area_hectares=area_ha,
-                        perimetro_m=perimetro_m,
-                    )
-
+                if tipo_referencial == "LOCAL_CARTESIANA":
+                    epsg_origem = 0
                 else:
-                    epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
-                        geojson=geojson,
-                        epsg_origem=4326,
-                    )
+                    epsg_origem = 4326
 
-                    geometria = Geometria(
-                        imovel_id=imovel.id,
-                        geojson=geojson,
-                        epsg_origem=4326,
-                        epsg_utm=epsg_utm,
-                        area_hectares=area_ha,
-                        perimetro_m=perimetro_m,
-                    )
+                epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
+                    geojson=geojson,
+                    epsg_origem=epsg_origem,
+                )
+
+                geometria = Geometria(
+                    imovel_id=imovel.id,
+                    geojson=geojson,
+                    epsg_origem=epsg_origem,
+                    epsg_utm=epsg_utm,
+                    area_hectares=area_ha,
+                    perimetro_m=perimetro_m,
+                    nome="Geometria derivada via OCR",
+                    observacoes=(
+                        "Gerada automaticamente a partir do OCR. "
+                        f"Tipo referencial: {tipo_referencial}"
+                    ),
+                )
 
                 db.add(geometria)
                 db.commit()
                 db.refresh(geometria)
 
+                result["steps"]["geometria"] = {
+                    "success": True,
+                    "geometria_id": geometria.id,
+                    "tipo_referencial": tipo_referencial,
+                    "epsg_origem": geometria.epsg_origem,
+                    "epsg_utm": geometria.epsg_utm,
+                    "area_hectares": geometria.area_hectares,
+                    "perimetro_m": geometria.perimetro_m,
+                    "message": f"Geometria criada ID {geometria.id}",
+                }
+
                 print(f"✅ Geometria criada ID {geometria.id}")
 
             except Exception as exc:
+                result["steps"]["geometria"] = {
+                    "success": False,
+                    "geometria_id": None,
+                    "tipo_referencial": tipo_referencial,
+                    "message": f"Falha ao calcular/persistir geometria: {str(exc)}",
+                }
+                result["errors"].append(f"Geometria: {str(exc)}")
                 print(f"❌ Falha ao calcular geometria: {str(exc)}")
                 geometria = None
         else:
+            result["steps"]["geometria"] = {
+                "success": False,
+                "geometria_id": None,
+                "tipo_referencial": None,
+                "message": "Nenhuma geometria pôde ser gerada a partir do OCR.",
+            }
+            result["errors"].append("Nenhuma geometria pôde ser gerada a partir do OCR.")
             print("⚠️ Nenhuma geometria pôde ser gerada a partir do OCR")
 
+        # =========================================================
+        # MEMORIAL
+        # =========================================================
         if geometria:
-            memorial = MemorialService.gerar_memorial(
-                geometria_id=geometria.id,
-                geojson=geometria.geojson,
-                area_hectares=geometria.area_hectares or imovel.area_hectares or 0,
-                perimetro_m=geometria.perimetro_m or 0,
-            )
-            print("✅ Memorial descritivo gerado")
-            _ = memorial
+            try:
+                memorial = MemorialService.gerar_memorial(
+                    geometria_id=geometria.id,
+                    geojson=geometria.geojson,
+                    epsg_origem=geometria.epsg_origem,
+                    area_hectares=geometria.area_hectares or imovel.area_hectares or 0,
+                    perimetro_m=geometria.perimetro_m or 0,
+                )
 
+                result["steps"]["memorial"] = {
+                    "success": True,
+                    "tipo_referencial": memorial.get("tipo_referencial"),
+                    "epsg_utm": memorial.get("epsg_utm"),
+                    "linhas": len(memorial.get("linhas", [])),
+                    "texto_preview": memorial.get("texto"),
+                    "message": "Memorial descritivo gerado com sucesso.",
+                }
+
+                print("✅ Memorial descritivo gerado")
+            except Exception as exc:
+                result["steps"]["memorial"] = {
+                    "success": False,
+                    "message": f"Falha ao gerar memorial: {str(exc)}",
+                }
+                result["errors"].append(f"Memorial: {str(exc)}")
+                print(f"❌ Falha ao gerar memorial: {str(exc)}")
+        else:
+            result["steps"]["memorial"] = {
+                "success": False,
+                "skipped": True,
+                "message": "Memorial não executado: geometria inexistente.",
+            }
+
+        # =========================================================
+        # CROQUI
+        # =========================================================
         if geometria:
-            svg = CroquiService.gerar_svg(geometria.geojson)
+            try:
+                svg = CroquiService.gerar_svg(geometria.geojson)
 
-            folder = f"app/uploads/imoveis/{imovel.id}/croqui"
-            os.makedirs(folder, exist_ok=True)
+                folder = f"app/uploads/imoveis/{imovel.id}/croqui"
+                os.makedirs(folder, exist_ok=True)
 
-            path_svg = f"{folder}/croqui_{geometria.id}.svg"
+                path_svg = f"{folder}/croqui_{geometria.id}.svg"
 
-            with open(path_svg, "w", encoding="utf-8") as f:
-                f.write(svg)
+                with open(path_svg, "w", encoding="utf-8") as f:
+                    f.write(svg)
 
-            print(f"✅ Croqui salvo: {path_svg}")
+                result["steps"]["croqui"] = {
+                    "success": True,
+                    "arquivo_path": path_svg,
+                    "message": f"Croqui salvo: {path_svg}",
+                }
 
+                print(f"✅ Croqui salvo: {path_svg}")
+            except Exception as exc:
+                result["steps"]["croqui"] = {
+                    "success": False,
+                    "message": f"Falha ao gerar croqui: {str(exc)}",
+                }
+                result["errors"].append(f"Croqui: {str(exc)}")
+                print(f"❌ Falha ao gerar croqui: {str(exc)}")
+        else:
+            result["steps"]["croqui"] = {
+                "success": False,
+                "skipped": True,
+                "message": "Croqui não executado: geometria inexistente.",
+            }
+
+        # =========================================================
+        # CAD / SCR
+        # =========================================================
         if geometria:
-            scr = CadExportService.gerar_scr(geometria.geojson)
+            try:
+                scr = CadExportService.gerar_scr(geometria.geojson)
+                path_scr = CadExportService.salvar_scr(
+                    imovel_id=imovel.id,
+                    scr=scr,
+                )
 
-            path_scr = CadExportService.salvar_scr(
-                imovel_id=imovel.id,
-                scr=scr,
-            )
+                result["steps"]["cad"] = {
+                    "success": True,
+                    "arquivo_path": path_scr,
+                    "message": f"Script CAD salvo: {path_scr}",
+                }
 
-            print(f"✅ Script CAD salvo: {path_scr}")
+                print(f"✅ Script CAD salvo: {path_scr}")
+            except Exception as exc:
+                result["steps"]["cad"] = {
+                    "success": False,
+                    "message": f"Falha ao gerar CAD: {str(exc)}",
+                }
+                result["errors"].append(f"CAD: {str(exc)}")
+                print(f"❌ Falha ao gerar CAD: {str(exc)}")
+        else:
+            result["steps"]["cad"] = {
+                "success": False,
+                "skipped": True,
+                "message": "CAD não executado: geometria inexistente.",
+            }
 
+        # =========================================================
+        # SIGEF CSV
+        # =========================================================
         if geometria:
-            payload = SigefCsvExportRequest(
-                geometria_id=geometria.id,
-                prefixo_vertice="V",
-                document_group_key="PLANILHA_SIGEF",
-                tipo="Planilha SIGEF",
-                observacoes_tecnicas=None,
-                incluir_conteudo=False,
-            )
+            if geometria.epsg_origem and geometria.epsg_origem > 0:
+                try:
+                    payload = SigefCsvExportRequest(
+                        geometria_id=geometria.id,
+                        prefixo_vertice="V",
+                        document_group_key="PLANILHA_SIGEF",
+                        tipo="Planilha SIGEF",
+                        observacoes_tecnicas=None,
+                        incluir_conteudo=False,
+                    )
 
-            exportar_sigef_csv(db, payload)
-            print("✅ Planilha SIGEF gerada")
+                    sigef_data = exportar_sigef_csv(db, payload)
+
+                    result["steps"]["sigef_csv"] = {
+                        "success": True,
+                        "documento_tecnico_id": sigef_data.get("documento_tecnico_id"),
+                        "arquivo_path": sigef_data.get("arquivo_path"),
+                        "epsg_utm": sigef_data.get("epsg_utm"),
+                        "message": "Planilha SIGEF gerada com sucesso.",
+                    }
+
+                    print("✅ Planilha SIGEF gerada")
+                except Exception as exc:
+                    result["steps"]["sigef_csv"] = {
+                        "success": False,
+                        "message": f"Falha ao gerar SIGEF CSV: {str(exc)}",
+                    }
+                    result["errors"].append(f"SIGEF CSV: {str(exc)}")
+                    print(f"❌ Falha ao gerar SIGEF CSV: {str(exc)}")
+            else:
+                result["steps"]["sigef_csv"] = {
+                    "success": False,
+                    "skipped": True,
+                    "message": (
+                        "SIGEF CSV não executado: geometria local/cartesiana "
+                        "não é exportável como SIGEF oficial."
+                    ),
+                }
+                print("ℹ️ SIGEF CSV ignorado: geometria local/cartesiana")
+        else:
+            result["steps"]["sigef_csv"] = {
+                "success": False,
+                "skipped": True,
+                "message": "SIGEF CSV não executado: geometria inexistente.",
+            }
+
+        # =========================================================
+        # SUCESSO FINAL
+        # =========================================================
+        geometria_ok = bool(result["steps"]["geometria"].get("success"))
+        memorial_ok = bool(result["steps"]["memorial"].get("success"))
+        croqui_ok = bool(result["steps"]["croqui"].get("success"))
+        cad_ok = bool(result["steps"]["cad"].get("success"))
+
+        if geometria and geometria.epsg_origem and geometria.epsg_origem > 0:
+            sigef_ok = bool(result["steps"]["sigef_csv"].get("success"))
+            result["success"] = geometria_ok and memorial_ok and croqui_ok and cad_ok and sigef_ok
+        else:
+            result["success"] = geometria_ok and memorial_ok and croqui_ok and cad_ok
 
         print("🏁 Pipeline OCR concluído")
-        return True
+        return result
 
     @staticmethod
     def _upsert_matricula(
@@ -224,10 +412,7 @@ class OcrPipelineService:
         imovel: Imovel,
         dados: dict[str, Any],
     ) -> Optional[Matricula]:
-        numero_matricula = (
-            dados.get("numero_matricula")
-            or dados.get("matricula")
-        )
+        numero_matricula = dados.get("numero_matricula") or dados.get("matricula")
 
         if not numero_matricula:
             return None
@@ -373,12 +558,7 @@ class OcrPipelineService:
                 print(f"⚠️ Segmento inválido na posição {index}: não é objeto")
                 return None
 
-            angulo_raw = (
-                seg.get("azimute")
-                or seg.get("rumo")
-                or seg.get("angulo")
-            )
-
+            angulo_raw = seg.get("azimute") or seg.get("rumo") or seg.get("angulo")
             distancia_raw = seg.get("distancia")
 
             if angulo_raw is None or distancia_raw is None:
@@ -386,18 +566,13 @@ class OcrPipelineService:
                 return None
 
             try:
-                azimute = OcrPipelineService._parse_angulo_para_graus(
-                    str(angulo_raw)
-                )
-                distancia = OcrPipelineService._parse_distancia(
-                    distancia_raw
-                )
+                azimute = OcrPipelineService._parse_angulo_para_graus(str(angulo_raw))
+                distancia = OcrPipelineService._parse_distancia(distancia_raw)
             except Exception as exc:
                 print(f"⚠️ Falha ao interpretar segmento {index}: {str(exc)}")
                 return None
 
             azimute_rad = radians(azimute)
-
             dx = distancia * sin(azimute_rad)
             dy = distancia * cos(azimute_rad)
 
@@ -435,9 +610,7 @@ class OcrPipelineService:
             return None
 
         try:
-            resultado = MemorialParserService.gerar_geometria(
-                memorial_texto.strip()
-            )
+            resultado = MemorialParserService.gerar_geometria(memorial_texto.strip())
         except Exception as exc:
             print(f"⚠️ Falha ao gerar geometria a partir do memorial: {str(exc)}")
             return None

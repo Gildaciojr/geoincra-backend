@@ -1,6 +1,8 @@
 from datetime import datetime
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Float, String
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 
@@ -16,18 +18,20 @@ class Geometria(Base):
         index=True,
     )
 
-    # GeoJSON bruto (Polygon) - normalmente EPSG:4326
+    # GeoJSON bruto do polígono
     geojson = Column(Text, nullable=False)
 
-    # Metadados úteis
+    # EPSG origem:
+    # - > 0  => geometria geográfica conhecida
+    # - 0    => geometria local/cartesiana derivada de memorial
     epsg_origem = Column(Integer, nullable=False, default=4326)
+
+    # Preenchido apenas quando houver projeção UTM real
     epsg_utm = Column(Integer, nullable=True)
 
-    # Cálculos (salvos)
     area_hectares = Column(Float, nullable=True)
     perimetro_m = Column(Float, nullable=True)
 
-    # Identificação opcional
     nome = Column(String(120), nullable=True)
     observacoes = Column(Text, nullable=True)
 
@@ -43,9 +47,6 @@ class Geometria(Base):
         nullable=False,
     )
 
-    # ================================
-    # RELACIONAMENTOS
-    # ================================
     imovel = relationship(
         "Imovel",
         back_populates="geometrias",
@@ -53,4 +54,9 @@ class Geometria(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Geometria id={self.id} imovel_id={self.imovel_id} epsg={self.epsg_origem}>"
+        return (
+            f"<Geometria id={self.id} "
+            f"imovel_id={self.imovel_id} "
+            f"epsg_origem={self.epsg_origem} "
+            f"epsg_utm={self.epsg_utm}>"
+        )

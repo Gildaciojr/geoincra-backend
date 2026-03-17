@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
+
 from sqlalchemy.orm import Session
 
-from app.models.geometria import Geometria
-from app.schemas.sigef_export import SigefCsvExportRequest
-from app.services.sigef_export_service import SigefExportService
-from app.schemas.documento_tecnico import DocumentoTecnicoCreate
 from app.crud.documento_tecnico_crud import create_documento_tecnico
+from app.models.geometria import Geometria
+from app.schemas.documento_tecnico import DocumentoTecnicoCreate
+from app.schemas.sigef_export import SigefCsvExportRequest
+from app.services.geometria_service import GeometriaService
+from app.services.sigef_export_service import SigefExportService
 
 
 def _safe_float(value):
@@ -35,7 +37,6 @@ def exportar_sigef_csv(
     db: Session,
     payload: SigefCsvExportRequest,
 ) -> dict:
-
     geom = db.query(Geometria).filter(Geometria.id == payload.geometria_id).first()
 
     if not geom:
@@ -47,8 +48,21 @@ def exportar_sigef_csv(
     if geom.imovel_id is None:
         raise ValueError("Geometria sem imovel_id.")
 
-    # 🔥 PROTEÇÃO EPSG
-    epsg_origem = _safe_int(geom.epsg_origem, 4326)
+    epsg_origem = _safe_int(geom.epsg_origem, 0)
+
+    analise = GeometriaService.analisar_referencial(
+        geojson=geom.geojson,
+        epsg_origem=epsg_origem,
+    )
+
+    if analise["tipo_referencial"] != "GEOGRAFICA":
+        raise ValueError(
+            "Exportação SIGEF indisponível para geometria local/cartesiana. "
+            "É necessário georreferenciamento real."
+        )
+
+    if epsg_origem <= 0:
+        raise ValueError("EPSG de origem inválido para exportação SIGEF.")
 
     csv_str, epsg_utm, metadata = SigefExportService.gerar_csv_sigef(
         geojson=geom.geojson,

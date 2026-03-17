@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import math
 from math import floor
-from typing import Tuple
+from typing import Any
 
 from fastapi import HTTPException
 from pyproj import CRS, Transformer
-from shapely.geometry import shape, Polygon
+from shapely.geometry import Polygon, shape
 
 
 class GeometriaService:
@@ -15,6 +15,16 @@ class GeometriaService:
     def _utm_epsg_from_lonlat(lon: float, lat: float) -> int:
         zona = int(floor((lon + 180.0) / 6.0) + 1)
         return (32600 + zona) if lat >= 0 else (32700 + zona)
+
+    @staticmethod
+    def _safe_float(value: float) -> float:
+        try:
+            v = float(value)
+            if math.isnan(v) or math.isinf(v):
+                return 0.0
+            return v
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _parse_polygon_geojson(geojson: str) -> Polygon:
@@ -31,65 +41,102 @@ class GeometriaService:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
         if not geom.is_valid:
-            # 🔥 tentativa automática de correção topológica
             geom = geom.buffer(0)
 
         if geom.is_empty or not geom.is_valid:
-            raise HTTPException(status_code=400, detail="Geometria inválida após correção.")
+            raise HTTPException(
+                status_code=400,
+                detail="Geometria inválida após correção.",
+            )
 
         return geom
 
     @staticmethod
-    def _safe_float(value: float) -> float:
-        try:
-            v = float(value)
-            if math.isnan(v) or math.isinf(v):
-                return 0.0
-            return v
-        except Exception:
-            return 0.0
+    def analisar_referencial(
+        geojson: str,
+        epsg_origem: int | None = 4326,
+    ) -> dict[str, Any]:
+        geom = GeometriaService._parse_polygon_geojson(geojson)
+
+        minx, miny, maxx, maxy = geom.bounds
+        spanx = float(maxx - minx)
+        spany = float(maxy - miny)
+
+        centroid = geom.centroid
+        cx = float(centroid.x)
+        cy = float(centroid.y)
+
+        if math.isnan(cx) or math.isnan(cy):
+            raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
+
+        # =========================================================
+        # REGRAS DE CLASSIFICAÇÃO
+        # =========================================================
+        # 1) epsg_origem <= 0 => sistema local explícito
+        # 2) faixa pequena, mas com amplitude incompatível com lon/lat real => local
+        # 3) caso contrário, geográfico
+        # =========================================================
+        if epsg_origem is not None and int(epsg_origem) <= 0:
+            tipo = "LOCAL_CARTESIANA"
+        else:
+            faixa_pequena = (
+                abs(minx) < 1000
+                and abs(miny) < 1000
+                and abs(maxx) < 1000
+                and abs(maxy) < 1000
+            )
+
+            amplitude_incompativel_com_lonlat = (
+                spanx > 5.0 or spany > 5.0
+            )
+
+            if faixa_pequena and amplitude_incompativel_com_lonlat:
+                tipo = "LOCAL_CARTESIANA"
+            else:
+                tipo = "GEOGRAFICA"
+
+        return {
+            "tipo_referencial": tipo,
+            "geom": geom,
+            "bounds": {
+                "minx": float(minx),
+                "miny": float(miny),
+                "maxx": float(maxx),
+                "maxy": float(maxy),
+                "spanx": spanx,
+                "spany": spany,
+            },
+            "centroid": {
+                "x": cx,
+                "y": cy,
+            },
+        }
 
     @staticmethod
     def calcular_area_perimetro(
         geojson: str,
         epsg_origem: int = 4326,
-    ) -> Tuple[int, float, float]:
-
-        geom = GeometriaService._parse_polygon_geojson(geojson)
-
-        centroid = geom.centroid
-
-        lon = float(centroid.x)
-        lat = float(centroid.y)
-
-        if math.isnan(lon) or math.isnan(lat):
-            raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
-
-        # =========================================================
-        # 🔥 DETECÇÃO DE SISTEMA LOCAL (MEMORIAL / SEGMENTOS)
-        # =========================================================
-        minx, miny, maxx, maxy = geom.bounds
-
-        is_local = (
-            abs(minx) < 1000
-            and abs(miny) < 1000
-            and abs(maxx) < 1000
-            and abs(maxy) < 1000
+    ) -> tuple[int | None, float, float]:
+        analise = GeometriaService.analisar_referencial(
+            geojson=geojson,
+            epsg_origem=epsg_origem,
         )
 
-        if is_local:
-            # 🚀 NÃO PROJETAR → já está em sistema plano
+        geom: Polygon = analise["geom"]
+        tipo_referencial = analise["tipo_referencial"]
+
+        if tipo_referencial == "LOCAL_CARTESIANA":
             area_m2 = GeometriaService._safe_float(geom.area)
             perimetro_m = GeometriaService._safe_float(geom.length)
             area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
 
-            return 0, area_ha, perimetro_m
+            return None, area_ha, perimetro_m
 
-        # =========================================================
-        # 🔥 FLUXO GEOGRÁFICO NORMAL (WGS84 → UTM)
-        # =========================================================
         if epsg_origem <= 0:
             raise HTTPException(status_code=400, detail="EPSG de origem inválido.")
+
+        lon = float(analise["centroid"]["x"])
+        lat = float(analise["centroid"]["y"])
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
@@ -102,15 +149,13 @@ class GeometriaService:
         transformer = Transformer.from_crs(crs_src, crs_dst, always_xy=True)
 
         coords = list(geom.exterior.coords)
+        proj_coords: list[tuple[float, float]] = []
 
-        proj_coords = []
         for x, y in coords:
             try:
                 X, Y = transformer.transform(float(x), float(y))
-
                 X = GeometriaService._safe_float(X)
                 Y = GeometriaService._safe_float(Y)
-
                 proj_coords.append((X, Y))
             except Exception:
                 continue
@@ -134,7 +179,6 @@ class GeometriaService:
 
         area_m2 = GeometriaService._safe_float(geom_utm.area)
         perimetro_m = GeometriaService._safe_float(geom_utm.length)
-
         area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
 
         return epsg_utm, area_ha, perimetro_m

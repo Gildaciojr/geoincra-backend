@@ -1,12 +1,16 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class GeometriaBase(BaseModel):
     nome: Optional[str] = None
     observacoes: Optional[str] = None
     geojson: str = Field(..., min_length=10)
+
+    # 4326 = geográfica padrão
+    # 0    = local/cartesiana
     epsg_origem: int = 4326
 
 

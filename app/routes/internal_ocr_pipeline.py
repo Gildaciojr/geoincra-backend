@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -18,27 +18,20 @@ router = APIRouter(
 )
 
 
-# =========================================================
-# PAYLOAD SCHEMA
-# =========================================================
-
 class OcrPipelineRequest(BaseModel):
-
     document_id: int
+    ocr_result_id: Optional[int] = None
     categoria: str | None = None
     dados: Dict[str, Any]
 
 
 class OcrPipelineResponse(BaseModel):
-
     success: bool
     document_id: int
+    ocr_result_id: Optional[int] = None
     pipeline_executed: bool
+    pipeline_details: Dict[str, Any]
 
-
-# =========================================================
-# OCR PIPELINE ENDPOINT
-# =========================================================
 
 @router.post(
     "/pipeline",
@@ -49,57 +42,41 @@ def executar_pipeline_ocr(
     payload: OcrPipelineRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Endpoint interno chamado pelo worker após OCR.
-
-    Fluxo:
-
-    Worker OCR
-        ↓
-    POST /internal/ocr/pipeline
-        ↓
-    OcrPipelineService.executar_pipeline()
-        ↓
-    Matrícula
-        ↓
-    Geometria
-        ↓
-    Memorial
-        ↓
-    Croqui
-        ↓
-    CAD
-        ↓
-    SIGEF
-    """
-
     try:
-
         logger.info(
-            f"OCR pipeline iniciado para document_id={payload.document_id}"
+            "OCR pipeline iniciado para document_id=%s ocr_result_id=%s",
+            payload.document_id,
+            payload.ocr_result_id,
         )
 
         result = OcrPipelineService.executar_pipeline(
             db=db,
             document_id=payload.document_id,
+            ocr_result_id=payload.ocr_result_id,
             prompt_categoria=payload.categoria,
             dados_extraidos=payload.dados,
         )
 
         logger.info(
-            f"OCR pipeline finalizado document_id={payload.document_id}"
+            "OCR pipeline finalizado para document_id=%s ocr_result_id=%s success=%s",
+            payload.document_id,
+            payload.ocr_result_id,
+            bool(result.get("success")),
         )
 
         return OcrPipelineResponse(
-            success=True,
+            success=bool(result.get("success")),
             document_id=payload.document_id,
-            pipeline_executed=bool(result),
+            ocr_result_id=payload.ocr_result_id,
+            pipeline_executed=True,
+            pipeline_details=result,
         )
 
     except Exception as e:
-
         logger.exception(
-            f"Erro no pipeline OCR document_id={payload.document_id}"
+            "Erro no pipeline OCR document_id=%s ocr_result_id=%s",
+            payload.document_id,
+            payload.ocr_result_id,
         )
 
         raise HTTPException(

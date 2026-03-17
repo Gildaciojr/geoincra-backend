@@ -1,30 +1,27 @@
-# geoincra_backend/app/routes/automacoes_routes.py
 from __future__ import annotations
 
-from uuid import UUID
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.user import User
-from app.models.project import Project
-from app.models.external_credential import ExternalCredential
 from app.models.automation_job import AutomationJob
 from app.models.automation_result import AutomationResult
+from app.models.external_credential import ExternalCredential
+from app.models.ocr_result import OcrResult
+from app.models.project import Project
+from app.models.user import User
 from app.services.timeline_service import TimelineService
 
 router = APIRouter(prefix="/automacoes")
 
 
-# =========================================================
-# Schemas (Pydantic) — PROFISSIONAL / PRODUÇÃO
-# =========================================================
 class RiDigitalCredenciaisPayload(BaseModel):
     login: str = Field(..., min_length=3)
     senha: str = Field(..., min_length=1)
@@ -45,21 +42,94 @@ class OnrConsultaPayload(BaseModel):
     valor: str
 
 
-def _serialize_job(job: AutomationJob, resultados: list[AutomationResult] | None = None) -> dict[str, Any]:
-    """
-    Serialização segura para o frontend (evita problemas com JSON/UUID/datetime).
-    """
+def _build_ocr_summary(
+    db: Session,
+    job: AutomationJob,
+) -> dict[str, Any] | None:
+    if str(job.type) != "OCR_DOCUMENT":
+        return None
+
+    payload_json = job.payload_json or {}
+    ocr_result_id = payload_json.get("ocr_result_id")
+    document_id = payload_json.get("document_id")
+    prompt_id = payload_json.get("prompt_id")
+
+    ocr_result: OcrResult | None = None
+    if ocr_result_id:
+        ocr_result = (
+            db.query(OcrResult)
+            .filter(OcrResult.id == int(ocr_result_id))
+            .first()
+        )
+
+    dados_extraidos = {}
+    if ocr_result and isinstance(ocr_result.dados_extraidos_json, dict):
+        dados_extraidos = ocr_result.dados_extraidos_json
+
+    pipeline_details = payload_json.get("pipeline_details") or {}
+    pipeline_steps = pipeline_details.get("steps") or {}
+    pipeline_errors = pipeline_details.get("errors") or []
+
+    return {
+        "document_id": document_id,
+        "ocr_result_id": ocr_result_id,
+        "prompt_id": prompt_id,
+        "ocr_status": ocr_result.status if ocr_result else None,
+        "ocr_provider": ocr_result.provider if ocr_result else None,
+        "ocr_created_at": (
+            ocr_result.created_at.isoformat()
+            if ocr_result and getattr(ocr_result, "created_at", None)
+            else None
+        ),
+        "ocr_updated_at": (
+            ocr_result.updated_at.isoformat()
+            if ocr_result and getattr(ocr_result, "updated_at", None)
+            else None
+        ),
+        "numero_matricula": (
+            dados_extraidos.get("numero_matricula")
+            or dados_extraidos.get("matricula")
+        ),
+        "comarca": dados_extraidos.get("comarca"),
+        "descricao_imovel": dados_extraidos.get("descricao_imovel"),
+        "pipeline_success": bool(payload_json.get("pipeline_success")),
+        "pipeline_details": pipeline_details,
+        "pipeline_steps": pipeline_steps,
+        "pipeline_errors": pipeline_errors,
+        "pipeline_warning": payload_json.get("pipeline_warning"),
+        "ocr_error": payload_json.get("ocr_error"),
+    }
+
+
+def _serialize_job(
+    db: Session,
+    job: AutomationJob,
+    resultados: list[AutomationResult] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(job.id),
         "user_id": job.user_id,
         "project_id": job.project_id,
-        "type": job.type,
-        "status": job.status,
+        "type": str(job.type),
+        "status": str(job.status),
         "payload_json": job.payload_json,
-        "created_at": job.created_at.isoformat() if getattr(job, "created_at", None) else None,
-        "started_at": job.started_at.isoformat() if getattr(job, "started_at", None) else None,
-        "finished_at": job.finished_at.isoformat() if getattr(job, "finished_at", None) else None,
+        "created_at": (
+            job.created_at.isoformat()
+            if getattr(job, "created_at", None)
+            else None
+        ),
+        "started_at": (
+            job.started_at.isoformat()
+            if getattr(job, "started_at", None)
+            else None
+        ),
+        "finished_at": (
+            job.finished_at.isoformat()
+            if getattr(job, "finished_at", None)
+            else None
+        ),
         "error_message": job.error_message,
+        "ocr_summary": _build_ocr_summary(db, job),
         "resultados": [
             {
                 "id": str(r.id),
@@ -68,19 +138,24 @@ def _serialize_job(job: AutomationJob, resultados: list[AutomationResult] | None
                 "matricula": r.matricula,
                 "cnm": r.cnm,
                 "cartorio": r.cartorio,
-                "data_pedido": r.data_pedido.isoformat() if getattr(r, "data_pedido", None) else None,
+                "data_pedido": (
+                    r.data_pedido.isoformat()
+                    if getattr(r, "data_pedido", None)
+                    else None
+                ),
                 "file_path": r.file_path,
                 "metadata_json": getattr(r, "metadata_json", None),
-                "created_at": r.created_at.isoformat() if getattr(r, "created_at", None) else None,
+                "created_at": (
+                    r.created_at.isoformat()
+                    if getattr(r, "created_at", None)
+                    else None
+                ),
             }
             for r in (resultados or [])
         ],
     }
 
 
-# =========================================================
-# 🔐 CREDENCIAIS — RI DIGITAL (JSON BODY)
-# =========================================================
 @router.post("/credenciais/ri-digital")
 def salvar_credenciais_ri_digital(
     payload: RiDigitalCredenciaisPayload = Body(...),
@@ -165,12 +240,8 @@ def remover_credenciais_ri_digital(
     return {"removed": True}
 
 
-# =========================================================
-# 🤖 JOB — RI DIGITAL (ACEITA JSON e TAMBÉM QUERY PARAMS)
-# =========================================================
 @router.post("/ri-digital/matriculas/jobs")
 def criar_job_consulta_matriculas(
-    # ✅ Compatibilidade: se vier JSON, usa payload. Se não vier, usa query params.
     payload: Optional[RiDigitalJobPayload] = Body(None),
     data_inicio: Optional[str] = None,
     data_fim: Optional[str] = None,
@@ -181,7 +252,6 @@ def criar_job_consulta_matriculas(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Normaliza entrada (JSON > query)
     if payload:
         data_inicio = payload.data_inicio
         data_fim = payload.data_fim
@@ -243,11 +313,9 @@ def criar_job_consulta_matriculas(
             status="Pendente",
         )
 
-    return {"job_id": str(job.id), "status": job.status}
+    return {"job_id": str(job.id), "status": str(job.status)}
 
-# =========================================================
-# 🤖 JOB — RI DIGITAL SOLICITAR CERTIDÃO
-# =========================================================
+
 class RiDigitalSolicitarCertidaoPayload(BaseModel):
     project_id: int
     cidade: str
@@ -320,13 +388,10 @@ def criar_job_solicitar_certidao(
 
     return {
         "job_id": str(job.id),
-        "status": job.status,
+        "status": str(job.status),
     }
 
 
-# =========================================================
-# 🤖 JOB — RI DIGITAL CONSULTAR CERTIDÃO
-# =========================================================
 class RiDigitalConsultarCertidaoPayload(BaseModel):
     project_id: int
     protocolo: Optional[str] = None
@@ -340,7 +405,6 @@ def criar_job_consultar_certidao(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-
     project = (
         db.query(Project)
         .filter(
@@ -404,13 +468,10 @@ def criar_job_consultar_certidao(
 
     return {
         "job_id": str(job.id),
-        "status": job.status,
+        "status": str(job.status),
     }
 
 
-# =========================================================
-# 🤖 JOB — ONR / SIG-RI (JSON BODY PROFISSIONAL)
-# =========================================================
 @router.post("/onr/consulta/jobs")
 def criar_job_onr_consulta(
     payload: OnrConsultaPayload,
@@ -469,12 +530,9 @@ def criar_job_onr_consulta(
         status="Pendente",
     )
 
-    return {"job_id": str(job.id), "status": job.status}
+    return {"job_id": str(job.id), "status": str(job.status)}
 
 
-# =========================================================
-# 📋 JOBS — LISTAGEM (JÁ VEM COM RESULTADOS)
-# =========================================================
 @router.get("/jobs")
 def listar_jobs(
     db: Session = Depends(get_db),
@@ -502,12 +560,9 @@ def listar_jobs(
         for r in results:
             results_map.setdefault(r.job_id, []).append(r)
 
-    return [_serialize_job(j, results_map.get(j.id, [])) for j in jobs]
+    return [_serialize_job(db, j, results_map.get(j.id, [])) for j in jobs]
 
 
-# =========================================================
-# 📋 JOB — DETALHE (COM RESULTADOS)
-# =========================================================
 @router.get("/jobs/{job_id}")
 def detalhe_job(
     job_id: UUID,
@@ -533,12 +588,9 @@ def detalhe_job(
         .all()
     )
 
-    return _serialize_job(job, resultados)
+    return _serialize_job(db, job, resultados)
 
 
-# =========================================================
-# 📥 DOWNLOAD DO RESULTADO
-# =========================================================
 @router.get("/results/{result_id}/download")
 def download_resultado(
     result_id: UUID,
@@ -561,19 +613,25 @@ def download_resultado(
     if not result.file_path:
         raise HTTPException(status_code=404, detail="Resultado não possui arquivo")
 
-    BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
+    base_upload_path = Path("/app/app/uploads").resolve()
 
-    file_path = (BASE_UPLOAD_PATH / result.file_path).resolve()
+    raw_path = Path(str(result.file_path))
+    if raw_path.is_absolute():
+        file_path = raw_path.resolve()
+    else:
+        file_path = (base_upload_path / raw_path).resolve()
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")
+        raise HTTPException(
+            status_code=404,
+            detail="Arquivo não encontrado no servidor",
+        )
 
     suffix = file_path.suffix.lower()
     media_type = "application/octet-stream"
 
     if suffix == ".pdf":
         media_type = "application/pdf"
-
     elif suffix == ".kmz":
         media_type = "application/vnd.google-earth.kmz"
 
