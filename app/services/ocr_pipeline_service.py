@@ -287,6 +287,8 @@ class OcrPipelineService:
         # =========================================================
         if geometria:
             try:
+                base_url = "https://geoincra.escriturafacil.com"
+                
                 svg = CroquiService.gerar_svg(geometria.geojson)
 
                 folder = f"app/uploads/imoveis/{imovel.id}/croqui"
@@ -296,10 +298,13 @@ class OcrPipelineService:
 
                 with open(path_svg, "w", encoding="utf-8") as f:
                     f.write(svg)
+            
+                url_svg = f"{base_url}/{path_svg.replace('app/', '')}"
 
                 result["steps"]["croqui"] = {
                     "success": True,
                     "arquivo_path": path_svg,
+                    "arquivo_url": url_svg,
                     "message": f"Croqui salvo: {path_svg}",
                 }
 
@@ -329,9 +334,12 @@ class OcrPipelineService:
                     scr=scr,
                 )
 
+                url_scr = f"{base_url}/{path_scr.replace('app/', '')}"
+
                 result["steps"]["cad"] = {
                     "success": True,
                     "arquivo_path": path_scr,
+                    "arquivo_url": url_scr,
                     "message": f"Script CAD salvo: {path_scr}",
                 }
 
@@ -367,10 +375,14 @@ class OcrPipelineService:
 
                     sigef_data = exportar_sigef_csv(db, payload)
 
+                    path_sigef = sigef_data.get("arquivo_path")
+                    url_sigef = f"{base_url}/{path_sigef.replace('app/', '')}" if path_sigef else None
+
                     result["steps"]["sigef_csv"] = {
                         "success": True,
                         "documento_tecnico_id": sigef_data.get("documento_tecnico_id"),
-                        "arquivo_path": sigef_data.get("arquivo_path"),
+                        "arquivo_path": path_sigef,
+                        "arquivo_url": url_sigef,
                         "epsg_utm": sigef_data.get("epsg_utm"),
                         "message": "Planilha SIGEF gerada com sucesso.",
                     }
