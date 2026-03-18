@@ -27,7 +27,7 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: int):
             codigo_sigef=payload.codigo_sigef,
             observacoes=payload.observacoes,
             owner_id=owner_id,
-            status="CADASTRADO",  # snapshot imediato
+            status="CADASTRADO",
         )
 
         db.add(project)
@@ -77,7 +77,7 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: int):
         db.add(proprietario)
 
         # ===================================
-        # 5️⃣ STATUS INICIAL (HISTÓRICO)
+        # 5️⃣ STATUS INICIAL
         # ===================================
         definir_status_projeto(
             db=db,
@@ -107,32 +107,46 @@ def list_projects(db: Session, owner_id: int):
         .all()
     )
 
-
 def list_projects_card(db: Session, owner_id: int):
-    """
-    Lista projetos no formato de cards do dashboard.
-    Usa eager loading para evitar lazy-load fora do contexto da sessão,
-    eliminando erros 500 intermitentes.
-    """
     projects = (
         db.query(Project)
         .options(
             selectinload(Project.documents),
             selectinload(Project.proposals),
+            selectinload(Project.imoveis).selectinload(Imovel.proprietarios),
         )
         .filter(Project.owner_id == owner_id)
         .all()
     )
 
     result = []
+
     for p in projects:
+        imovel = p.imoveis[0] if p.imoveis else None
+        proprietario = (
+            imovel.proprietarios[0]
+            if imovel and imovel.proprietarios
+            else None
+        )
+
         result.append({
             "id": p.id,
             "name": p.name,
+
+            # ALINHAMENTO COM FRONTEND
+            "description": p.descricao_simplificada,
+
+            "area_hectares": imovel.area_hectares if imovel else None,
+            "property_ccir": imovel.ccir if imovel else None,
+
+            "owner_name": proprietario.nome_completo if proprietario else None,
+            "owner_cpf": proprietario.cpf if proprietario else None,
+
             "municipio": p.municipio,
             "uf": p.uf,
             "status": p.status,
             "created_at": p.created_at,
+
             "total_documents": len(p.documents),
             "total_proposals": len(p.proposals),
         })

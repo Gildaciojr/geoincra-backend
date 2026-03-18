@@ -29,17 +29,11 @@ class ProjectBase(BaseModel):
 class ProjectCreate(ProjectBase):
     name: str
 
-    # =============================
-    # IMÓVEL
-    # =============================
     area_hectares: float
     municipio_id: int
     ccir: Optional[str] = None
     matricula_principal: Optional[str] = None
 
-    # =============================
-    # PROPRIETÁRIO
-    # =============================
     proprietario_nome: str
     proprietario_cpf: Optional[str] = None
     proprietario_cnpj: Optional[str] = None
@@ -81,8 +75,15 @@ class ProjectResponse(ProjectBase):
 class ProjectCardResponse(BaseModel):
     id: int
     name: str
-    municipio: str | None
-    uf: str | None
+
+    description: Optional[str] = None
+    area_hectares: Optional[float] = None
+    owner_name: Optional[str] = None
+    owner_cpf: Optional[str] = None
+    property_ccir: Optional[str] = None
+
+    municipio: Optional[str] = None
+    uf: Optional[str] = None
     status: str
     created_at: datetime
 
@@ -91,4 +92,3 @@ class ProjectCardResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
