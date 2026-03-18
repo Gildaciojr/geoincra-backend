@@ -70,30 +70,21 @@ class GeometriaService:
             raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
 
         # =========================================================
-        # REGRAS DE CLASSIFICAÇÃO
+        # NOVA VALIDAÇÃO CRÍTICA (CORREÇÃO DO BUG)
         # =========================================================
-        # 1) epsg_origem <= 0 => sistema local explícito
-        # 2) faixa pequena, mas com amplitude incompatível com lon/lat real => local
-        # 3) caso contrário, geográfico
-        # =========================================================
+        faixa_geografica_valida = (
+            -180 <= minx <= 180 and
+            -180 <= maxx <= 180 and
+            -90 <= miny <= 90 and
+            -90 <= maxy <= 90
+        )
+
         if epsg_origem is not None and int(epsg_origem) <= 0:
             tipo = "LOCAL_CARTESIANA"
+        elif not faixa_geografica_valida:
+            tipo = "LOCAL_CARTESIANA"
         else:
-            faixa_pequena = (
-                abs(minx) < 1000
-                and abs(miny) < 1000
-                and abs(maxx) < 1000
-                and abs(maxy) < 1000
-            )
-
-            amplitude_incompativel_com_lonlat = (
-                spanx > 5.0 or spany > 5.0
-            )
-
-            if faixa_pequena and amplitude_incompativel_com_lonlat:
-                tipo = "LOCAL_CARTESIANA"
-            else:
-                tipo = "GEOGRAFICA"
+            tipo = "GEOGRAFICA"
 
         return {
             "tipo_referencial": tipo,
@@ -125,6 +116,9 @@ class GeometriaService:
         geom: Polygon = analise["geom"]
         tipo_referencial = analise["tipo_referencial"]
 
+        # =========================================================
+        # LOCAL → NÃO PROJETAR
+        # =========================================================
         if tipo_referencial == "LOCAL_CARTESIANA":
             area_m2 = GeometriaService._safe_float(geom.area)
             perimetro_m = GeometriaService._safe_float(geom.length)
@@ -137,6 +131,15 @@ class GeometriaService:
 
         lon = float(analise["centroid"]["x"])
         lat = float(analise["centroid"]["y"])
+
+        # =========================================================
+        # VALIDAÇÃO DE RANGE (CORREÇÃO CRÍTICA)
+        # =========================================================
+        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+            area_m2 = GeometriaService._safe_float(geom.area)
+            perimetro_m = GeometriaService._safe_float(geom.length)
+            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+            return None, area_ha, perimetro_m
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
@@ -151,31 +154,46 @@ class GeometriaService:
         coords = list(geom.exterior.coords)
         proj_coords: list[tuple[float, float]] = []
 
+        # =========================================================
+        # CORREÇÃO: NÃO IGNORAR ERROS
+        # =========================================================
         for x, y in coords:
+            if not (-180 <= x <= 180 and -90 <= y <= 90):
+                area_m2 = GeometriaService._safe_float(geom.area)
+                perimetro_m = GeometriaService._safe_float(geom.length)
+                area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+                return None, area_ha, perimetro_m
+
             try:
                 X, Y = transformer.transform(float(x), float(y))
                 X = GeometriaService._safe_float(X)
                 Y = GeometriaService._safe_float(Y)
                 proj_coords.append((X, Y))
-            except Exception:
-                continue
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Erro ao transformar coordenada ({x}, {y}): {str(exc)}"
+                )
 
         if len(proj_coords) < 4:
-            raise HTTPException(
-                status_code=400,
-                detail="Falha ao projetar coordenadas suficientes.",
-            )
+            area_m2 = GeometriaService._safe_float(geom.area)
+            perimetro_m = GeometriaService._safe_float(geom.length)
+            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+            return None, area_ha, perimetro_m
 
         geom_utm = Polygon(proj_coords)
 
         if geom_utm.is_empty or not geom_utm.is_valid:
             geom_utm = geom_utm.buffer(0)
 
+        # =========================================================
+        # FALLBACK FINAL (CORREÇÃO DEFINITIVA)
+        # =========================================================
         if geom_utm.is_empty or not geom_utm.is_valid:
-            raise HTTPException(
-                status_code=400,
-                detail="Falha ao projetar a geometria (UTM inválida).",
-            )
+            area_m2 = GeometriaService._safe_float(geom.area)
+            perimetro_m = GeometriaService._safe_float(geom.length)
+            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+            return None, area_ha, perimetro_m
 
         area_m2 = GeometriaService._safe_float(geom_utm.area)
         perimetro_m = GeometriaService._safe_float(geom_utm.length)

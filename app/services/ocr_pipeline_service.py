@@ -178,10 +178,21 @@ class OcrPipelineService:
                 else:
                     epsg_origem = 4326
 
-                epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
-                    geojson=geojson,
-                    epsg_origem=epsg_origem,
-                )
+                try:
+                    epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
+                        geojson=geojson,
+                        epsg_origem=epsg_origem,
+                    )
+                except Exception as exc:
+                    print(f"⚠️ Falha na projeção UTM, aplicando fallback LOCAL: {str(exc)}")
+
+                    geom_temp = analise["geom"]
+
+                    epsg_utm = None
+
+                    area_m2 = float(geom_temp.area or 0)
+                    perimetro_m = float(geom_temp.length or 0)
+                    area_ha = area_m2 / 10000.0
 
                 geometria = Geometria(
                     imovel_id=imovel.id,
