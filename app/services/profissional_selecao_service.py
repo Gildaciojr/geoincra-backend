@@ -88,8 +88,8 @@ class ProfissionalSelecaoService:
                     "profissional_id": p.id,
                     "nome": p.nome_completo,
                     "score": s,
-                    "avaliacao_media": p.avaliacao_media,
-                    "total_projetos": p.total_projetos,
+                    "avaliacao_media": p.rating_medio,
+                    "total_projetos": p.total_servicos,
                     "especialidades": p.especialidades,
                     "ativo": p.ativo,
                 }

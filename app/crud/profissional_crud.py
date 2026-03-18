@@ -11,24 +11,36 @@ def create_profissional(
     db: Session,
     data: ProfissionalCreate,
 ) -> Profissional:
-    existente = (
-        db.query(Profissional)
-        .filter(Profissional.cpf == data.cpf)
-        .first()
-    )
-    if existente:
-        raise ValueError("Já existe um profissional cadastrado com este CPF.")
+    tipo_pessoa = data.tipo_pessoa.upper()
+
+    if tipo_pessoa == "FISICA":
+        existente = (
+            db.query(Profissional)
+            .filter(Profissional.cpf == data.cpf)
+            .first()
+        )
+        if existente:
+            raise ValueError("Já existe um profissional cadastrado com este CPF.")
+    else:
+        existente = (
+            db.query(Profissional)
+            .filter(Profissional.cnpj == data.cnpj)
+            .first()
+        )
+        if existente:
+            raise ValueError("Já existe um profissional cadastrado com este CNPJ.")
 
     profissional = Profissional(
         nome_completo=data.nome_completo,
-        cpf=data.cpf,
+        tipo_pessoa=tipo_pessoa,
+        cpf=data.cpf if tipo_pessoa == "FISICA" else None,
+        cnpj=data.cnpj if tipo_pessoa == "JURIDICA" else None,
         email=data.email,
         telefone=data.telefone,
         crea=data.numero_registro,
         uf_crea=data.uf_registro,
         especialidades=data.especialidades,
         ativo=data.ativo,
-        # ⚠️ CORREÇÃO
         rating_medio=float(data.avaliacao_media or 0),
         total_servicos=int(data.total_projetos or 0),
     )

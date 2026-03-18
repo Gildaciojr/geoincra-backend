@@ -13,26 +13,33 @@ from app.crud.profissional_selecao_crud import get_selecao_atual
 from app.services.timeline_service import TimelineService
 
 
+# =========================================================
+# CREATE
+# =========================================================
 def criar_visita(
     db: Session,
     project_id: int,
     data: VisitaTecnicaCreate,
 ) -> VisitaTecnica:
 
+    # 🔎 valida projeto
     project = db.query(Project).get(project_id)
     if not project:
         raise ValueError("Projeto não encontrado.")
 
+    # 🔎 valida profissional selecionado
     selecao = get_selecao_atual(db, project_id)
     if not selecao:
         raise ValueError("Nenhum profissional selecionado para este projeto.")
 
-    # 🔒 BLOQUEIO DE AGENDA
+    profissional_id = selecao.profissional_id
+
+    # 🔒 BLOQUEIO DE AGENDA (ANTI DUPLICIDADE)
     conflito = (
         db.query(VisitaTecnica)
         .filter(
             and_(
-                VisitaTecnica.profissional_id == selecao.profissional_id,
+                VisitaTecnica.profissional_id == profissional_id,
                 VisitaTecnica.data_agendada == data.data_agendada,
                 VisitaTecnica.status != "CANCELADA",
             )
@@ -43,9 +50,10 @@ def criar_visita(
     if conflito:
         raise ValueError("Este profissional já possui uma visita neste horário.")
 
+    # 📌 criação
     visita = VisitaTecnica(
         project_id=project_id,
-        profissional_id=selecao.profissional_id,
+        profissional_id=profissional_id,
         data_agendada=data.data_agendada,
         observacoes=data.observacoes,
         status="PENDENTE",
@@ -55,18 +63,24 @@ def criar_visita(
     db.commit()
     db.refresh(visita)
 
-    # 📅 TIMELINE AUTOMÁTICA
+    # 📅 TIMELINE — AGENDAMENTO
     TimelineService.registrar_evento(
         db=db,
         project_id=project_id,
         titulo="Visita técnica agendada",
-        descricao=f"Profissional ID {visita.profissional_id} agendado para {visita.data_agendada}",
+        descricao=(
+            f"Profissional ID {profissional_id} agendado "
+            f"para {data.data_agendada.strftime('%d/%m/%Y %H:%M')}"
+        ),
         status="visita_agendada",
     )
 
     return visita
 
 
+# =========================================================
+# LIST POR PROJETO
+# =========================================================
 def listar_visitas_projeto(
     db: Session,
     project_id: int,
@@ -79,6 +93,9 @@ def listar_visitas_projeto(
     )
 
 
+# =========================================================
+# AGENDA DO PROFISSIONAL
+# =========================================================
 def agenda_profissional(
     db: Session,
     profissional_id: int,
@@ -91,6 +108,9 @@ def agenda_profissional(
     )
 
 
+# =========================================================
+# UPDATE
+# =========================================================
 def atualizar_visita(
     db: Session,
     visita_id: int,
@@ -104,7 +124,9 @@ def atualizar_visita(
 
     payload = data.model_dump(exclude_unset=True)
 
-    # 🔒 BLOQUEIO EM CASO DE MUDANÇA FUTURA (segurança futura)
+    # =========================================================
+    # 🔒 BLOQUEIO DE CONFLITO (se alterar data)
+    # =========================================================
     if "data_agendada" in payload:
         conflito = (
             db.query(VisitaTecnica)
@@ -122,10 +144,45 @@ def atualizar_visita(
         if conflito:
             raise ValueError("Conflito de agenda para este profissional.")
 
+    status_anterior = visita.status
+
+    # aplica atualização
     for field, value in payload.items():
         setattr(visita, field, value)
 
     db.commit()
     db.refresh(visita)
+
+    # =========================================================
+    # 📅 TIMELINE — MUDANÇAS DE STATUS
+    # =========================================================
+    if "status" in payload and payload["status"] != status_anterior:
+
+        if payload["status"] == "REALIZADA":
+            TimelineService.registrar_evento(
+                db=db,
+                project_id=visita.project_id,
+                titulo="Visita técnica realizada",
+                descricao=f"Visita ID {visita.id} concluída com sucesso.",
+                status="visita_realizada",
+            )
+
+        elif payload["status"] == "CANCELADA":
+            TimelineService.registrar_evento(
+                db=db,
+                project_id=visita.project_id,
+                titulo="Visita técnica cancelada",
+                descricao=f"Visita ID {visita.id} foi cancelada.",
+                status="visita_cancelada",
+            )
+
+        elif payload["status"] == "CONFIRMADA":
+            TimelineService.registrar_evento(
+                db=db,
+                project_id=visita.project_id,
+                titulo="Visita técnica confirmada",
+                descricao=f"Visita ID {visita.id} confirmada.",
+                status="visita_confirmada",
+            )
 
     return visita

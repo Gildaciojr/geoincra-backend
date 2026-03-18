@@ -1,5 +1,3 @@
-# app/services/profissional_score_service.py
-
 from __future__ import annotations
 
 from typing import Optional
@@ -20,7 +18,6 @@ class ProfissionalScoreService:
     Apenas calcula pontuação objetiva.
     """
 
-    # Pesos
     PESO_AVALIACAO = 4.0
     PESO_EXPERIENCIA = 3.0
     PESO_ESPECIALIDADE = 2.0
@@ -43,25 +40,30 @@ class ProfissionalScoreService:
         # =========================================================
         # 1️⃣ Avaliação média
         # =========================================================
-        if profissional.avaliacao_media:
-            score += profissional.avaliacao_media * ProfissionalScoreService.PESO_AVALIACAO
+        if profissional.rating_medio:
+            score += (
+                profissional.rating_medio
+                * ProfissionalScoreService.PESO_AVALIACAO
+            )
 
         # =========================================================
-        # 2️⃣ Experiência (quantidade de projetos)
-        # Normalização simples (cada 5 projetos = +1 ponto)
+        # 2️⃣ Experiência (quantidade de serviços/projetos)
+        # Normalização simples (cada 5 = +1 ponto base)
         # =========================================================
-        score += (profissional.total_projetos / 5) * ProfissionalScoreService.PESO_EXPERIENCIA
+        score += (
+            (profissional.total_servicos / 5)
+            * ProfissionalScoreService.PESO_EXPERIENCIA
+        )
 
         # =========================================================
-        # 3️⃣ Especialidade compatível
+        # 3️⃣ Especialidade compatível com o projeto
         # =========================================================
-        if project and profissional.especialidades:
-            if project.tipo_processo:
-                if project.tipo_processo.lower() in profissional.especialidades.lower():
-                    score += ProfissionalScoreService.PESO_ESPECIALIDADE
+        if project and profissional.especialidades and project.tipo_processo:
+            if project.tipo_processo.lower() in profissional.especialidades.lower():
+                score += ProfissionalScoreService.PESO_ESPECIALIDADE
 
         # =========================================================
-        # 4️⃣ Disponibilidade
+        # 4️⃣ Disponibilidade base
         # =========================================================
         score += ProfissionalScoreService.PESO_DISPONIBILIDADE
 
