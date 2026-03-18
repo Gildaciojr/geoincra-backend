@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class VisitaTecnicaCreate(BaseModel):
-    profissional_id: int = Field(..., ge=1)
     data_agendada: datetime
     observacoes: Optional[str] = None
 

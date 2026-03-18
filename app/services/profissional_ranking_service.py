@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.models.profissional import Profissional
 from app.models.profissional_ranking import ProfissionalRanking
@@ -42,9 +41,10 @@ class ProfissionalRankingService:
         if not profissional:
             raise ValueError("Profissional não encontrado.")
 
+        # 🔥 CORREÇÃO: usar campos do MODEL
         score = ProfissionalRankingService.calcular_score(
-            avaliacao_media=profissional.avaliacao_media,
-            total_projetos=profissional.total_projetos,
+            avaliacao_media=profissional.rating_medio,
+            total_projetos=profissional.total_servicos,
         )
 
         ranking = (
@@ -57,14 +57,14 @@ class ProfissionalRankingService:
             ranking = ProfissionalRanking(
                 profissional_id=profissional_id,
                 score=score,
-                avaliacao_media=profissional.avaliacao_media,
-                total_projetos=profissional.total_projetos,
+                avaliacao_media=profissional.rating_medio,
+                total_projetos=profissional.total_servicos,
             )
             db.add(ranking)
         else:
             ranking.score = score
-            ranking.avaliacao_media = profissional.avaliacao_media
-            ranking.total_projetos = profissional.total_projetos
+            ranking.avaliacao_media = profissional.rating_medio
+            ranking.total_projetos = profissional.total_servicos
             ranking.calculado_em = datetime.utcnow()
 
         db.commit()
@@ -73,9 +73,17 @@ class ProfissionalRankingService:
 
     @staticmethod
     def recalcular_todos(db: Session) -> None:
-        profissionais = db.query(Profissional).filter(Profissional.ativo.is_(True)).all()
+        profissionais = (
+            db.query(Profissional)
+            .filter(Profissional.ativo.is_(True))
+            .all()
+        )
+
         for prof in profissionais:
-            ProfissionalRankingService.recalcular_ranking_profissional(db, prof.id)
+            ProfissionalRankingService.recalcular_ranking_profissional(
+                db,
+                prof.id,
+            )
 
     @staticmethod
     def melhores_profissionais(

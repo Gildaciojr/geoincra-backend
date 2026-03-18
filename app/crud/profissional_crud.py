@@ -11,7 +11,6 @@ def create_profissional(
     db: Session,
     data: ProfissionalCreate,
 ) -> Profissional:
-    # Evita duplicidade por CPF
     existente = (
         db.query(Profissional)
         .filter(Profissional.cpf == data.cpf)
@@ -25,14 +24,13 @@ def create_profissional(
         cpf=data.cpf,
         email=data.email,
         telefone=data.telefone,
-        conselho=data.conselho,
-        numero_registro=data.numero_registro,
-        uf_registro=data.uf_registro,
+        crea=data.numero_registro,
+        uf_crea=data.uf_registro,
         especialidades=data.especialidades,
         ativo=data.ativo,
-        avaliacao_media=data.avaliacao_media,
-        total_projetos=data.total_projetos,
-        observacoes=data.observacoes,
+        # ⚠️ CORREÇÃO
+        rating_medio=float(data.avaliacao_media or 0),
+        total_servicos=int(data.total_projetos or 0),
     )
 
     db.add(profissional)
@@ -79,6 +77,14 @@ def update_profissional(
         return None
 
     payload = data.model_dump(exclude_unset=True)
+
+    # 🔥 MAPEAMENTO CORRETO
+    if "avaliacao_media" in payload:
+        profissional.rating_medio = float(payload.pop("avaliacao_media"))
+
+    if "total_projetos" in payload:
+        profissional.total_servicos = int(payload.pop("total_projetos"))
+
     for field, value in payload.items():
         setattr(profissional, field, value)
 
@@ -88,7 +94,7 @@ def update_profissional(
 
 
 # =========================================================
-# DELETE (SOFT LOGIC READY)
+# DELETE
 # =========================================================
 def delete_profissional(
     db: Session,
@@ -98,7 +104,6 @@ def delete_profissional(
     if not profissional:
         return False
 
-    # 🔒 Não removemos fisicamente — apenas desativamos
     profissional.ativo = False
     db.commit()
     return True

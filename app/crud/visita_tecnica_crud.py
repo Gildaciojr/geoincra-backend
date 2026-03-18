@@ -1,13 +1,16 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
 from app.models.visita_tecnica import VisitaTecnica
 from app.models.project import Project
-from app.models.profissional import Profissional
 
 from app.schemas.visita_tecnica import (
     VisitaTecnicaCreate,
     VisitaTecnicaUpdate,
 )
+
+from app.crud.profissional_selecao_crud import get_selecao_atual
+from app.services.timeline_service import TimelineService
 
 
 def criar_visita(
@@ -20,20 +23,46 @@ def criar_visita(
     if not project:
         raise ValueError("Projeto não encontrado.")
 
-    profissional = db.query(Profissional).get(data.profissional_id)
-    if not profissional:
-        raise ValueError("Profissional não encontrado.")
+    selecao = get_selecao_atual(db, project_id)
+    if not selecao:
+        raise ValueError("Nenhum profissional selecionado para este projeto.")
+
+    # 🔒 BLOQUEIO DE AGENDA
+    conflito = (
+        db.query(VisitaTecnica)
+        .filter(
+            and_(
+                VisitaTecnica.profissional_id == selecao.profissional_id,
+                VisitaTecnica.data_agendada == data.data_agendada,
+                VisitaTecnica.status != "CANCELADA",
+            )
+        )
+        .first()
+    )
+
+    if conflito:
+        raise ValueError("Este profissional já possui uma visita neste horário.")
 
     visita = VisitaTecnica(
         project_id=project_id,
-        profissional_id=data.profissional_id,
+        profissional_id=selecao.profissional_id,
         data_agendada=data.data_agendada,
         observacoes=data.observacoes,
+        status="PENDENTE",
     )
 
     db.add(visita)
     db.commit()
     db.refresh(visita)
+
+    # 📅 TIMELINE AUTOMÁTICA
+    TimelineService.registrar_evento(
+        db=db,
+        project_id=project_id,
+        titulo="Visita técnica agendada",
+        descricao=f"Profissional ID {visita.profissional_id} agendado para {visita.data_agendada}",
+        status="visita_agendada",
+    )
 
     return visita
 
@@ -74,6 +103,24 @@ def atualizar_visita(
         return None
 
     payload = data.model_dump(exclude_unset=True)
+
+    # 🔒 BLOQUEIO EM CASO DE MUDANÇA FUTURA (segurança futura)
+    if "data_agendada" in payload:
+        conflito = (
+            db.query(VisitaTecnica)
+            .filter(
+                and_(
+                    VisitaTecnica.profissional_id == visita.profissional_id,
+                    VisitaTecnica.data_agendada == payload["data_agendada"],
+                    VisitaTecnica.id != visita.id,
+                    VisitaTecnica.status != "CANCELADA",
+                )
+            )
+            .first()
+        )
+
+        if conflito:
+            raise ValueError("Conflito de agenda para este profissional.")
 
     for field, value in payload.items():
         setattr(visita, field, value)

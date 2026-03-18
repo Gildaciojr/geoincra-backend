@@ -28,7 +28,11 @@ class ProfissionalAvaliacaoService:
         if not profissional:
             return
 
-        profissional.avaliacao_media = round(float(media), 2) if media else None
-        profissional.total_projetos = int(total)
+        # 🔥 CORREÇÃO: usar campos do MODEL
+        profissional.rating_medio = (
+            round(float(media), 2) if media else 0.0
+        )
+
+        profissional.total_servicos = int(total)
 
         db.commit()
