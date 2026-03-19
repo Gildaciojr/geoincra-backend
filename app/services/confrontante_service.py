@@ -242,6 +242,9 @@ class ConfrontanteService:
     ) -> list[Confrontante]:
         if not confrontantes_ocr:
             return []
+        
+        if not geometria or not geometria.geojson:
+            return []
 
         segmentos = ConfrontanteService._extrair_segmentos_geometria(geometria)
 

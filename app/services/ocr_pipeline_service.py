@@ -69,10 +69,8 @@ class OcrPipelineService:
 
         if categoria in categorias_matricula_normalizadas:
 
-            # 🔒 NORMALIZAÇÃO
             dados_normalizados: dict[str, Any] = normalizar_dados_ocr(dados_extraidos)
 
-            # 🔒 VALIDAÇÃO ESTRUTURAL FORTE (SEM ALTERAR DADOS)
             try:
                 OCRStructured(**dados_normalizados)
             except Exception as exc:
@@ -121,14 +119,22 @@ class OcrPipelineService:
             "pipeline": "MATRICULA",
             "steps": {
                 "matricula": {},
+                "analise_juridica": {},
                 "geometria": {},
+                "confrontantes": {},
+                "sigef_validacao": {},
                 "memorial": {},
                 "croqui": {},
                 "cad": {},
+                "txt": {},
+                "dxf": {},
+                "shp": {},
                 "sigef_csv": {},
             },
             "errors": [],
         }
+
+        base_url = "https://geoincra.escriturafacil.com"
 
         doc = db.query(Document).filter(Document.id == document_id).first()
         if not doc:
@@ -142,55 +148,36 @@ class OcrPipelineService:
         if not imovel:
             raise Exception("Projeto não possui imóvel cadastrado")
 
-        # =========================================================
-        # MATRÍCULA
-        # =========================================================
+        # ================= MATRÍCULA =================
         try:
-            matricula = OcrPipelineService._upsert_matricula(
-                db=db,
-                imovel=imovel,
-                dados=dados,
-            )
+            matricula = OcrPipelineService._upsert_matricula(db=db, imovel=imovel, dados=dados)
 
             if matricula:
                 result["steps"]["matricula"] = {
                     "success": True,
                     "matricula_id": matricula.id,
                     "numero_matricula": matricula.numero_matricula,
-                    "message": f"Matrícula pronta: {matricula.numero_matricula}",
                 }
-                print(f"✅ Matrícula pronta: {matricula.numero_matricula}")
             else:
-                result["steps"]["matricula"] = {
-                    "success": False,
-                    "matricula_id": None,
-                    "numero_matricula": None,
-                    "message": "OCR não retornou número de matrícula.",
-                }
-                result["errors"].append("OCR não retornou número de matrícula.")
-                print("⚠️ OCR não retornou número de matrícula")
+                result["errors"].append("OCR não retornou matrícula")
+
         except Exception as exc:
-            result["steps"]["matricula"] = {
-                "success": False,
-                "message": f"Falha ao upsert de matrícula: {str(exc)}",
-            }
             result["errors"].append(str(exc))
-            print(f"❌ Falha na matrícula: {str(exc)}")
 
-
-        # =========================================================
-        # ANÁLISE JURÍDICA DA MATRÍCULA
-        # =========================================================
+        # ================= ANÁLISE =================
         try:
-            from app.services.matricula_analysis_service import MatriculaAnalysisService
+            if matricula and matricula.inteiro_teor:
+                analise = MatriculaAnalysisService.analisar(
+                    texto=matricula.inteiro_teor
+                )
 
-            analise_juridica = MatriculaAnalysisService.analisar(
-                texto=matricula.inteiro_teor
-            )
+                result["steps"]["analise_juridica"] = analise
 
-            result["steps"]["analise_juridica"] = analise_juridica
-
-            print("⚖️ Análise jurídica executada")
+            else:
+                result["steps"]["analise_juridica"] = {
+                    "success": False,
+                    "message": "Matrícula sem conteúdo suficiente para análise jurídica.",
+                }
 
         except Exception as exc:
             result["steps"]["analise_juridica"] = {
@@ -198,59 +185,28 @@ class OcrPipelineService:
                 "message": f"Erro na análise jurídica: {str(exc)}",
             }
 
-            result["errors"].append(f"Análise jurídica: {str(exc)}")
+            result["errors"].append(f"Analise juridica: {str(exc)}")
 
-        # =========================================================
-        # GEOJSON / GEOMETRIA
-        # =========================================================
-        geojson: Optional[str] = None
-        geometria: Optional[Geometria] = None
-        tipo_referencial: Optional[str] = None
+        # ================= GEOMETRIA =================
+        geojson = None
+        geometria = None
 
-        # 🔒 Blindagem total do resolver (evita quebrar pipeline inteiro)
         try:
             geojson = OcrPipelineService._resolver_geojson(dados)
         except Exception as exc:
-            print(f"❌ Falha ao resolver GeoJSON: {str(exc)}")
-            result["errors"].append(f"GeoJSON resolver falhou: {str(exc)}")
-            geojson = None
+            result["errors"].append(str(exc))
 
         if geojson:
             try:
-                epsg_origem_inferido = 4326
-
-                analise = GeometriaService.analisar_referencial(
-                    geojson=geojson,
-                    epsg_origem=epsg_origem_inferido,
-                )
+                analise = GeometriaService.analisar_referencial(geojson=geojson, epsg_origem=4326)
 
                 tipo_referencial = str(analise.get("tipo_referencial"))
+                epsg_origem = 0 if tipo_referencial == "LOCAL_CARTESIANA" else 4326
 
-                if tipo_referencial == "LOCAL_CARTESIANA":
-                    epsg_origem = 0
-                else:
-                    epsg_origem = 4326
-
-                try:
-                    epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
-                        geojson=geojson,
-                        epsg_origem=epsg_origem,
-                    )
-                except Exception as exc:
-                    print(f"⚠️ Falha na projeção UTM, aplicando fallback LOCAL: {str(exc)}")
-
-                    geom_temp = analise.get("geom")
-
-                    if not geom_temp:
-                        raise Exception(
-                            "Geometria não retornada na análise para fallback."
-                        )
-
-                    epsg_utm = None
-
-                    area_m2 = float(geom_temp.area or 0)
-                    perimetro_m = float(geom_temp.length or 0)
-                    area_ha = area_m2 / 10000.0
+                epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
+                    geojson=geojson,
+                    epsg_origem=epsg_origem,
+                )
 
                 geometria = Geometria(
                     imovel_id=imovel.id,
@@ -259,11 +215,6 @@ class OcrPipelineService:
                     epsg_utm=epsg_utm,
                     area_hectares=area_ha,
                     perimetro_m=perimetro_m,
-                    nome="Geometria derivada via OCR",
-                    observacoes=(
-                        "Gerada automaticamente a partir do OCR. "
-                        f"Tipo referencial: {tipo_referencial}"
-                    ),
                 )
 
                 db.add(geometria)
@@ -271,164 +222,52 @@ class OcrPipelineService:
                 db.refresh(geometria)
 
                 result["steps"]["geometria"] = {
-                    "success": True,
-                    "geometria_id": geometria.id,
-                    "tipo_referencial": tipo_referencial,
-                    "epsg_origem": geometria.epsg_origem,
-                    "epsg_utm": geometria.epsg_utm,
-                    "area_hectares": geometria.area_hectares,
-                    "perimetro_m": geometria.perimetro_m,
-                    "message": f"Geometria criada ID {geometria.id}",
-                }
-
-                print(f"✅ Geometria criada ID {geometria.id}")
-
-                # =========================================================
-                # SIGEF VALIDATION (ANTES DE QUALQUER EXPORT)
-                # =========================================================
-                try:
-                    validacao_sigef = SigefValidationService.validar(
-                        geometria.geojson
-                    )
-
-                    result["steps"]["sigef_validacao"] = {
-                        "success": validacao_sigef.get("valido"),
-                        "score": validacao_sigef.get("score"),
-                        "errors": validacao_sigef.get("errors"),
-                        "warnings": validacao_sigef.get("warnings"),
-                        "message": "Validação SIGEF executada",
-                    }
-
-                    print(f"📊 SIGEF score: {validacao_sigef.get('score')}")
-
-                    if not validacao_sigef.get("valido"):
-                        result["errors"].append(
-                            "Geometria reprovada na validação SIGEF"
-                        )
-
-                        print("❌ BLOQUEADO: Geometria inválida para SIGEF")
-
-                        return result
-
-                except Exception as exc:
-                    result["steps"]["sigef_validacao"] = {
-                        "success": False,
-                        "message": f"Erro na validação SIGEF: {str(exc)}",
-                    }
-
-                    result["errors"].append(f"SIGEF validação: {str(exc)}")
-
-            except Exception as exc:
-                result["steps"]["geometria"] = {
-                    "success": False,
-                    "geometria_id": None,
-                    "tipo_referencial": tipo_referencial,
-                    "message": f"Falha ao calcular/persistir geometria: {str(exc)}",
-                }
-
-                result["errors"].append(f"Geometria: {str(exc)}")
-
-                print(f"❌ Falha ao calcular geometria: {str(exc)}")
-
-                geometria = None
-
-        else:
-            result["steps"]["geometria"] = {
-                "success": False,
-                "geometria_id": None,
-                "tipo_referencial": None,
-                "message": "Nenhuma geometria pôde ser gerada a partir do OCR.",
+                  "success": True,
+                 "geometria_id": geometria.id,
+                 "epsg_origem": geometria.epsg_origem,
+                 "epsg_utm": geometria.epsg_utm,
+                 "area_hectares": geometria.area_hectares,
+                 "perimetro_m": geometria.perimetro_m,
             }
 
-            result["errors"].append(
-                "Nenhuma geometria pôde ser gerada a partir do OCR."
-            )
 
-            print("⚠️ Nenhuma geometria pôde ser gerada a partir do OCR")
+                # ================= CONFRONTANTES (CORRETO) =================
+                try:
+                    from app.services.confrontante_service import ConfrontanteService
 
-            # =========================================================
-            # CONFRONTANTES (PROCESSAMENTO AVANÇADO)
-            # =========================================================
-            try:
-                from app.services.confrontante_service import ConfrontanteService
+                    confrontantes = ConfrontanteService.processar_confrontantes(
+                        db=db,
+                        imovel=imovel,
+                        geometria=geometria,
+                        confrontantes_ocr=dados.get("confrontantes"),
+                    )
 
-                confrontantes_ocr = dados.get("confrontantes") or []
+                    result["steps"]["confrontantes"] = {
+                        "success": True,
+                        "total": len(confrontantes),
+                    }
 
-                confrontantes_processados = ConfrontanteService.processar_confrontantes(
-                    db=db,
-                    imovel=imovel,
-                    geometria=geometria,
-                    confrontantes_ocr=confrontantes_ocr,
-                )
-
-                result["steps"]["confrontantes"] = {
-                    "success": True,
-                    "total": len(confrontantes_processados),
-                    "itens": [
-                        {
-                            "id": c.id,
-                            "nome": c.nome_confrontante,
-                            "direcao": c.direcao,
-                            "direcao_normalizada": c.direcao_normalizada,
-                            "ordem_segmento": c.ordem_segmento,
-                            "lado_label": c.lado_label,
-                        }
-                        for c in confrontantes_processados
-                    ],
-                    "message": f"{len(confrontantes_processados)} confrontantes processados com sucesso.",
-                }
-
-                print(f"✅ Confrontantes processados: {len(confrontantes_processados)}")
+                except Exception as exc:
+                    result["errors"].append(str(exc))
 
             except Exception as exc:
-                result["steps"]["confrontantes"] = {
-                    "success": False,
-                    "message": f"Falha ao processar confrontantes: {str(exc)}",
-                }
+                result["errors"].append(str(exc))
 
-                result["errors"].append(f"Confrontantes: {str(exc)}")
-
-                print(f"❌ Falha ao processar confrontantes: {str(exc)}")
-        # =========================================================
-        # MEMORIAL
-        # =========================================================
+        # ================= MEMORIAL =================
         if geometria:
             try:
                 memorial = MemorialService.gerar_memorial(
                     geometria_id=geometria.id,
                     geojson=geometria.geojson,
                     epsg_origem=geometria.epsg_origem,
-                    area_hectares=geometria.area_hectares or imovel.area_hectares or 0,
+                    area_hectares=geometria.area_hectares or 0,
                     perimetro_m=geometria.perimetro_m or 0,
                 )
 
-                result["steps"]["memorial"] = {
-                    "success": True,
-                    "tipo_referencial": memorial.get("tipo_referencial"),
-                    "epsg_utm": memorial.get("epsg_utm"),
-                    "linhas": len(memorial.get("linhas", [])),
-                    "texto_preview": memorial.get("texto"),
-                    "message": "Memorial descritivo gerado com sucesso.",
-                }
-
-                print("✅ Memorial descritivo gerado")
+                result["steps"]["memorial"] = {"success": True}
 
             except Exception as exc:
-                result["steps"]["memorial"] = {
-                    "success": False,
-                    "message": f"Falha ao gerar memorial: {str(exc)}",
-                }
-
-                result["errors"].append(f"Memorial: {str(exc)}")
-
-                print(f"❌ Falha ao gerar memorial: {str(exc)}")
-
-        else:
-            result["steps"]["memorial"] = {
-                "success": False,
-                "skipped": True,
-                "message": "Memorial não executado: geometria inexistente.",
-            }
+                result["errors"].append(str(exc))
 
         # =========================================================
         # CROQUI
@@ -805,9 +644,8 @@ class OcrPipelineService:
             db.commit()
             db.refresh(matricula)
             print(f"ℹ️ Matrícula atualizada: {numero_matricula}")
-        else:
-            print(f"ℹ️ Matrícula já existente: {numero_matricula}")
 
+            print(f"ℹ️ Matrícula já existente: {numero_matricula}")
             return matricula
 
     @staticmethod
