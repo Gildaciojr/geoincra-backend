@@ -11,6 +11,8 @@ from app.models.project import Project
 from app.models.project_status import ProjectStatus
 from app.models.documento_tecnico import DocumentoTecnico
 from app.models.timeline import TimelineEntry
+from app.models.imovel import Imovel  # 🔥 IMPORT CRÍTICO
+
 from app.crud.project_status_crud import definir_status_projeto
 
 
@@ -51,15 +53,6 @@ class ProjectFluxoService:
         project_id: int,
         definido_por_usuario_id: int | None = None,
     ) -> ProjectStatus:
-        """
-        Avalia o estado atual do projeto e define automaticamente
-        o status adequado com base nos documentos técnicos.
-
-        Sempre:
-        - desativa status anterior
-        - cria novo status
-        - cria timeline automática
-        """
 
         project: Project | None = (
             db.query(Project)
@@ -70,12 +63,16 @@ class ProjectFluxoService:
         if not project:
             raise ValueError("Projeto não encontrado.")
 
+        # =========================================================
+        # 🔥 QUERY CORRIGIDA (SEM DUPLICATE ALIAS)
+        # =========================================================
         documentos: List[DocumentoTecnico] = (
             db.query(DocumentoTecnico)
-            .join(DocumentoTecnico.imovel)
-            .join(Project.imoveis)
-            .filter(Project.id == project_id)
-            .filter(DocumentoTecnico.is_versao_atual.is_(True))
+            .join(Imovel, Imovel.id == DocumentoTecnico.imovel_id)
+            .filter(
+                Imovel.project_id == project_id,
+                DocumentoTecnico.is_versao_atual.is_(True),
+            )
             .all()
         )
 
@@ -99,13 +96,15 @@ class ProjectFluxoService:
         em_analise = 0
 
         for doc in documentos:
-            if doc.status_tecnico == ProjectFluxoService.DOC_APROVADO:
+            status_doc = (doc.status_tecnico or "").upper().strip()
+
+            if status_doc == ProjectFluxoService.DOC_APROVADO:
                 aprovados += 1
-            elif doc.status_tecnico == ProjectFluxoService.DOC_CORRIGIR:
+            elif status_doc == ProjectFluxoService.DOC_CORRIGIR:
                 corrigir += 1
-            elif doc.status_tecnico == ProjectFluxoService.DOC_REPROVADO:
+            elif status_doc == ProjectFluxoService.DOC_REPROVADO:
                 reprovados += 1
-            elif doc.status_tecnico in (
+            elif status_doc in (
                 ProjectFluxoService.DOC_EM_ANALISE,
                 ProjectFluxoService.DOC_RASCUNHO,
             ):
@@ -151,7 +150,6 @@ class ProjectFluxoService:
                 definido_por_usuario_id=definido_por_usuario_id,
             )
 
-        # Fallback seguro
         return ProjectFluxoService._definir_status(
             db=db,
             project_id=project_id,
@@ -172,9 +170,6 @@ class ProjectFluxoService:
         descricao: str,
         definido_por_usuario_id: int | None,
     ) -> ProjectStatus:
-        """
-        Define status do projeto, grava histórico e cria timeline automática.
-        """
 
         status_obj = definir_status_projeto(
             db=db,
