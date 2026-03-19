@@ -28,9 +28,10 @@ pyproj
 # SIGEF / Planilhas
 odfpy
 
-# CAD (opcional futuro)
-# ezdxf
+# CAD
+ ezdxf
 
-# fiona
-# geopandas
-# rtree
+# SHP / GIS
+ fiona
+ geopandas
+ rtree

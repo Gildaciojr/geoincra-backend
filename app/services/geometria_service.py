@@ -50,6 +50,15 @@ class GeometriaService:
         if geom.is_empty:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
+        # 🔒 garantir anel válido
+        coords = list(geom.exterior.coords)
+        if len(coords) < 4:
+            raise HTTPException(status_code=400, detail="Polígono inválido (menos de 4 vértices).")
+
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+            geom = Polygon(coords)
+
         if not geom.is_valid:
             geom = geom.buffer(0)
 
@@ -79,9 +88,6 @@ class GeometriaService:
         if math.isnan(cx) or math.isnan(cy):
             raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
 
-        # =========================================================
-        # VALIDAÇÃO ROBUSTA DE REFERENCIAL
-        # =========================================================
         faixa_geografica_valida = (
             -180 <= minx <= 180 and
             -180 <= maxx <= 180 and
@@ -130,81 +136,45 @@ class GeometriaService:
         geom: Polygon = analise["geom"]
         tipo_referencial = analise["tipo_referencial"]
 
-        # =========================================================
-        # LOCAL → NÃO PROJETAR
-        # =========================================================
         if tipo_referencial == "LOCAL_CARTESIANA":
             area_m2 = GeometriaService._safe_float(geom.area)
             perimetro_m = GeometriaService._safe_float(geom.length)
-            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
-            return None, area_ha, perimetro_m
-
-        if epsg_origem <= 0:
-            raise HTTPException(status_code=400, detail="EPSG de origem inválido.")
+            return None, area_m2 / 10000.0, perimetro_m
 
         lon = float(analise["centroid"]["x"])
         lat = float(analise["centroid"]["y"])
 
         if not (-180 <= lon <= 180 and -90 <= lat <= 90):
-            area_m2 = GeometriaService._safe_float(geom.area)
-            perimetro_m = GeometriaService._safe_float(geom.length)
-            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
-            return None, area_ha, perimetro_m
+            return None, geom.area / 10000.0, geom.length
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
-        try:
-            crs_src = CRS.from_epsg(epsg_origem)
-            crs_dst = CRS.from_epsg(epsg_utm)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="Erro ao definir CRS.") from exc
+        transformer = Transformer.from_crs(
+            CRS.from_epsg(epsg_origem),
+            CRS.from_epsg(epsg_utm),
+            always_xy=True,
+        )
 
-        transformer = Transformer.from_crs(crs_src, crs_dst, always_xy=True)
-
-        coords = list(geom.exterior.coords)
-        proj_coords: list[tuple[float, float]] = []
-
-        invalid_count = 0
-
-        for x, y in coords:
-            try:
-                xf = float(x)
-                yf = float(y)
-
-                if not (-180 <= xf <= 180 and -90 <= yf <= 90):
-                    invalid_count += 1
-                    continue
-
-                X, Y = transformer.transform(xf, yf)
-
-                X = GeometriaService._safe_float(X)
-                Y = GeometriaService._safe_float(Y)
-
-                proj_coords.append((X, Y))
-
-            except Exception:
-                invalid_count += 1
+        proj_coords = []
+        for x, y in geom.exterior.coords:
+            if not (-180 <= x <= 180 and -90 <= y <= 90):
                 continue
 
-        if len(proj_coords) < 4 or invalid_count > len(coords) * 0.3:
-            area_m2 = GeometriaService._safe_float(geom.area)
-            perimetro_m = GeometriaService._safe_float(geom.length)
-            area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
-            return None, area_ha, perimetro_m
+            X, Y = transformer.transform(x, y)
+            proj_coords.append((X, Y))
+
+        if len(proj_coords) < 4:
+            return None, geom.area / 10000.0, geom.length
 
         geom_utm = Polygon(proj_coords)
-
-        if geom_utm.is_empty:
-            return None, GeometriaService._safe_float(geom.area / 10000.0), GeometriaService._safe_float(geom.length)
 
         if not geom_utm.is_valid:
             geom_utm = geom_utm.buffer(0)
 
         if geom_utm.is_empty or not geom_utm.is_valid:
-            return None, GeometriaService._safe_float(geom.area / 10000.0), GeometriaService._safe_float(geom.length)
+            return None, geom.area / 10000.0, geom.length
 
-        area_m2 = GeometriaService._safe_float(geom_utm.area)
-        perimetro_m = GeometriaService._safe_float(geom_utm.length)
-        area_ha = GeometriaService._safe_float(area_m2 / 10000.0)
+        area_m2 = geom_utm.area
+        perimetro_m = geom_utm.length
 
-        return epsg_utm, area_ha, perimetro_m
+        return epsg_utm, area_m2 / 10000.0, perimetro_m

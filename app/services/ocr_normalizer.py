@@ -4,6 +4,9 @@ import re
 from typing import Any, Dict, List, Optional
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def _to_float(valor: Any) -> Optional[float]:
     if isinstance(valor, (int, float)):
         return float(valor)
@@ -39,11 +42,107 @@ def _normalizar_cpf_cnpj(valor: Any) -> Optional[str]:
     return valor.strip()
 
 
+def _normalizar_direcao(valor: Any) -> Optional[str]:
+    """
+    Normaliza direções de confrontantes para padrão técnico.
+
+    Entrada:
+        "norte", "N", "n", "NOROESTE", "so", etc
+
+    Saída:
+        "N", "S", "E", "W", "NE", "NW", "SE", "SW"
+    """
+    texto = _normalizar_texto(valor)
+    if not texto:
+        return None
+
+    texto = (
+        texto.upper()
+        .replace("-", " ")
+        .replace("_", " ")
+        .replace("Ç", "C")
+        .replace("Ã", "A")
+        .replace("Á", "A")
+        .replace("À", "A")
+        .replace("Â", "A")
+        .replace("É", "E")
+        .replace("Ê", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ô", "O")
+        .replace("Õ", "O")
+        .replace("Ú", "U")
+    )
+
+    mapa = {
+        "N": "N",
+        "NORTE": "N",
+        "S": "S",
+        "SUL": "S",
+        "L": "E",
+        "LESTE": "E",
+        "E": "E",
+        "O": "W",
+        "OESTE": "W",
+        "W": "W",
+        "NE": "NE",
+        "NORDESTE": "NE",
+        "NO": "NW",
+        "NOROESTE": "NW",
+        "NW": "NW",
+        "SE": "SE",
+        "SUDESTE": "SE",
+        "SO": "SW",
+        "SUDOESTE": "SW",
+        "SW": "SW",
+    }
+
+    return mapa.get(texto, texto if texto in mapa.values() else None)
+
+
+# =========================================================
+# VALIDAÇÕES CRÍTICAS
+# =========================================================
+def _validar_segmentos(segmentos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not segmentos:
+        raise ValueError("Nenhum segmento informado pelo OCR")
+
+    validados: List[Dict[str, Any]] = []
+
+    for i, s in enumerate(segmentos, start=1):
+        az = s.get("azimute_raw")
+        dist = s.get("distancia")
+
+        if not az:
+            raise ValueError(f"Segmento {i} inválido: azimute ausente")
+
+        if dist is None:
+            raise ValueError(f"Segmento {i} inválido: distância ausente")
+
+        if not isinstance(dist, (int, float)) or dist <= 0:
+            raise ValueError(f"Segmento {i} inválido: distância inválida")
+
+        validados.append({
+            "azimute_raw": az,
+            "distancia": float(dist),
+        })
+
+    if len(validados) < 3:
+        raise ValueError("Segmentos insuficientes para formar polígono")
+
+    return validados
+
+
+# =========================================================
+# NORMALIZADOR PRINCIPAL (ENDURECIDO)
+# =========================================================
 def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(dados, dict):
-        return {}
+        raise ValueError("OCR retornou estrutura inválida (não é dict)")
 
     resultado: Dict[str, Any] = {}
+    erros: List[str] = []
+    warnings: List[str] = []
 
     # =========================================================
     # MATRÍCULA
@@ -58,6 +157,9 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         "comarca": _normalizar_texto(dados.get("comarca")),
         "cartorio": _normalizar_texto(dados.get("cartorio")),
     }
+
+    if not resultado["matricula"]["numero"]:
+        warnings.append("Matrícula não identificada")
 
     # =========================================================
     # IMÓVEL
@@ -75,6 +177,8 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
             hectares = area
         elif unidade and unidade.lower() in ["m2", "m²"]:
             hectares = area / 10000.0
+        else:
+            warnings.append("Unidade de área desconhecida")
 
     resultado["imovel"] = {
         "descricao": _normalizar_texto(dados.get("descricao_imovel")),
@@ -85,13 +189,16 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
 
+    if area is None:
+        warnings.append("Área não identificada")
+
     # =========================================================
     # PROPRIETÁRIOS
     # =========================================================
     proprietarios_raw = dados.get("proprietarios") or []
     proprietarios: List[Dict[str, Optional[str]]] = []
 
-    for p in proprietarios_raw:
+    for i, p in enumerate(proprietarios_raw, start=1):
         if not isinstance(p, dict):
             continue
 
@@ -99,6 +206,7 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         cpf_cnpj = _normalizar_cpf_cnpj(p.get("cpf_cnpj"))
 
         if not nome:
+            warnings.append(f"Proprietário {i} ignorado (sem nome)")
             continue
 
         proprietarios.append({
@@ -106,10 +214,13 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
             "cpf_cnpj": cpf_cnpj,
         })
 
+    if not proprietarios:
+        warnings.append("Nenhum proprietário válido identificado")
+
     resultado["proprietarios"] = proprietarios
 
     # =========================================================
-    # SEGMENTOS
+    # SEGMENTOS (CRÍTICO)
     # =========================================================
     segmentos_raw = dados.get("segmentos_memorial") or []
     segmentos: List[Dict[str, Any]] = []
@@ -121,13 +232,17 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         azimute_raw = s.get("azimute") or s.get("rumo")
         distancia = _to_float(s.get("distancia"))
 
-        if azimute_raw is None or distancia is None:
-            continue
-
         segmentos.append({
             "azimute_raw": _normalizar_texto(azimute_raw),
             "distancia": distancia,
         })
+
+    segmentos_validos: List[Dict[str, Any]] = []
+
+    try:
+        segmentos_validos = _validar_segmentos(segmentos)
+    except Exception as exc:
+        erros.append(str(exc))
 
     # =========================================================
     # GEOMETRIA
@@ -137,17 +252,17 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
 
     fonte: Optional[str] = None
 
-    if geojson:
-        fonte = "geojson"
-    elif len(segmentos) >= 3:
+    if segmentos_validos:
         fonte = "segmentos"
     elif memorial_texto:
         fonte = "memorial"
+    elif geojson:
+        fonte = "geojson"
 
     resultado["geometria"] = {
         "fonte": fonte,
         "geojson": geojson,
-        "segmentos": segmentos,
+        "segmentos": segmentos_validos,
         "memorial_texto": memorial_texto,
     }
 
@@ -157,34 +272,74 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     confrontantes_raw = dados.get("confrontantes") or []
     confrontantes: List[Dict[str, Optional[str]]] = []
 
-    for c in confrontantes_raw:
+    for i, c in enumerate(confrontantes_raw, start=1):
         if not isinstance(c, dict):
+            warnings.append(f"Confrontante {i} ignorado (estrutura inválida)")
             continue
 
-        lado = _normalizar_texto(c.get("direcao") or c.get("lado"))
         nome = _normalizar_texto(c.get("nome"))
         descricao = _normalizar_texto(c.get("descricao"))
+        lado_original = _normalizar_texto(c.get("direcao") or c.get("lado"))
+        lado_normalizado = _normalizar_direcao(c.get("direcao") or c.get("lado"))
+        matricula_confrontante = _normalizar_texto(
+            c.get("matricula")
+            or c.get("numero_matricula")
+        )
+        identificacao = _normalizar_texto(
+            c.get("identificacao")
+            or c.get("identificacao_imovel")
+            or c.get("imovel")
+        )
 
-        if not nome:
+        if not nome and not descricao and not matricula_confrontante and not identificacao:
+            warnings.append(f"Confrontante {i} ignorado (sem conteúdo útil)")
             continue
 
-        confrontantes.append({
-            "lado": lado,
-            "nome": nome,
-            "descricao": descricao,
-        })
+        confrontantes.append(
+            {
+                "lado": lado_original,
+                "lado_normalizado": lado_normalizado,
+                "nome": nome,
+                "descricao": descricao,
+                "matricula": matricula_confrontante,
+                "identificacao": identificacao,
+            }
+        )
 
     resultado["confrontantes"] = confrontantes
 
     # =========================================================
-    # QUALIDADE (INTELIGENTE)
+    # SCORE DE QUALIDADE (REAL)
     # =========================================================
+    score = 100
+
+    if not segmentos_validos:
+        score -= 40
+
+    if not resultado["matricula"]["numero"]:
+        score -= 10
+
+    if not proprietarios:
+        score -= 10
+
+    if area is None:
+        score -= 10
+
+    if geojson is None and not segmentos_validos:
+        score -= 30
+
+    score = max(score, 0)
+
     resultado["qualidade"] = {
-        "tem_geojson": geojson is not None,
-        "tem_segmentos": len(segmentos) >= 3,
-        "tem_memorial": bool(memorial_texto),
-        "tem_area": area is not None,
-        "tem_proprietarios": len(proprietarios) > 0,
+        "score": score,
+        "erros": erros,
+        "warnings": warnings,
     }
+
+    # =========================================================
+    # FAIL HARD (CRÍTICO)
+    # =========================================================
+    if erros:
+        raise ValueError(f"OCR inválido: {erros}")
 
     return resultado

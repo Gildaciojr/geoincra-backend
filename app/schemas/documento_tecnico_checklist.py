@@ -1,6 +1,18 @@
 from datetime import datetime
 from typing import Optional
+from enum import Enum
+
 from pydantic import BaseModel, Field
+
+
+# =========================================================
+# ENUM DE STATUS (CRÍTICO PARA CONSISTÊNCIA)
+# =========================================================
+class DocumentoChecklistStatus(str, Enum):
+    NA = "NA"
+    OK = "OK"
+    ALERTA = "ALERTA"
+    ERRO = "ERRO"
 
 
 # =========================================================
@@ -12,8 +24,8 @@ class DocumentoTecnicoChecklistBase(BaseModel):
 
     obrigatorio: bool = True
 
-    status: str = Field(
-        default="NA",
+    status: DocumentoChecklistStatus = Field(
+        default=DocumentoChecklistStatus.NA,
         description="NA | OK | ALERTA | ERRO",
     )
 
@@ -33,7 +45,7 @@ class DocumentoTecnicoChecklistCreate(DocumentoTecnicoChecklistBase):
 # UPDATE / VALIDAÇÃO
 # =========================================================
 class DocumentoTecnicoChecklistUpdate(BaseModel):
-    status: Optional[str] = None
+    status: Optional[DocumentoChecklistStatus] = None
     mensagem: Optional[str] = None
     validado_automaticamente: Optional[bool] = None
     validado_por_usuario_id: Optional[int] = None

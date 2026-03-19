@@ -71,8 +71,12 @@ class MemorialService:
         tipo_referencial = str(analise["tipo_referencial"])
 
         coords = list(geom.exterior.coords)
+
+        if len(coords) < 4:
+         raise HTTPException(status_code=400, detail="Polígono inválido para memorial.")
+
         if coords[0] != coords[-1]:
-            coords.append(coords[0])
+         coords.append(coords[0])
 
         if tipo_referencial == "LOCAL_CARTESIANA":
             pontos_locais = [

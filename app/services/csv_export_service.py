@@ -11,14 +11,32 @@ class CsvExportService:
     @staticmethod
     def gerar_csv(geojson: str):
 
-        geom = shape(json.loads(geojson))
+        try:
+            geom = shape(json.loads(geojson))
+        except Exception as exc:
+            raise ValueError("GeoJSON inválido para exportação CSV") from exc
+
+        if geom.is_empty:
+            raise ValueError("Geometria vazia para CSV")
+
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+
+        if geom.is_empty or not geom.is_valid:
+            raise ValueError("Geometria inválida para CSV")
 
         coords = list(geom.exterior.coords)
+
+        if len(coords) < 4:
+            raise ValueError("Polígono inválido para CSV")
+
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
 
         lines = ["VERTICE,X,Y"]
 
         for i, (x, y) in enumerate(coords[:-1], start=1):
-            lines.append(f"V{i},{x},{y}")
+            lines.append(f"V{i},{float(x)},{float(y)}")
 
         return "\n".join(lines)
 
@@ -31,6 +49,7 @@ class CsvExportService:
 
         ts = int(datetime.utcnow().timestamp())
 
+        # ⚠️ NÃO alterei estrutura de pasta conforme sua regra
         folder = os.path.join(base_dir, str(imovel_id), "cad")
 
         os.makedirs(folder, exist_ok=True)

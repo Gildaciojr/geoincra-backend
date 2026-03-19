@@ -15,16 +15,34 @@ class CadExportService:
     @staticmethod
     def gerar_scr(geojson: str):
 
-        geom = shape(json.loads(geojson))
+        try:
+            geom = shape(json.loads(geojson))
+        except Exception as exc:
+            raise ValueError("GeoJSON inválido para exportação CAD") from exc
+
+        if geom.is_empty:
+            raise ValueError("Geometria vazia para exportação CAD")
+
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+
+        if geom.is_empty or not geom.is_valid:
+            raise ValueError("Geometria inválida para exportação CAD")
 
         coords = list(geom.exterior.coords)
 
-        lines = []
+        if len(coords) < 4:
+            raise ValueError("Polígono inválido para CAD")
 
+        # garantir fechamento
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
+        lines = []
         lines.append("PLINE")
 
         for x, y in coords:
-            lines.append(f"{x},{y}")
+            lines.append(f"{float(x)},{float(y)}")
 
         lines.append("C")
 
