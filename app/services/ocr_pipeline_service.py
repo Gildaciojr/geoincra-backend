@@ -512,268 +512,262 @@ class OcrPipelineService:
         else:
             print(f"ℹ️ Matrícula já existente: {numero_matricula}")
 
-        return matricula
+            return matricula
 
-@staticmethod
-def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
-    # 1️⃣ GeoJSON direto (prioridade máxima)
-    geojson = dados.get("geojson") or dados.get("geometria")
+    @staticmethod
+    def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
+        # 1️⃣ GeoJSON direto (prioridade máxima)
+        geojson = dados.get("geojson") or dados.get("geometria")
 
-    geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
-    if geojson_normalizado:
-        print("✅ GeoJSON recebido diretamente do OCR")
-        return geojson_normalizado
+        geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
+        if geojson_normalizado:
+            print("✅ GeoJSON recebido diretamente do OCR")
+            return geojson_normalizado
 
-    # 2️⃣ Segmentos NORMALIZADOS (novo padrão do worker)
-    segmentos_memorial = None
+        # 2️⃣ Segmentos NORMALIZADOS (novo padrão do worker)
+        segmentos_memorial = None
 
-    if isinstance(dados.get("geometria"), dict):
-        segmentos_memorial = dados["geometria"].get("segmentos")
+        if isinstance(dados.get("geometria"), dict):
+            segmentos_memorial = dados["geometria"].get("segmentos")
 
-    if not segmentos_memorial:
-        segmentos_memorial = dados.get("segmentos_memorial")
+        if not segmentos_memorial:
+            segmentos_memorial = dados.get("segmentos_memorial")
 
-    geojson_por_segmentos = OcrPipelineService._gerar_geojson_por_segmentos(
-        segmentos_memorial
-    )
+        geojson_por_segmentos = OcrPipelineService._gerar_geojson_por_segmentos(
+            segmentos_memorial
+        )
 
-    if geojson_por_segmentos:
-        print("✅ GeoJSON gerado a partir de segmentos")
-        return geojson_por_segmentos
+        if geojson_por_segmentos:
+            print("✅ GeoJSON gerado a partir de segmentos")
+            return geojson_por_segmentos
 
-    # 3️⃣ Memorial texto (fallback final)
-    memorial_texto = None
+        # 3️⃣ Memorial texto (fallback final)
+        memorial_texto = None
 
-    if isinstance(dados.get("geometria"), dict):
-        memorial_texto = dados["geometria"].get("memorial_texto")
+        if isinstance(dados.get("geometria"), dict):
+            memorial_texto = dados["geometria"].get("memorial_texto")
 
-    if not memorial_texto:
-        memorial_texto = dados.get("memorial_texto")
+        if not memorial_texto:
+            memorial_texto = dados.get("memorial_texto")
 
-    geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
-        memorial_texto
-    )
+        geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
+            memorial_texto
+        )
 
-    if geojson_por_memorial:
-        print("✅ GeoJSON gerado a partir de memorial_texto")
-        return geojson_por_memorial
+        if geojson_por_memorial:
+            print("✅ GeoJSON gerado a partir de memorial_texto")
+            return geojson_por_memorial
 
-    print("❌ Nenhuma fonte geométrica válida encontrada")
-    return None
-
-@staticmethod
-def _normalizar_geojson(geojson: Any) -> Optional[str]:
-    if geojson is None:
+        print("❌ Nenhuma fonte geométrica válida encontrada")
         return None
 
-    if isinstance(geojson, dict):
-        try:
-            return json.dumps(geojson)
-        except Exception:
+    @staticmethod
+    def _normalizar_geojson(geojson: Any) -> Optional[str]:
+        if geojson is None:
             return None
 
-    if isinstance(geojson, str):
-        texto = geojson.strip()
+        if isinstance(geojson, dict):
+            try:
+                return json.dumps(geojson)
+            except Exception:
+                return None
+
+        if isinstance(geojson, str):
+            texto = geojson.strip()
+
+            if not texto:
+                return None
+
+            try:
+                json.loads(texto)
+                return texto
+            except Exception:
+                print("⚠️ GeoJSON inválido recebido do OCR")
+                return None
+
+        return None
+
+    @staticmethod
+    def _distancia_entre_pontos(
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+    ) -> float:
+        dx: float = float(p2[0]) - float(p1[0])
+        dy: float = float(p2[1]) - float(p1[1])
+        return sqrt((dx * dx) + (dy * dy))
+
+    @staticmethod
+    def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if len(coords) < 3:
+            return coords
+
+        primeiro: tuple[float, float] = coords[0]
+        ultimo: tuple[float, float] = coords[-1]
+
+        distancia_fechamento = OcrPipelineService._distancia_entre_pontos(
+            primeiro,
+            ultimo,
+        )
+
+        if distancia_fechamento <= OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS:
+            coords[-1] = primeiro
+            return coords
+
+        if primeiro != ultimo:
+            coords.append(primeiro)
+
+        return coords
+
+    @staticmethod
+    def _gerar_geojson_por_segmentos(
+        segmentos_memorial: Any,
+    ) -> Optional[str]:
+        if not isinstance(segmentos_memorial, list) or not segmentos_memorial:
+            return None
+
+        coords: list[tuple[float, float]] = [(0.0, 0.0)]
+        x = 0.0
+        y = 0.0
+
+        for index, seg in enumerate(segmentos_memorial, start=1):
+            if not isinstance(seg, dict):
+                print(f"⚠️ Segmento inválido na posição {index}")
+                return None
+
+            angulo_raw = (
+                seg.get("azimute")
+                or seg.get("azimute_raw")
+                or seg.get("rumo")
+            )
+
+            distancia_raw = seg.get("distancia")
+
+            if angulo_raw is None or distancia_raw is None:
+                print(f"⚠️ Segmento incompleto na posição {index}")
+                return None
+
+            try:
+                azimute = OcrPipelineService._parse_angulo_para_graus(str(angulo_raw))
+
+                if azimute < 0 or azimute > 360:
+                    raise ValueError("Azimute fora do intervalo válido")
+
+                distancia = OcrPipelineService._parse_distancia(distancia_raw)
+
+                if distancia <= 0:
+                    raise ValueError("Distância inválida")
+
+            except Exception as exc:
+                print(f"⚠️ Segmento inválido {index}: {str(exc)}")
+                return None
+
+            azimute_rad = radians(azimute)
+
+            dx = distancia * sin(azimute_rad)
+            dy = distancia * cos(azimute_rad)
+
+            x += dx
+            y += dy
+
+            coords.append((x, y))
+
+        if len(coords) < 4:
+            print("⚠️ Segmentos insuficientes para formar polígono")
+            return None
+
+        coords = OcrPipelineService._fechar_anel(coords)
+
+        polygon = Polygon(coords)
+
+        if polygon.is_empty or not polygon.is_valid:
+            polygon = polygon.buffer(0)
+
+        if polygon.is_empty or not polygon.is_valid:
+            print("⚠️ Polígono inválido mesmo após correção")
+            return None
+
+        return json.dumps(polygon.__geo_interface__)
+
+    @staticmethod
+    def _gerar_geojson_por_memorial(
+        memorial_texto: Any,
+    ) -> Optional[str]:
+        if not isinstance(memorial_texto, str):
+            return None
+
+        texto = memorial_texto.strip()
 
         if not texto:
             return None
 
         try:
-            json.loads(texto)
-            return texto
-        except Exception:
-            print("⚠️ GeoJSON inválido recebido do OCR")
+            resultado = MemorialParserService.gerar_geometria(texto)
+        except Exception as exc:
+            print(f"⚠️ Falha ao gerar geometria a partir do memorial: {str(exc)}")
             return None
 
-    return None
+        geojson = resultado.get("geojson")
 
-
-@staticmethod
-def _distancia_entre_pontos(
-    p1: tuple[float, float],
-    p2: tuple[float, float],
-) -> float:
-    dx: float = float(p2[0]) - float(p1[0])
-    dy: float = float(p2[1]) - float(p1[1])
-    return sqrt((dx * dx) + (dy * dy))
-
-
-@staticmethod
-def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    if len(coords) < 3:
-        return coords
-
-    primeiro: tuple[float, float] = coords[0]
-    ultimo: tuple[float, float] = coords[-1]
-
-    distancia_fechamento = OcrPipelineService._distancia_entre_pontos(
-        primeiro,
-        ultimo,
-    )
-
-    if distancia_fechamento <= OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS:
-        coords[-1] = primeiro
-        return coords
-
-    if primeiro != ultimo:
-        coords.append(primeiro)
-
-    return coords
-
-@staticmethod
-def _gerar_geojson_por_segmentos(
-    segmentos_memorial: Any,
-) -> Optional[str]:
-    if not isinstance(segmentos_memorial, list) or not segmentos_memorial:
-        return None
-
-    coords: list[tuple[float, float]] = [(0.0, 0.0)]
-    x = 0.0
-    y = 0.0
-
-    for index, seg in enumerate(segmentos_memorial, start=1):
-        if not isinstance(seg, dict):
-            print(f"⚠️ Segmento inválido na posição {index}")
-            return None
-
-        angulo_raw = (
-            seg.get("azimute")
-            or seg.get("azimute_raw")
-            or seg.get("rumo")
-        )
-
-        distancia_raw = seg.get("distancia")
-
-        if angulo_raw is None or distancia_raw is None:
-            print(f"⚠️ Segmento incompleto na posição {index}")
+        if not isinstance(geojson, dict):
             return None
 
         try:
-            azimute = OcrPipelineService._parse_angulo_para_graus(str(angulo_raw))
-
-            if azimute < 0 or azimute > 360:
-                raise ValueError("Azimute fora do intervalo válido")
-
-            distancia = OcrPipelineService._parse_distancia(distancia_raw)
-
-            if distancia <= 0:
-                raise ValueError("Distância inválida")
-
-        except Exception as exc:
-            print(f"⚠️ Segmento inválido {index}: {str(exc)}")
+            return json.dumps(geojson)
+        except Exception:
             return None
 
-        azimute_rad = radians(azimute)
+    @staticmethod
+    def _parse_distancia(valor: Any) -> float:
+        if isinstance(valor, (int, float)):
+            return float(valor)
 
-        dx = distancia * sin(azimute_rad)
-        dy = distancia * cos(azimute_rad)
+        texto = str(valor).strip()
 
-        x += dx
-        y += dy
+        if not texto:
+            raise ValueError("Distância vazia")
 
-        coords.append((x, y))
+        texto = texto.replace(".", "").replace(",", ".")
 
-    if len(coords) < 4:
-        print("⚠️ Segmentos insuficientes para formar polígono")
-        return None
+        try:
+            distancia = float(texto)
+        except Exception:
+            raise ValueError(f"Distância inválida: {valor}")
 
-    coords = OcrPipelineService._fechar_anel(coords)
+        if distancia <= 0:
+            raise ValueError("Distância deve ser positiva")
 
-    polygon = Polygon(coords)
+        return distancia
 
-    if polygon.is_empty or not polygon.is_valid:
-        polygon = polygon.buffer(0)
+    @staticmethod
+    def _parse_angulo_para_graus(valor: str) -> float:
+        valor_limpo = " ".join(valor.strip().upper().split())
 
-    if polygon.is_empty or not polygon.is_valid:
-        print("⚠️ Polígono inválido mesmo após correção")
-        return None
+        if re.match(r"^[NS]\s*.+\s*[EW]$", valor_limpo):
+            return MemorialParserService._rumo_para_azimute(valor_limpo)
 
-    return json.dumps(polygon.__geo_interface__)
+        match_dms = re.search(
+            r"(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?",
+            valor_limpo,
+        )
 
-@staticmethod
-def _gerar_geojson_por_memorial(
-    memorial_texto: Any,
-) -> Optional[str]:
-    if not isinstance(memorial_texto, str):
-        return None
+        if match_dms:
+            graus, minutos, segundos = match_dms.groups()
 
-    texto = memorial_texto.strip()
+            g = float(graus)
+            m = float(minutos)
+            s = float(segundos or 0)
 
-    if not texto:
-        return None
+            decimal = g + (m / 60) + (s / 3600)
 
-    try:
-        resultado = MemorialParserService.gerar_geometria(texto)
-    except Exception as exc:
-        print(f"⚠️ Falha ao gerar geometria a partir do memorial: {str(exc)}")
-        return None
+            if decimal < 0 or decimal > 360:
+                raise ValueError("Ângulo DMS inválido")
 
-    geojson = resultado.get("geojson")
+            return decimal
 
-    if not isinstance(geojson, dict):
-        return None
-
-    try:
-        return json.dumps(geojson)
-    except Exception:
-        return None
-
-
-@staticmethod
-def _parse_distancia(valor: Any) -> float:
-    if isinstance(valor, (int, float)):
-        return float(valor)
-
-    texto = str(valor).strip()
-
-    if not texto:
-        raise ValueError("Distância vazia")
-
-    texto = texto.replace(".", "").replace(",", ".")
-
-    try:
-        distancia = float(texto)
-    except Exception:
-        raise ValueError(f"Distância inválida: {valor}")
-
-    if distancia <= 0:
-        raise ValueError("Distância deve ser positiva")
-
-    return distancia
-
-@staticmethod
-def _parse_angulo_para_graus(valor: str) -> float:
-    valor_limpo = " ".join(valor.strip().upper().split())
-
-    # RUMO (N 10° E)
-    if re.match(r"^[NS]\s*.+\s*[EW]$", valor_limpo):
-        return MemorialParserService._rumo_para_azimute(valor_limpo)
-
-    # DMS
-    match_dms = re.search(
-        r"(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?",
-        valor_limpo,
-    )
-
-    if match_dms:
-        graus, minutos, segundos = match_dms.groups()
-
-        g = float(graus)
-        m = float(minutos)
-        s = float(segundos or 0)
-
-        decimal = g + (m / 60) + (s / 3600)
-
-        if decimal < 0 or decimal > 360:
-            raise ValueError("Ângulo DMS inválido")
-
-        return decimal
-
-    # FLOAT DIRETO
-    try:
-        decimal = float(valor_limpo.replace(",", "."))
-        if decimal < 0 or decimal > 360:
-            raise ValueError("Ângulo fora do intervalo")
-        return decimal
-    except Exception:
-        raise ValueError(f"Ângulo inválido: {valor}")
+        try:
+            decimal = float(valor_limpo.replace(",", "."))
+            if decimal < 0 or decimal > 360:
+                raise ValueError("Ângulo fora do intervalo")
+            return decimal
+        except Exception:
+            raise ValueError(f"Ângulo inválido: {valor}")
