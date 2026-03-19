@@ -516,15 +516,32 @@ class OcrPipelineService:
 
     @staticmethod
     def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
-        # 1️⃣ GeoJSON direto (prioridade máxima)
+        # ❗ NÃO confiar diretamente em geojson vindo do OCR/GPT
+        # Só aceita se for realmente válido E consistente
+
         geojson = dados.get("geojson") or dados.get("geometria")
 
         geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
-        if geojson_normalizado:
-            print("✅ GeoJSON recebido diretamente do OCR")
-            return geojson_normalizado
 
-        # 2️⃣ Segmentos NORMALIZADOS (novo padrão do worker)
+        if geojson_normalizado:
+            try:
+                parsed = json.loads(geojson_normalizado)
+
+                # validação mínima obrigatória de GeoJSON
+                if (
+                    isinstance(parsed, dict)
+                    and parsed.get("type") in ["Polygon", "MultiPolygon"]
+                    and isinstance(parsed.get("coordinates"), list)
+                ):
+                    print("✅ GeoJSON válido recebido diretamente do OCR")
+                    return geojson_normalizado
+                else:
+                    print("⚠️ GeoJSON do OCR ignorado (estrutura inválida)")
+
+            except Exception:
+                print("⚠️ GeoJSON do OCR inválido (json malformado)")
+
+        # 2️⃣ Segmentos NORMALIZADOS (principal fonte confiável)
         segmentos_memorial = None
 
         if isinstance(dados.get("geometria"), dict):
