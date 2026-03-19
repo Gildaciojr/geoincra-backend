@@ -24,6 +24,8 @@ from app.services.memorial_service import MemorialService
 from app.services.ocr_normalizer import normalizar_dados_ocr
 from app.services.sigef_validation_service import SigefValidationService
 from app.services.matricula_analysis_service import MatriculaAnalysisService
+from app.crud.documento_tecnico_crud import create_documento_tecnico
+from app.schemas.documento_tecnico import DocumentoTecnicoCreate
 
 
 class OcrPipelineService:
@@ -264,7 +266,22 @@ class OcrPipelineService:
                     perimetro_m=geometria.perimetro_m or 0,
                 )
 
-                result["steps"]["memorial"] = {"success": True}
+                doc_memorial = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="MEMORIAL_DESCRITIVO",
+                        tipo="Memorial Descritivo",
+                        status_tecnico="GERADO",
+                        conteudo_texto=memorial,
+                    ),
+                )
+
+                result["steps"]["memorial"] = {
+                    "success": True,
+                    "documento_tecnico_id": doc_memorial.id,
+
+                }
 
             except Exception as exc:
                 result["errors"].append(str(exc))
@@ -298,10 +315,23 @@ class OcrPipelineService:
 
                 url_svg = f"{base_url}/{path_svg.replace('app/', '')}"
 
+                # 🔥 PERSISTÊNCIA
+                doc_croqui = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="CROQUI",
+                        tipo="Croqui",
+                        status_tecnico="GERADO",
+                        arquivo_path=path_svg,
+                    ),
+                )
+
                 result["steps"]["croqui"] = {
                     "success": True,
                     "arquivo_path": path_svg,
                     "arquivo_url": url_svg,
+                    "documento_tecnico_id": doc_croqui.id,
                     "confrontantes_incluidos": bool(confrontantes),
                     "message": f"Croqui salvo: {path_svg}",
                 }
@@ -337,10 +367,23 @@ class OcrPipelineService:
 
                 url_scr = f"{base_url}/{path_scr.replace('app/', '')}"
 
+                # 🔥 PERSISTÊNCIA
+                doc_cad = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="CAD_SCRIPT",
+                        tipo="Script CAD",
+                        status_tecnico="GERADO",
+                        arquivo_path=path_scr,
+                    ),
+                )
+
                 result["steps"]["cad"] = {
                     "success": True,
                     "arquivo_path": path_scr,
                     "arquivo_url": url_scr,
+                    "documento_tecnico_id": doc_cad.id,
                     "message": f"Script CAD salvo: {path_scr}",
                 }
 
@@ -362,7 +405,7 @@ class OcrPipelineService:
                 "message": "CAD não executado: geometria inexistente.",
             }
 
-         # =========================================================
+        # =========================================================
         # TXT (LISP / COORDENADAS)
         # =========================================================
         if geometria:
@@ -378,10 +421,23 @@ class OcrPipelineService:
 
                 url_txt = f"{base_url}/{path_txt.replace('app/', '')}"
 
+                # 🔥 PERSISTÊNCIA
+                doc_txt = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="COORDENADAS_TXT",
+                        tipo="TXT Coordenadas",
+                        status_tecnico="GERADO",
+                        arquivo_path=path_txt,
+                    ),
+                )
+
                 result["steps"]["txt"] = {
                     "success": True,
                     "arquivo_path": path_txt,
                     "arquivo_url": url_txt,
+                    "documento_tecnico_id": doc_txt.id,
                     "message": f"TXT gerado: {path_txt}",
                 }
 
@@ -403,27 +459,39 @@ class OcrPipelineService:
                 "message": "TXT não executado: geometria inexistente.",
             }
 
-
-                # =========================================================
+        # =========================================================
         # DXF
         # =========================================================
         if geometria:
             try:
                 from app.services.dxf_export_service import DxfExportService
 
-                doc_dxf = DxfExportService.gerar_dxf(geometria.geojson)
+                doc_dxf_file = DxfExportService.gerar_dxf(geometria.geojson)
 
                 path_dxf = DxfExportService.salvar_dxf(
                     imovel_id=imovel.id,
-                    doc=doc_dxf,
+                    doc=doc_dxf_file,
                 )
 
                 url_dxf = f"{base_url}/{path_dxf.replace('app/', '')}"
+
+                # 🔥 PERSISTÊNCIA
+                doc_dxf = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="DXF",
+                        tipo="Arquivo DXF",
+                        status_tecnico="GERADO",
+                        arquivo_path=path_dxf,
+                    ),
+                )
 
                 result["steps"]["dxf"] = {
                     "success": True,
                     "arquivo_path": path_dxf,
                     "arquivo_url": url_dxf,
+                    "documento_tecnico_id": doc_dxf.id,
                     "message": f"DXF gerado: {path_dxf}",
                 }
 
@@ -445,7 +513,7 @@ class OcrPipelineService:
                 "message": "DXF não executado: geometria inexistente.",
             }
 
-                # =========================================================
+        # =========================================================
         # SHP (QGIS READY + VALIDAÇÃO TOPOLOGICA)
         # =========================================================
         if geometria:
@@ -461,10 +529,23 @@ class OcrPipelineService:
 
                 url_shp = f"{base_url}/{path_folder.replace('app/', '')}"
 
+                # 🔥 PERSISTÊNCIA
+                doc_shp = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="SHP",
+                        tipo="Shapefile",
+                        status_tecnico="GERADO",
+                        arquivo_path=path_folder,
+                    ),
+                )
+
                 result["steps"]["shp"] = {
                     "success": True,
                     "pasta_path": path_folder,
                     "pasta_url": url_shp,
+                    "documento_tecnico_id": doc_shp.id,
                     "message": f"SHP gerado: {path_folder}",
                 }
 
@@ -492,6 +573,8 @@ class OcrPipelineService:
         if geometria:
             if geometria.epsg_origem and geometria.epsg_origem > 0:
                 try:
+                    base_url = "https://geoincra.escriturafacil.com"
+
                     payload = SigefCsvExportRequest(
                         geometria_id=geometria.id,
                         prefixo_vertice="V",
@@ -504,15 +587,31 @@ class OcrPipelineService:
                     sigef_data = exportar_sigef_csv(db, payload)
 
                     path_sigef = sigef_data.get("arquivo_path")
+                    documento_tecnico_id = sigef_data.get("documento_tecnico_id")
+
                     url_sigef = (
                         f"{base_url}/{path_sigef.replace('app/', '')}"
                         if path_sigef
                         else None
                     )
 
+                    # 🔥 GARANTIA DE PERSISTÊNCIA (caso o serviço não salve)
+                    if not documento_tecnico_id and path_sigef:
+                        doc_sigef = create_documento_tecnico(
+                            db=db,
+                            imovel_id=imovel.id,
+                            data=DocumentoTecnicoCreate(
+                                document_group_key="PLANILHA_SIGEF",
+                                tipo="Planilha SIGEF",
+                                status_tecnico="GERADO",
+                                arquivo_path=path_sigef,
+                            ),
+                        )
+                        documento_tecnico_id = doc_sigef.id
+
                     result["steps"]["sigef_csv"] = {
                         "success": True,
-                        "documento_tecnico_id": sigef_data.get("documento_tecnico_id"),
+                        "documento_tecnico_id": documento_tecnico_id,
                         "arquivo_path": path_sigef,
                         "arquivo_url": url_sigef,
                         "epsg_utm": sigef_data.get("epsg_utm"),
@@ -672,7 +771,7 @@ class OcrPipelineService:
         # ❗ NÃO confiar diretamente em geojson vindo do OCR/GPT
         # Só aceita se for realmente válido e consistente
 
-        geojson = dados.get("geojson") or dados.get("geometria")
+        geojson = dados.get("geojson")
 
         geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
 
@@ -732,6 +831,7 @@ class OcrPipelineService:
         print("❌ Nenhuma fonte geométrica válida encontrada")
         return None
 
+
     @staticmethod
     def _normalizar_geojson(geojson: Any) -> Optional[str]:
         if geojson is None:
@@ -758,6 +858,7 @@ class OcrPipelineService:
 
         return None
 
+
     @staticmethod
     def _distancia_entre_pontos(
         p1: tuple[float, float],
@@ -766,6 +867,7 @@ class OcrPipelineService:
         dx: float = float(p2[0]) - float(p1[0])
         dy: float = float(p2[1]) - float(p1[1])
         return sqrt((dx * dx) + (dy * dy))
+
 
     @staticmethod
     def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -781,8 +883,7 @@ class OcrPipelineService:
         )
 
         if distancia_fechamento <= OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS:
-            coords[-1] = primeiro
-            return coords
+            return coords[:-1] + [primeiro]
 
         if primeiro != ultimo:
             coords.append(primeiro)
@@ -848,16 +949,24 @@ class OcrPipelineService:
 
         coords = OcrPipelineService._fechar_anel(coords)
 
+        # 🔥 validação de coordenadas
+        if len(set(coords)) < 3:
+            print("⚠️ Coordenadas degeneradas (polígono inválido)")
+            return None
+
         polygon = Polygon(coords)
 
-        if polygon.is_empty or not polygon.is_valid:
+        # 🔥 tentativa de correção topológica
+        if not polygon.is_valid:
             polygon = polygon.buffer(0)
 
+        # 🔥 validação final obrigatória
         if polygon.is_empty or not polygon.is_valid:
             print("⚠️ Polígono inválido mesmo após correção")
             return None
 
         return json.dumps(polygon.__geo_interface__)
+
 
     @staticmethod
     def _gerar_geojson_por_memorial(
@@ -887,6 +996,7 @@ class OcrPipelineService:
         except Exception:
             return None
 
+
     @staticmethod
     def _parse_distancia(valor: Any) -> float:
         if isinstance(valor, (int, float)):
@@ -908,6 +1018,7 @@ class OcrPipelineService:
             raise ValueError("Distância deve ser positiva")
 
         return distancia
+
 
     @staticmethod
     def _parse_angulo_para_graus(valor: str) -> float:
