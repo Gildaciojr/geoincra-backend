@@ -584,6 +584,10 @@ class OcrPipelineService:
         if not numero_matricula:
             numero_matricula = dados.get("numero_matricula") or dados.get("matricula")
 
+        # 🔥 GARANTIA DE STRING (CRÍTICO)
+        if numero_matricula is not None:
+            numero_matricula = str(numero_matricula).strip()
+
         if not numero_matricula:
             return None
 
@@ -615,6 +619,16 @@ class OcrPipelineService:
             )
         )
 
+        # 🔹 Normalização leve defensiva
+        if descricao_imovel is not None:
+            descricao_imovel = str(descricao_imovel).strip()
+
+        if comarca is not None:
+            comarca = str(comarca).strip()
+
+        # =========================================================
+        # CRIAÇÃO
+        # =========================================================
         if not matricula:
             matricula = Matricula(
                 imovel_id=imovel.id,
@@ -630,6 +644,9 @@ class OcrPipelineService:
             print(f"✅ Matrícula criada: {numero_matricula}")
             return matricula
 
+        # =========================================================
+        # ATUALIZAÇÃO
+        # =========================================================
         alterou: bool = False
 
         if comarca and not matricula.comarca:
@@ -644,9 +661,11 @@ class OcrPipelineService:
             db.commit()
             db.refresh(matricula)
             print(f"ℹ️ Matrícula atualizada: {numero_matricula}")
+        else:
+            print(f"ℹ️ Matrícula já existente (sem alterações): {numero_matricula}")
 
-            print(f"ℹ️ Matrícula já existente: {numero_matricula}")
-            return matricula
+        # 🔥 RETORNO GARANTIDO (CRÍTICO)
+        return matricula
 
     @staticmethod
     def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:

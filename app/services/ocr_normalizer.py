@@ -22,11 +22,22 @@ def _to_float(valor: Any) -> Optional[float]:
 
 
 def _normalizar_texto(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
+
+    # 🔥 CONVERSÃO CRÍTICA
+    if isinstance(valor, (int, float)):
+        valor = str(valor)
+
     if not isinstance(valor, str):
         return None
 
     texto = " ".join(valor.strip().split())
-    return texto or None
+
+    if not texto:
+        return None
+
+    return texto
 
 
 def _normalizar_cpf_cnpj(valor: Any) -> Optional[str]:
