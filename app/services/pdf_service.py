@@ -3,6 +3,9 @@ from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+# 🔥 NOVO
+from weasyprint import HTML
+
 
 # =========================================================
 # BASE PATHS
@@ -21,6 +24,9 @@ def _ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
 
+# =========================================================
+# (mantido, mas NÃO usado mais)
+# =========================================================
 def _limpar_html_simples(html: str) -> list[str]:
     substituicoes = {
         "<br>": "\n",
@@ -48,7 +54,7 @@ def _limpar_html_simples(html: str) -> list[str]:
 
 
 # =========================================================
-# 📄 ORÇAMENTO (SEM CONTRATO / SEM PAGAMENTO)
+# 📄 ORÇAMENTO (mantido em reportlab)
 # =========================================================
 def gerar_pdf_orcamento(calculation) -> str:
     base = _resolve_base() / "orcamentos" / "preview"
@@ -87,7 +93,7 @@ def gerar_pdf_orcamento(calculation) -> str:
 
 
 # =========================================================
-# 📄 PROPOSTA
+# 📄 PROPOSTA (AGORA CORRETA)
 # =========================================================
 def gerar_pdf_proposta(project_id: int, html_simples: str) -> str:
     base_root = _resolve_base()
@@ -97,28 +103,14 @@ def gerar_pdf_proposta(project_id: int, html_simples: str) -> str:
     filename = f"proposta_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
     file_path = base / filename
 
-    c = canvas.Canvas(str(file_path), pagesize=A4)
-    y = A4[1] - 40
+    # 🔥 HTML REAL → PDF REAL
+    HTML(string=html_simples).write_pdf(str(file_path))
 
-    for linha in _limpar_html_simples(html_simples):
-        if not linha.strip():
-            y -= 10
-            continue
-        c.drawString(40, y, linha.strip())
-        y -= 14
-        if y < 40:
-            c.showPage()
-            y = A4[1] - 40
-
-    c.save()
-
-    # ✅ RETORNO RELATIVO
     return str(file_path.relative_to(base_root))
 
 
-
 # =========================================================
-# 📄 CONTRATO
+# 📄 CONTRATO (AGORA CORRETO)
 # =========================================================
 def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
     base_root = _resolve_base()
@@ -128,21 +120,6 @@ def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
     filename = f"contrato_project_{project_id}_{int(datetime.utcnow().timestamp())}.pdf"
     file_path = base / filename
 
-    c = canvas.Canvas(str(file_path), pagesize=A4)
-    y = A4[1] - 40
+    HTML(string=html_simples).write_pdf(str(file_path))
 
-    for linha in _limpar_html_simples(html_simples):
-        if not linha.strip():
-            y -= 10
-            continue
-        c.drawString(40, y, linha.strip())
-        y -= 14
-        if y < 40:
-            c.showPage()
-            y = A4[1] - 40
-
-    c.save()
-
-    # ✅ RETORNO RELATIVO
     return str(file_path.relative_to(base_root))
-
