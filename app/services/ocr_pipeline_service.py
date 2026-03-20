@@ -191,6 +191,62 @@ class OcrPipelineService:
                     "numero_matricula": matricula.numero_matricula,
                     "comarca": matricula.comarca,
                 }
+
+                # ================= MATRÍCULA PDF =================
+                try:
+                    from app.services.matricula_pdf_service import MatriculaPdfService
+                    from app.services.matricula_ocr_processor_service import MatriculaOcrProcessorService
+
+                    payload = MatriculaOcrProcessorService.gerar_payload_documentos(
+                        db=db,
+                        matricula_id=matricula.id,
+                    )
+
+                    pdf = MatriculaPdfService.gerar_pdf(
+                        imovel_id=imovel.id,
+                        dados=payload,
+                    )
+
+                    doc_pdf = create_documento_tecnico(
+                        db=db,
+                        imovel_id=imovel.id,
+                        data=DocumentoTecnicoCreate(
+                            document_group_key="MATRICULA_PDF",
+                            tipo="Matrícula PDF",
+                            status_tecnico="EM_ANALISE",
+                            arquivo_path=pdf.get("arquivo_path"),
+                            metadata_json={
+                                "matricula_id": matricula.id,
+                                "numero_matricula": matricula.numero_matricula,
+                            },
+                            gerado_em=datetime.utcnow(),
+                        ),
+                    )
+
+                    url_pdf = OcrPipelineService._build_file_url(
+                        base_url,
+                        pdf.get("arquivo_path"),
+                    )
+
+                    result["steps"]["matricula_pdf"] = {
+                        "success": True,
+                        "documento_tecnico_id": doc_pdf.id,
+                        "arquivo_path": pdf.get("arquivo_path"),
+                        "arquivo_url": url_pdf,
+                        "message": "PDF da matrícula gerado.",
+                    }
+
+                    print(f"✅ PDF matrícula gerado: {pdf.get('arquivo_path')}")
+
+                except Exception as exc_pdf:
+                    OcrPipelineService._rollback_safely(db)
+                    result["steps"]["matricula_pdf"] = {
+                        "success": False,
+                        "message": f"Falha ao gerar PDF matrícula: {str(exc_pdf)}",
+                    }
+                    result["errors"].append(f"Matrícula PDF: {str(exc_pdf)}")
+                    print(f"❌ Falha ao gerar PDF matrícula: {str(exc_pdf)}")
+
             else:
                 result["steps"]["matricula"] = {
                     "success": False,
@@ -265,6 +321,34 @@ class OcrPipelineService:
                 db.commit()
                 db.refresh(geometria)
 
+                # ================= GEOJSON FILE =================
+                geo_file = GeometriaService.exportar_geojson(
+                    imovel_id=imovel.id,
+                    geojson=geometria.geojson,
+                )
+
+                doc_geo = create_documento_tecnico(
+                    db=db,
+                    imovel_id=imovel.id,
+                    data=DocumentoTecnicoCreate(
+                        document_group_key="GEOMETRIA_GEOJSON",
+                        tipo="GeoJSON",
+                        status_tecnico="EM_ANALISE",
+                        arquivo_path=geo_file.get("arquivo_path"),
+                        metadata_json={
+                            "geometria_id": geometria.id,
+                            "epsg_origem": geometria.epsg_origem,
+                            "epsg_utm": geometria.epsg_utm,
+                        },
+                        gerado_em=datetime.utcnow(),
+                    ),
+                )
+
+                url_geo = OcrPipelineService._build_file_url(
+                    base_url,
+                    geo_file.get("arquivo_path"),
+                )
+
                 result["steps"]["geometria"] = {
                     "success": True,
                     "geometria_id": geometria.id,
@@ -273,6 +357,9 @@ class OcrPipelineService:
                     "epsg_utm": geometria.epsg_utm,
                     "area_hectares": geometria.area_hectares,
                     "perimetro_m": geometria.perimetro_m,
+                    "arquivo_path": geo_file.get("arquivo_path"),
+                    "arquivo_url": url_geo,
+                    "documento_tecnico_id": doc_geo.id,
                 }
 
                 try:
@@ -320,13 +407,14 @@ class OcrPipelineService:
                     epsg_origem=geometria.epsg_origem,
                     area_hectares=geometria.area_hectares or 0,
                     perimetro_m=geometria.perimetro_m or 0,
+                    imovel_id=imovel.id,
                 )
 
                 memorial_json = OcrPipelineService._json_safe(memorial)
-                memorial_texto = str(memorial.get("texto") or "").strip()
+                memorial_texto = str(memorial.get("texto_preview") or "").strip()
 
                 if not memorial_texto:
-                    raise ValueError("Memorial gerado sem campo de texto.")
+                    raise ValueError("Memorial gerado sem texto_preview.")
 
                 doc_memorial = create_documento_tecnico(
                     db=db,
@@ -340,9 +428,13 @@ class OcrPipelineService:
                         metadata_json={
                             "geometria_id": geometria.id,
                             "epsg_origem": geometria.epsg_origem,
-                            "epsg_utm": geometria.epsg_utm,
+                            "epsg_utm": memorial.get("epsg_utm"),
                             "tipo_referencial": memorial.get("tipo_referencial"),
+                            "arquivo_path": memorial.get("arquivo_path"),
+                            "arquivo_url": memorial.get("arquivo_url"),
                         },
+                        arquivo_path=memorial.get("arquivo_path"),
+                        arquivo_url=memorial.get("arquivo_url"),
                         gerado_em=datetime.utcnow(),
                     ),
                 )
@@ -351,9 +443,10 @@ class OcrPipelineService:
                     "success": True,
                     "documento_tecnico_id": doc_memorial.id,
                     "texto_preview": memorial_texto[:4000],
+                    "arquivo_url": memorial.get("arquivo_url"),
                     "tipo_referencial": memorial.get("tipo_referencial"),
                     "epsg_utm": memorial.get("epsg_utm"),
-                    "message": "Memorial gerado com sucesso.",
+                    "message": "Memorial gerado com arquivo.",
                 }
 
             except Exception as exc:

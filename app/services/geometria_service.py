@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+from datetime import datetime
 from math import floor
 from typing import Any
 
@@ -11,6 +13,10 @@ from shapely.geometry import Polygon, shape
 
 
 class GeometriaService:
+
+    # =========================================================
+    # UTM EPSG
+    # =========================================================
     @staticmethod
     def _utm_epsg_from_lonlat(lon: float, lat: float) -> int:
         if not (-180.0 <= lon <= 180.0):
@@ -26,6 +32,9 @@ class GeometriaService:
 
         return (32600 + zona) if lat >= 0 else (32700 + zona)
 
+    # =========================================================
+    # SAFE FLOAT
+    # =========================================================
     @staticmethod
     def _safe_float(value: float) -> float:
         try:
@@ -36,6 +45,9 @@ class GeometriaService:
         except Exception:
             return 0.0
 
+    # =========================================================
+    # PARSE GEOJSON
+    # =========================================================
     @staticmethod
     def _parse_polygon_geojson(geojson: str) -> Polygon:
         try:
@@ -50,7 +62,6 @@ class GeometriaService:
         if geom.is_empty:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
-        # 🔒 garantir anel válido
         coords = list(geom.exterior.coords)
         if len(coords) < 4:
             raise HTTPException(status_code=400, detail="Polígono inválido (menos de 4 vértices).")
@@ -70,11 +81,15 @@ class GeometriaService:
 
         return geom
 
+    # =========================================================
+    # ANALISAR REFERENCIAL
+    # =========================================================
     @staticmethod
     def analisar_referencial(
         geojson: str,
         epsg_origem: int | None = 4326,
     ) -> dict[str, Any]:
+
         geom = GeometriaService._parse_polygon_geojson(geojson)
 
         minx, miny, maxx, maxy = geom.bounds
@@ -123,11 +138,15 @@ class GeometriaService:
             },
         }
 
+    # =========================================================
+    # CALCULAR AREA E PERIMETRO
+    # =========================================================
     @staticmethod
     def calcular_area_perimetro(
         geojson: str,
         epsg_origem: int = 4326,
     ) -> tuple[int | None, float, float]:
+
         analise = GeometriaService.analisar_referencial(
             geojson=geojson,
             epsg_origem=epsg_origem,
@@ -178,3 +197,32 @@ class GeometriaService:
         perimetro_m = geom_utm.length
 
         return epsg_utm, area_m2 / 10000.0, perimetro_m
+
+    # =========================================================
+    # EXPORTAR GEOJSON PARA ARQUIVO
+    # =========================================================
+    @staticmethod
+    def exportar_geojson(imovel_id: int, geojson: str) -> dict:
+        pasta = f"app/uploads/imoveis/{imovel_id}/geometria"
+        os.makedirs(pasta, exist_ok=True)
+
+        timestamp = int(datetime.utcnow().timestamp())
+        nome_arquivo = f"geometria_{timestamp}.geojson"
+
+        caminho = f"{pasta}/{nome_arquivo}"
+
+        try:
+            parsed = json.loads(geojson)
+            with open(caminho, "w", encoding="utf-8") as f:
+                json.dump(parsed, f, ensure_ascii=False, indent=2)
+        except Exception:
+            with open(caminho, "w", encoding="utf-8") as f:
+                f.write(geojson)
+
+        url = caminho.replace("app/", "/")
+
+        return {
+            "success": True,
+            "arquivo_path": caminho,
+            "arquivo_url": url,
+        }

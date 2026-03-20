@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from math import atan2, degrees, floor, sqrt
@@ -21,6 +22,9 @@ class _PontoPlano:
 
 
 class MemorialService:
+
+    BASE_UPLOAD_DIR = "app/uploads/imoveis"
+
     @staticmethod
     def _safe_float(value):
         try:
@@ -62,6 +66,7 @@ class MemorialService:
         geojson: str,
         epsg_origem: int | None = 4326,
     ) -> Tuple[Optional[int], List[_PontoPlano], str]:
+
         analise = GeometriaService.analisar_referencial(
             geojson=geojson,
             epsg_origem=epsg_origem,
@@ -73,26 +78,13 @@ class MemorialService:
         coords = list(geom.exterior.coords)
 
         if len(coords) < 4:
-         raise HTTPException(status_code=400, detail="Polígono inválido para memorial.")
+            raise HTTPException(status_code=400, detail="Polígono inválido.")
 
         if coords[0] != coords[-1]:
-         coords.append(coords[0])
+            coords.append(coords[0])
 
         if tipo_referencial == "LOCAL_CARTESIANA":
-            pontos_locais = [
-                _PontoPlano(
-                    x=MemorialService._safe_float(x),
-                    y=MemorialService._safe_float(y),
-                )
-                for x, y in coords
-            ]
-            return None, pontos_locais, tipo_referencial
-
-        if epsg_origem is None or epsg_origem <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="EPSG de origem inválido para memorial geográfico.",
-            )
+            return None, [_PontoPlano(float(x), float(y)) for x, y in coords], tipo_referencial
 
         lon = float(analise["centroid"]["x"])
         lat = float(analise["centroid"]["y"])
@@ -104,32 +96,23 @@ class MemorialService:
             always_xy=True,
         )
 
-        pontos_utm: list[_PontoPlano] = []
+        pontos = []
         for x, y in coords:
             X, Y = transformer.transform(float(x), float(y))
-            pontos_utm.append(
-                _PontoPlano(
-                    x=MemorialService._safe_float(X),
-                    y=MemorialService._safe_float(Y),
-                )
-            )
+            pontos.append(_PontoPlano(X, Y))
 
-        return epsg_utm, pontos_utm, tipo_referencial
+        return epsg_utm, pontos, tipo_referencial
 
     @staticmethod
-    def _dist_m(p1: _PontoPlano, p2: _PontoPlano) -> float:
-        return MemorialService._safe_float(
-            sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2)
-        )
+    def _dist_m(p1, p2):
+        return sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2)
 
     @staticmethod
-    def _azimute_deg(p1: _PontoPlano, p2: _PontoPlano) -> float:
+    def _azimute_deg(p1, p2):
         dx = p2.x - p1.x
         dy = p2.y - p1.y
         ang = degrees(atan2(dx, dy))
-        if ang < 0:
-            ang += 360
-        return MemorialService._safe_float(ang)
+        return ang + 360 if ang < 0 else ang
 
     @staticmethod
     def _deg_to_dms_str(deg: float) -> str:
@@ -149,36 +132,24 @@ class MemorialService:
             return f"S {MemorialService._deg_to_dms_str(az - 180)} W"
         return f"N {MemorialService._deg_to_dms_str(360 - az)} W"
 
+    # 🚀 NOVO: salvar arquivo
     @staticmethod
-    def _montar_texto_memorial(
-        linhas: list[dict],
-        tipo_referencial: str,
-        epsg_utm: int | None,
-        area_hectares: float,
-        perimetro_m: float,
-    ) -> str:
-        cabecalho = [
-            "MEMORIAL DESCRITIVO",
-            "",
-            f"Referencial: {tipo_referencial}",
-            f"EPSG UTM: {epsg_utm if epsg_utm is not None else 'N/A'}",
-            f"Área (ha): {area_hectares:.4f}",
-            f"Perímetro (m): {perimetro_m:.3f}",
-            "",
-            "Segmentos:",
-        ]
+    def _salvar_arquivo(imovel_id: int, texto: str) -> tuple[str, str]:
 
-        corpo: list[str] = []
-        for linha in linhas:
-            corpo.append(
-                f"{linha['ordem']:02d}. "
-                f"{linha['de_vertice']} -> {linha['ate_vertice']} | "
-                f"Azimute: {linha['azimute_graus']:.6f}° | "
-                f"Rumo: {linha['rumo']} | "
-                f"Distância: {linha['distancia_m']:.3f} m"
-            )
+        pasta = f"{MemorialService.BASE_UPLOAD_DIR}/{imovel_id}/memorial"
+        os.makedirs(pasta, exist_ok=True)
 
-        return "\n".join(cabecalho + corpo)
+        timestamp = int(datetime.utcnow().timestamp())
+        nome_arquivo = f"memorial_{timestamp}.txt"
+
+        caminho = f"{pasta}/{nome_arquivo}"
+
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write(texto)
+
+        url = caminho.replace("app/", "/")
+
+        return caminho, url
 
     @staticmethod
     def gerar_memorial(
@@ -186,19 +157,17 @@ class MemorialService:
         geojson: str,
         area_hectares: float,
         perimetro_m: float,
+        imovel_id: int,  # 🔥 IMPORTANTE
         prefixo_vertice: str = "V",
         epsg_origem: int | None = 4326,
     ) -> dict:
-        epsg_utm, pts, tipo_referencial = MemorialService._to_points(
-            geojson=geojson,
-            epsg_origem=epsg_origem,
-        )
+
+        epsg_utm, pts, tipo = MemorialService._to_points(geojson, epsg_origem)
 
         linhas = []
 
         for i in range(len(pts) - 1):
-            p1 = pts[i]
-            p2 = pts[i + 1]
+            p1, p2 = pts[i], pts[i + 1]
 
             dist = MemorialService._dist_m(p1, p2)
             az = MemorialService._azimute_deg(p1, p2)
@@ -206,36 +175,40 @@ class MemorialService:
             linhas.append(
                 {
                     "ordem": i + 1,
-                    "de_vertice": f"{prefixo_vertice}{i + 1}",
-                    "ate_vertice": (
-                        f"{prefixo_vertice}{i + 2}"
-                        if i + 1 < len(pts) - 1
-                        else f"{prefixo_vertice}1"
-                    ),
+                    "de_vertice": f"V{i + 1}",
+                    "ate_vertice": f"V{i + 2}" if i + 1 < len(pts) - 1 else "V1",
                     "azimute_graus": az,
                     "rumo": MemorialService._rumo_from_azimute(az),
                     "distancia_m": dist,
                 }
             )
 
-        area_hectares = MemorialService._safe_float(area_hectares)
-        perimetro_m = MemorialService._safe_float(perimetro_m)
+        texto = "\n".join([
+            "MEMORIAL DESCRITIVO\n",
+            f"Referencial: {tipo}",
+            f"EPSG UTM: {epsg_utm or 'N/A'}",
+            f"Área (ha): {area_hectares:.4f}",
+            f"Perímetro (m): {perimetro_m:.3f}",
+            "\nSegmentos:\n",
+            *[
+                f"{l['ordem']:02d}. {l['de_vertice']} -> {l['ate_vertice']} | "
+                f"Azimute: {l['azimute_graus']:.6f}° | "
+                f"Rumo: {l['rumo']} | "
+                f"Distância: {l['distancia_m']:.3f} m"
+                for l in linhas
+            ]
+        ])
 
-        texto = MemorialService._montar_texto_memorial(
-            linhas=linhas,
-            tipo_referencial=tipo_referencial,
-            epsg_utm=epsg_utm,
-            area_hectares=area_hectares,
-            perimetro_m=perimetro_m,
-        )
+        # 🔥 AQUI ESTÁ O PONTO CRÍTICO
+        caminho, url = MemorialService._salvar_arquivo(imovel_id, texto)
 
         return {
+            "success": True,
             "geometria_id": geometria_id,
+            "arquivo_path": caminho,
+            "arquivo_url": url,
+            "texto_preview": texto,
+            "tipo_referencial": tipo,
             "epsg_utm": epsg_utm,
-            "tipo_referencial": tipo_referencial,
-            "area_hectares": area_hectares,
-            "perimetro_m": perimetro_m,
-            "linhas": linhas,
-            "texto": texto,
-            "gerado_em": datetime.utcnow(),
+            "message": "Memorial gerado com arquivo físico.",
         }

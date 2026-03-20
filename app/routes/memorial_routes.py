@@ -17,6 +17,7 @@ router = APIRouter()
 )
 def gerar_memorial(geometria_id: int, db: Session = Depends(get_db)):
     geom = db.query(Geometria).get(geometria_id)
+
     if not geom:
         raise HTTPException(status_code=404, detail="Geometria não encontrada.")
 
@@ -26,14 +27,18 @@ def gerar_memorial(geometria_id: int, db: Session = Depends(get_db)):
     if geom.area_hectares is None or geom.perimetro_m is None:
         raise HTTPException(
             status_code=400,
-            detail="Geometria sem área/perímetro calculados (execute cálculo primeiro).",
+            detail="Geometria sem área/perímetro calculados.",
         )
+
+    if not geom.imovel_id:
+        raise HTTPException(status_code=400, detail="Geometria sem vínculo com imóvel.")
 
     payload = MemorialService.gerar_memorial(
         geometria_id=geom.id,
         geojson=geom.geojson,
         area_hectares=float(geom.area_hectares),
         perimetro_m=float(geom.perimetro_m),
+        imovel_id=geom.imovel_id,  # 🔥 NOVO
         prefixo_vertice="V",
     )
 
