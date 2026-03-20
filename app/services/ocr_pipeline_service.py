@@ -190,6 +190,8 @@ class OcrPipelineService:
                     "matricula_id": matricula.id,
                     "numero_matricula": matricula.numero_matricula,
                     "comarca": matricula.comarca,
+                    "arquivo_path": None,
+                    "arquivo_url": None,
                 }
 
                 # ================= MATRÍCULA PDF =================
@@ -235,6 +237,9 @@ class OcrPipelineService:
                         "arquivo_url": url_pdf,
                         "message": "PDF da matrícula gerado.",
                     }
+
+                    result["steps"]["matrícula"]["arquivo_path"] = pdf.get("arquivo_path")
+                    result["steps"]["matricula"]["arquivo_url"] = url_pdf
 
                     print(f"✅ PDF matrícula gerado: {pdf.get('arquivo_path')}")
 

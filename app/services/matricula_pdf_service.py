@@ -44,7 +44,8 @@ class MatriculaPdfService:
 
         c.save()
 
-        url = caminho.replace("app/", "/")
+        base_url = "https://geoincra.escriturafacil.com"
+        url = f"{base_url}/{caminho.replace('app/', '')}"
 
         return {
             "arquivo_path": caminho,

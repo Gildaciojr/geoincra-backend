@@ -219,7 +219,9 @@ class GeometriaService:
             with open(caminho, "w", encoding="utf-8") as f:
                 f.write(geojson)
 
-        url = caminho.replace("app/", "/")
+        
+        base_url = "https://geoincra.escriturafacil.com"
+        url = f"{base_url}/{caminho.replace('app/', '')}"
 
         return {
             "success": True,

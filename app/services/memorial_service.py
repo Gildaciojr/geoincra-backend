@@ -147,7 +147,8 @@ class MemorialService:
         with open(caminho, "w", encoding="utf-8") as f:
             f.write(texto)
 
-        url = caminho.replace("app/", "/")
+        base_url = "https://geoincra.escriturafacil.com"
+        url = f"{base_url}/{caminho.replace('app/', '')}"
 
         return caminho, url
 
