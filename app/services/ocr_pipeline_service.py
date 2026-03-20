@@ -238,7 +238,7 @@ class OcrPipelineService:
                         "message": "PDF da matrícula gerado.",
                     }
 
-                    result["steps"]["matrícula"]["arquivo_path"] = pdf.get("arquivo_path")
+                    result["steps"]["matricula"]["arquivo_path"] = pdf.get("arquivo_path")
                     result["steps"]["matricula"]["arquivo_url"] = url_pdf
 
                     print(f"✅ PDF matrícula gerado: {pdf.get('arquivo_path')}")
