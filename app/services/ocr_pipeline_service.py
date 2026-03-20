@@ -711,6 +711,7 @@ class OcrPipelineService:
         if geometria:
             try:
                 from app.services.shp_export_service import ShpExportService
+                import os
 
                 gdf = ShpExportService.gerar_shp(geometria.geojson)
 
@@ -719,7 +720,22 @@ class OcrPipelineService:
                     gdf=gdf,
                 )
 
-                url_shp = OcrPipelineService._build_file_url(base_url, path_folder)
+                # 🔥 localizar arquivo .shp real dentro da pasta
+                arquivos = os.listdir(path_folder)
+
+                shp_file = next(
+                    (f for f in arquivos if f.lower().endswith(".shp")),
+                    None
+                )
+
+                if not shp_file:
+                    raise Exception("Arquivo .shp não encontrado na pasta gerada")
+
+                arquivo_path = f"{path_folder}/{shp_file}"
+                arquivo_url = OcrPipelineService._build_file_url(
+                    base_url,
+                    arquivo_path,
+                )
 
                 doc_shp = create_documento_tecnico(
                     db=db,
@@ -728,10 +744,11 @@ class OcrPipelineService:
                         document_group_key="SHP",
                         tipo="Shapefile",
                         status_tecnico="EM_ANALISE",
-                        arquivo_path=path_folder,
+                        arquivo_path=arquivo_path,
                         metadata_json={
                             "geometria_id": geometria.id,
                             "formato": "SHP",
+                            "pasta_path": path_folder,
                         },
                         gerado_em=datetime.utcnow(),
                     ),
@@ -740,12 +757,13 @@ class OcrPipelineService:
                 result["steps"]["shp"] = {
                     "success": True,
                     "pasta_path": path_folder,
-                    "pasta_url": url_shp,
+                    "arquivo_path": arquivo_path,
+                    "arquivo_url": arquivo_url,
                     "documento_tecnico_id": doc_shp.id,
-                    "message": f"SHP gerado: {path_folder}",
+                    "message": f"SHP gerado: {arquivo_path}",
                 }
 
-                print(f"✅ SHP gerado: {path_folder}")
+                print(f"✅ SHP gerado: {arquivo_path}")
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
