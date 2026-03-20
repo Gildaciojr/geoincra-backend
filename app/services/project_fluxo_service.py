@@ -1,5 +1,3 @@
-# app/services/project_fluxo_service.py
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,10 +8,10 @@ from sqlalchemy.orm import Session
 from app.models.project import Project
 from app.models.project_status import ProjectStatus
 from app.models.documento_tecnico import DocumentoTecnico
+from app.models.imovel import Imovel
 from app.models.timeline import TimelineEntry
-from app.models.imovel import Imovel  # 🔥 IMPORT CRÍTICO
-
 from app.crud.project_status_crud import definir_status_projeto
+from app.schemas.project_status import ProjectStatusCreate
 
 
 class ProjectFluxoService:
@@ -53,6 +51,10 @@ class ProjectFluxoService:
         project_id: int,
         definido_por_usuario_id: int | None = None,
     ) -> ProjectStatus:
+        """
+        Avalia o estado atual do projeto e define automaticamente
+        o status adequado com base nos documentos técnicos.
+        """
 
         project: Project | None = (
             db.query(Project)
@@ -63,16 +65,11 @@ class ProjectFluxoService:
         if not project:
             raise ValueError("Projeto não encontrado.")
 
-        # =========================================================
-        # 🔥 QUERY CORRIGIDA (SEM DUPLICATE ALIAS)
-        # =========================================================
         documentos: List[DocumentoTecnico] = (
             db.query(DocumentoTecnico)
             .join(Imovel, Imovel.id == DocumentoTecnico.imovel_id)
-            .filter(
-                Imovel.project_id == project_id,
-                DocumentoTecnico.is_versao_atual.is_(True),
-            )
+            .filter(Imovel.project_id == project_id)
+            .filter(DocumentoTecnico.is_versao_atual.is_(True))
             .all()
         )
 
@@ -84,10 +81,6 @@ class ProjectFluxoService:
                 descricao="Projeto cadastrado. Nenhum documento técnico anexado.",
                 definido_por_usuario_id=definido_por_usuario_id,
             )
-
-        # =========================================================
-        # ANÁLISE DOS DOCUMENTOS
-        # =========================================================
 
         total = len(documentos)
         aprovados = 0
@@ -109,10 +102,6 @@ class ProjectFluxoService:
                 ProjectFluxoService.DOC_RASCUNHO,
             ):
                 em_analise += 1
-
-        # =========================================================
-        # DECISÃO DE STATUS DO PROJETO
-        # =========================================================
 
         if reprovados > 0:
             return ProjectFluxoService._definir_status(
@@ -158,10 +147,6 @@ class ProjectFluxoService:
             definido_por_usuario_id=definido_por_usuario_id,
         )
 
-    # =========================================================
-    # MÉTODOS AUXILIARES
-    # =========================================================
-
     @staticmethod
     def _definir_status(
         db: Session,
@@ -170,16 +155,17 @@ class ProjectFluxoService:
         descricao: str,
         definido_por_usuario_id: int | None,
     ) -> ProjectStatus:
+        payload = ProjectStatusCreate(
+            status=status,
+            descricao=descricao,
+            definido_automaticamente=True,
+            definido_por_usuario_id=definido_por_usuario_id,
+        )
 
         status_obj = definir_status_projeto(
             db=db,
             project_id=project_id,
-            data={
-                "status": status,
-                "descricao": descricao,
-                "definido_automaticamente": True,
-                "definido_por_usuario_id": definido_por_usuario_id,
-            },
+            data=payload,
         )
 
         timeline = TimelineEntry(

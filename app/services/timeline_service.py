@@ -14,14 +14,20 @@ class TimelineService:
         descricao: str | None = None,
         status: str | None = None,
     ):
-        entry = TimelineEntry(
-            project_id=project_id,
-            titulo=titulo,
-            descricao=descricao,
-            status=status,
-            created_at=datetime.utcnow(),
-        )
-        db.add(entry)
-        db.commit()
-        db.refresh(entry)
-        return entry
+        try:
+            entry = TimelineEntry(
+                project_id=project_id,
+                titulo=titulo,
+                descricao=descricao,
+                status=status,
+                created_at=datetime.utcnow(),
+            )
+
+            db.add(entry)
+
+            # 🔥 NÃO COMMIT AQUI
+            return entry
+
+        except Exception as e:
+            print(f"⚠️ Falha ao registrar timeline: {str(e)}")
+            return None

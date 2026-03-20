@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
 from app.models.imovel import Imovel
 from app.models.documento_tecnico import DocumentoTecnico
@@ -11,7 +11,6 @@ from app.schemas.documento_tecnico import (
     DocumentoTecnicoNovaVersaoRequest,
 )
 
-# NOVOS IMPORTS — automação do workflow
 from app.services.project_fluxo_service import ProjectFluxoService
 from app.services.project_automacao_service import ProjectAutomacaoService
 
@@ -63,6 +62,32 @@ def _get_max_versao(
     return int(row[0]) if row else 0
 
 
+def _executar_automacoes_pos_documento(
+    db: Session,
+    project_id: int,
+) -> None:
+    """
+    Automações de fluxo não podem derrubar a criação do documento técnico.
+    """
+    try:
+        ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"⚠️ Falha ao atualizar fluxo do projeto {project_id}: {str(exc)}")
+
+    try:
+        ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"⚠️ Falha ao aplicar automação do projeto {project_id}: {str(exc)}")
+
+
 # =========================================================
 # CREATE
 # =========================================================
@@ -100,10 +125,8 @@ def create_documento_tecnico(
     db.commit()
     db.refresh(obj)
 
-    # ======== NOVO BLOCO — AUTOMAÇÃO DO WORKFLOW =========
     project_id = imovel.project_id
-    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
-    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+    _executar_automacoes_pos_documento(db, project_id)
 
     return obj
 
@@ -180,10 +203,8 @@ def update_documento_tecnico(
     db.commit()
     db.refresh(obj)
 
-    # ======== NOVO BLOCO — AUTOMAÇÃO =========
     project_id = obj.imovel.project_id
-    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
-    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+    _executar_automacoes_pos_documento(db, project_id)
 
     return obj
 
@@ -227,10 +248,8 @@ def criar_nova_versao(
     db.commit()
     db.refresh(obj)
 
-    # ======== NOVO BLOCO — AUTOMAÇÃO =========
     project_id = obj.imovel.project_id
-    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
-    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+    _executar_automacoes_pos_documento(db, project_id)
 
     return obj
 
@@ -271,8 +290,6 @@ def delete_documento_tecnico(
             novo_atual.is_versao_atual = True
             db.commit()
 
-    # ======== NOVO BLOCO — AUTOMAÇÃO =========
-    ProjectFluxoService.avaliar_fluxo_projeto(db, project_id)
-    ProjectAutomacaoService.aplicar_status_automatico(db, project_id)
+    _executar_automacoes_pos_documento(db, project_id)
 
     return True

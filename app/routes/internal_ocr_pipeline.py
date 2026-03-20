@@ -21,7 +21,7 @@ router = APIRouter(
 class OcrPipelineRequest(BaseModel):
     document_id: int
     ocr_result_id: Optional[int] = None
-    categoria: str | None = None
+    categoria: Optional[str] = None
     dados: Dict[str, Any]
 
 
@@ -44,17 +44,18 @@ def executar_pipeline_ocr(
 ):
     try:
         logger.info(
-            "OCR pipeline iniciado para document_id=%s ocr_result_id=%s",
+            "OCR pipeline iniciado para document_id=%s ocr_result_id=%s categoria=%s",
             payload.document_id,
             payload.ocr_result_id,
+            payload.categoria,
         )
 
         result = OcrPipelineService.executar_pipeline(
             db=db,
             document_id=payload.document_id,
             ocr_result_id=payload.ocr_result_id,
-            prompt_categoria=payload.categoria,
-            dados_extraidos=payload.dados,
+            prompt_categoria=payload.categoria or "",
+            dados_extraidos=payload.dados or {},
         )
 
         logger.info(
@@ -72,14 +73,19 @@ def executar_pipeline_ocr(
             pipeline_details=result,
         )
 
-    except Exception as e:
+    except Exception as exc:
         logger.exception(
             "Erro no pipeline OCR document_id=%s ocr_result_id=%s",
             payload.document_id,
             payload.ocr_result_id,
         )
 
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
         raise HTTPException(
             status_code=500,
-            detail=f"Erro ao executar pipeline OCR: {str(e)}",
+            detail=f"Erro ao executar pipeline OCR: {str(exc)}",
         )
