@@ -9,7 +9,7 @@ from shapely.geometry import shape, Polygon
 class CroquiService:
 
     @staticmethod
-    def _normalize_points(coords: List[Tuple[float, float]], size: int = 900, pad: int = 40):
+    def _normalize_points(coords: List[Tuple[float, float]], size: int = 900, pad: int = 80):
         xs = [c[0] for c in coords]
         ys = [c[1] for c in coords]
 
@@ -27,7 +27,7 @@ class CroquiService:
             ny = (maxy - y) * scale + pad
             norm.append((nx, ny))
 
-        return norm, size
+        return norm, size, scale
 
     @staticmethod
     def _render_confrontantes(
@@ -41,10 +41,10 @@ class CroquiService:
         linhas = []
 
         posicoes = {
-            "NORTE": (size / 2, 30),
-            "SUL": (size / 2, size - 20),
-            "LESTE": (size - 20, size / 2),
-            "OESTE": (20, size / 2),
+            "NORTE": (size / 2, 40),
+            "SUL": (size / 2, size - 30),
+            "LESTE": (size - 30, size / 2),
+            "OESTE": (30, size / 2),
         }
 
         for c in confrontantes:
@@ -69,11 +69,51 @@ class CroquiService:
 
             linhas.append(
                 f'<text x="{x:.2f}" y="{y:.2f}" '
-                f'font-size="13" font-family="Arial" fill="#111" text-anchor="{anchor}">'
+                f'font-size="12" font-family="Arial" fill="#111" text-anchor="{anchor}">'
                 f'{lado}: {nome}</text>'
             )
 
         return "\n".join(linhas)
+
+    @staticmethod
+    def _render_escala(size: int) -> str:
+        return f"""
+        <g transform="translate(60,{size-60})">
+            <line x1="0" y1="0" x2="200" y2="0" stroke="#000" stroke-width="2"/>
+            <line x1="0" y1="-5" x2="0" y2="5" stroke="#000"/>
+            <line x1="100" y1="-5" x2="100" y2="5" stroke="#000"/>
+            <line x1="200" y1="-5" x2="200" y2="5" stroke="#000"/>
+            <text x="0" y="20" font-size="10">0</text>
+            <text x="90" y="20" font-size="10">50</text>
+            <text x="180" y="20" font-size="10">100 m</text>
+        </g>
+        """
+
+    @staticmethod
+    def _render_legenda(size: int) -> str:
+        return f"""
+        <g transform="translate({size-260},{size-140})">
+            <rect x="0" y="0" width="220" height="100" fill="white" stroke="#000"/>
+            <text x="10" y="15" font-size="12" font-family="Arial" font-weight="bold">LEGENDA</text>
+
+            <circle cx="15" cy="35" r="3" fill="#000"/>
+            <text x="30" y="38" font-size="11">Vértices</text>
+
+            <line x1="10" y1="55" x2="30" y2="55" stroke="#0f172a" stroke-width="3"/>
+            <text x="35" y="58" font-size="11">Perímetro</text>
+
+            <text x="10" y="80" font-size="11">N: Norte</text>
+        </g>
+        """
+
+    @staticmethod
+    def _render_titulo(size: int) -> str:
+        return f"""
+        <text x="{size/2}" y="30" text-anchor="middle"
+              font-size="16" font-family="Arial" font-weight="bold">
+              CROQUI DO IMÓVEL
+        </text>
+        """
 
     @staticmethod
     def gerar_svg(
@@ -106,54 +146,62 @@ class CroquiService:
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
-        # =========================================================
         # NORMALIZAÇÃO
-        # =========================================================
-        norm, size = CroquiService._normalize_points(
+        norm, size, scale = CroquiService._normalize_points(
             [(float(x), float(y)) for x, y in coords]
         )
 
         poly_points = " ".join([f"{x:.2f},{y:.2f}" for x, y in norm])
 
-        # =========================================================
         # VÉRTICES
-        # =========================================================
         labels = []
         for i, (x, y) in enumerate(norm[:-1], start=1):
             labels.append(
-                f'<text x="{x+6:.2f}" y="{y-6:.2f}" font-size="14" font-family="Arial" fill="#111">'
-                f'V{i}</text>'
+                f'<text x="{x+6:.2f}" y="{y-6:.2f}" font-size="13" font-family="Arial">V{i}</text>'
             )
             labels.append(
-                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3.5" fill="#111" />'
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3" fill="#000"/>'
             )
 
-        # =========================================================
         # CONFRONTANTES
-        # =========================================================
         confrontantes_svg = CroquiService._render_confrontantes(
             confrontantes or [],
             size
         )
 
-        # =========================================================
         # NORTE
-        # =========================================================
         north = f"""
-        <g transform="translate({size-90},60)">
-          <line x1="0" y1="40" x2="0" y2="0" stroke="#111" stroke-width="3"/>
-          <polygon points="0,-12 -10,6 10,6" fill="#111"/>
-          <text x="14" y="6" font-size="16" font-family="Arial" fill="#111">N</text>
+        <g transform="translate({size-100},80)">
+          <line x1="0" y1="40" x2="0" y2="0" stroke="#000" stroke-width="3"/>
+          <polygon points="0,-12 -10,6 10,6" fill="#000"/>
+          <text x="14" y="6" font-size="14">N</text>
         </g>
         """
 
+        # NOVOS ELEMENTOS
+        titulo = CroquiService._render_titulo(size)
+        escala = CroquiService._render_escala(size)
+        legenda = CroquiService._render_legenda(size)
+
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
+
   <rect x="0" y="0" width="{size}" height="{size}" fill="white"/>
+
+  {titulo}
+
   <polygon points="{poly_points}" fill="none" stroke="#0f172a" stroke-width="3"/>
+
   {north}
+
   {"".join(labels)}
+
   {confrontantes_svg}
+
+  {escala}
+
+  {legenda}
+
 </svg>
 """
 

@@ -1,5 +1,6 @@
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
 import os
 from datetime import datetime
 
@@ -24,12 +25,43 @@ class MatriculaPdfService:
 
         c = canvas.Canvas(caminho, pagesize=A4)
 
-        y = 800
+        largura, altura = A4
 
-        def linha(txt):
+        # =========================================================
+        # CONTROLE DE POSIÇÃO
+        # =========================================================
+        y = altura - 30 * mm
+
+        def nova_linha(espaco=6):
             nonlocal y
-            c.drawString(50, y, str(txt or ""))
-            y -= 20
+            y -= espaco * mm
+
+            if y < 30 * mm:
+                c.showPage()
+                y = altura - 30 * mm
+
+        def escrever(texto, x=20, tamanho=10, bold=False):
+            nonlocal y
+
+            fonte = "Helvetica-Bold" if bold else "Helvetica"
+            c.setFont(fonte, tamanho)
+            c.drawString(x * mm, y, str(texto or ""))
+
+        def titulo(texto):
+            escrever(texto, tamanho=14, bold=True)
+            nova_linha(10)
+
+        def subtitulo(texto):
+            escrever(texto, tamanho=11, bold=True)
+            nova_linha(8)
+
+        def linha_texto(texto):
+            escrever(texto, tamanho=10)
+            nova_linha(6)
+
+        # =========================================================
+        # DADOS
+        # =========================================================
 
         numero_matricula = (
             dados.get("numero_matricula")
@@ -40,30 +72,108 @@ class MatriculaPdfService:
         comarca = dados.get("comarca") or ""
         livro = dados.get("livro") or ""
         folha = dados.get("folha") or ""
+        codigo_cartorio = dados.get("codigo_cartorio") or ""
 
         confrontantes = dados.get("confrontantes") or []
+        proprietarios = dados.get("proprietarios") or []
 
-        linha("MATRÍCULA DO IMÓVEL")
-        linha("")
+        # =========================================================
+        # HEADER
+        # =========================================================
 
-        linha(f"Número: {numero_matricula}")
-        linha(f"Comarca: {comarca}")
-        linha(f"Livro: {livro}")
-        linha(f"Folha: {folha}")
+        titulo("MATRÍCULA DO IMÓVEL")
 
-        linha("")
-        linha("CONFRONTANTES:")
+        linha_texto(f"Número da Matrícula: {numero_matricula}")
+        linha_texto(f"Comarca: {comarca}")
+        linha_texto(f"Cartório: {codigo_cartorio}")
+        linha_texto(f"Livro: {livro}")
+        linha_texto(f"Folha: {folha}")
 
-        if isinstance(confrontantes, list):
+        nova_linha(10)
+
+        # =========================================================
+        # PROPRIETÁRIOS
+        # =========================================================
+
+        if isinstance(proprietarios, list) and proprietarios:
+            subtitulo("PROPRIETÁRIOS")
+
+            for p in proprietarios:
+
+                if not isinstance(p, dict):
+                    continue
+
+                nome = p.get("nome") or ""
+                cpf = p.get("cpf_cnpj") or ""
+                tipo = p.get("tipo") or ""
+
+                linha = f"{nome}"
+
+                if cpf:
+                    linha += f" | CPF/CNPJ: {cpf}"
+
+                if tipo:
+                    linha += f" | Tipo: {tipo}"
+
+                linha_texto(f"- {linha}")
+
+            nova_linha(6)
+
+        # =========================================================
+        # CONFRONTANTES
+        # =========================================================
+
+        if isinstance(confrontantes, list) and confrontantes:
+            subtitulo("CONFRONTANTES")
+
             for cft in confrontantes:
+
                 if not isinstance(cft, dict):
                     continue
 
-                direcao = cft.get("direcao") or cft.get("lado") or ""
-                nome = cft.get("nome") or ""
+                direcao = (
+                    cft.get("direcao")
+                    or cft.get("lado")
+                    or ""
+                )
 
-                if direcao or nome:
-                    linha(f"{direcao} - {nome}")
+                nome = cft.get("nome") or ""
+                matricula_cft = cft.get("matricula") or ""
+                descricao = cft.get("descricao") or ""
+                identificacao = cft.get("identificacao") or ""
+
+                partes = []
+
+                if direcao:
+                    partes.append(f"{direcao}")
+
+                if nome:
+                    partes.append(nome)
+
+                if matricula_cft:
+                    partes.append(f"Matrícula: {matricula_cft}")
+
+                if identificacao:
+                    partes.append(f"ID: {identificacao}")
+
+                if descricao:
+                    partes.append(descricao)
+
+                if partes:
+                    linha_texto(f"- {' | '.join(partes)}")
+
+            nova_linha(6)
+
+        # =========================================================
+        # RODAPÉ
+        # =========================================================
+
+        c.setFont("Helvetica", 8)
+        c.drawString(
+            20 * mm,
+            15 * mm,
+            f"Documento gerado automaticamente em {datetime.utcnow().strftime('%d/%m/%Y %H:%M:%S')} UTC"
+        )
 
         c.save()
 

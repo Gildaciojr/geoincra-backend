@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
@@ -10,13 +11,28 @@ from app.models.matricula import Matricula
 from app.models.confrontante import Confrontante
 from app.models.ocr_result import OcrResult
 
-# 🔥 NOVOS IMPORTS
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
 from app.services.geometria_service import GeometriaService
 
 
 class MatriculaOcrProcessorService:
+
+    @staticmethod
+    def _normalizar_matricula(valor: Any) -> str | None:
+        if not valor:
+            return None
+
+        texto = str(valor).strip()
+        texto = re.sub(r"[^\d./-]", "", texto)
+
+        return texto or None
+
+    @staticmethod
+    def _normalizar_nome(valor: Any) -> str | None:
+        if not valor:
+            return None
+        return " ".join(str(valor).strip().split())
 
     @staticmethod
     def processar_documento(db: Session, document_id: int) -> Dict[str, Any]:
@@ -44,7 +60,7 @@ class MatriculaOcrProcessorService:
                 ocr.dados_extraidos_json
             )
 
-            numero_matricula = (
+            numero_matricula = MatriculaOcrProcessorService._normalizar_matricula(
                 dados.get("numero_matricula")
                 or dados.get("matricula")
             )
@@ -94,7 +110,38 @@ class MatriculaOcrProcessorService:
                 )
 
             # =========================================================
-            # CONFRONTANTES
+            # PROPRIETÁRIOS (NOVO)
+            # =========================================================
+
+            proprietarios = dados.get("proprietarios")
+
+            if proprietarios and isinstance(proprietarios, list):
+
+                for p in proprietarios:
+
+                    if not isinstance(p, dict):
+                        continue
+
+                    nome = MatriculaOcrProcessorService._normalizar_nome(p.get("nome"))
+                    cpf_cnpj = p.get("cpf_cnpj")
+                    tipo = p.get("tipo")
+
+                    if not nome:
+                        continue
+
+                    linha = f"PROPRIETÁRIO: {nome}"
+
+                    if cpf_cnpj:
+                        linha += f" | CPF/CNPJ: {cpf_cnpj}"
+
+                    if tipo:
+                        linha += f" | TIPO: {tipo}"
+
+                    if linha not in (matricula.inteiro_teor or ""):
+                        matricula.inteiro_teor = (matricula.inteiro_teor or "") + "\n" + linha
+
+            # =========================================================
+            # CONFRONTANTES (MELHORADO)
             # =========================================================
 
             confrontantes = dados.get("confrontantes")
@@ -127,7 +174,6 @@ class MatriculaOcrProcessorService:
                         geojson=geojson
                     )
 
-                    # gerar memorial TXT
                     MemorialService.gerar_memorial(
                         geometria_id=geometria.id,
                         geojson=geojson,
@@ -158,10 +204,6 @@ class MatriculaOcrProcessorService:
                 "message": str(e)
             }
 
-    # =========================================================
-    # CONFRONTANTES
-    # =========================================================
-
     @staticmethod
     def _salvar_confrontantes(
         db: Session,
@@ -176,8 +218,21 @@ class MatriculaOcrProcessorService:
 
         for item in confrontantes:
 
-            direcao = item.get("direcao")
-            if not direcao:
+            if not isinstance(item, dict):
+                continue
+
+            direcao = (
+                item.get("lado")
+                or item.get("direcao")
+                or item.get("lado_normalizado")
+            )
+
+            nome = item.get("nome") or item.get("descricao")
+            matricula_cft = item.get("matricula")
+            identificacao = item.get("identificacao")
+            descricao = item.get("descricao")
+
+            if not any([direcao, nome, matricula_cft, identificacao]):
                 continue
 
             existente = (
@@ -195,17 +250,13 @@ class MatriculaOcrProcessorService:
             db.add(
                 Confrontante(
                     imovel_id=imovel_id,
-                    direcao=direcao,
-                    nome_confrontante=item.get("nome"),
-                    matricula_confrontante=item.get("matricula"),
-                    identificacao_imovel_confrontante=item.get("identificacao"),
-                    descricao=item.get("descricao"),
+                    direcao=direcao or "NAO_INFORMADO",
+                    nome_confrontante=nome,
+                    matricula_confrontante=matricula_cft,
+                    identificacao_imovel_confrontante=identificacao,
+                    descricao=descricao,
                 )
             )
-
-    # =========================================================
-    # JSON PARSER
-    # =========================================================
 
     @staticmethod
     def _parse_json(raw: Any) -> Dict[str, Any]:
@@ -224,10 +275,6 @@ class MatriculaOcrProcessorService:
                 return {"raw_result": raw}
 
         return {}
-
-    # =========================================================
-    # GERAR PAYLOAD PARA DOCX
-    # =========================================================
 
     @staticmethod
     def gerar_payload_documentos(
@@ -262,7 +309,8 @@ class MatriculaOcrProcessorService:
                     "direcao": c.direcao,
                     "nome": c.nome_confrontante,
                     "matricula": c.matricula_confrontante,
-                    "descricao": c.descricao
+                    "descricao": c.descricao,
+                    "identificacao": c.identificacao_imovel_confrontante,
                 }
                 for c in confrontantes
             ]

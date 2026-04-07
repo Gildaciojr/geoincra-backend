@@ -270,15 +270,74 @@ class OcrPipelineService:
 
         # ================= ANÁLISE =================
         try:
-            if matricula and matricula.inteiro_teor:
+            if matricula:
+
+                dados_analise: dict[str, Any] = {
+                    "texto": matricula.inteiro_teor,
+                    "numero_matricula": matricula.numero_matricula,
+                    "comarca": matricula.comarca,
+                    "livro": matricula.livro,
+                    "folha": matricula.folha,
+                    "codigo_cartorio": matricula.codigo_cartorio,
+                    "dados_ocr": dados,
+                }
+
+                try:
+                    proprietarios = dados.get("proprietarios")
+                    if isinstance(proprietarios, list):
+                        dados_analise["proprietarios"] = proprietarios
+                except Exception:
+                    pass
+
+                try:
+                    confrontantes = dados.get("confrontantes")
+                    if isinstance(confrontantes, list):
+                        dados_analise["confrontantes"] = confrontantes
+                except Exception:
+                    pass
+
                 analise = MatriculaAnalysisService.analisar(
                     texto=matricula.inteiro_teor
                 )
+
+                # 🔥 ENRIQUECIMENTO SEM QUEBRAR O SERVICE
+
+                if isinstance(analise, dict):
+
+                    classificacao = analise.get("classificacao") or {}
+
+                    # melhora leitura de proprietários
+                    if dados.get("proprietarios"):
+                        classificacao["proprietarios_identificados"] = True
+
+                    # melhora leitura de confrontantes
+                    if dados.get("confrontantes"):
+                        classificacao["tem_confrontantes"] = True
+
+                    analise["classificacao"] = classificacao
+
+                    # ajuste de score
+                    score = analise.get("score_juridico", 0)
+
+                    if dados.get("proprietarios"):
+                        score += 10
+
+                    if dados.get("confrontantes"):
+                        score += 10
+
+                    if matricula.livro and matricula.folha:
+                        score += 5
+
+                    score = min(score, 100)
+
+                    analise["score_juridico"] = score
+
                 result["steps"]["analise_juridica"] = analise
+
             else:
                 result["steps"]["analise_juridica"] = {
                     "success": False,
-                    "message": "Matrícula sem conteúdo suficiente para análise jurídica.",
+                    "message": "Matrícula inexistente para análise.",
                 }
 
         except Exception as exc:
@@ -371,25 +430,69 @@ class OcrPipelineService:
                 try:
                     from app.services.confrontante_service import ConfrontanteService
 
+                    confrontantes_raw = dados.get("confrontantes") or []
+
+                    confrontantes_processados = []
+
+                    if isinstance(confrontantes_raw, list):
+
+                        for index, c in enumerate(confrontantes_raw, start=1):
+
+                            if not isinstance(c, dict):
+                                continue
+
+                            lado = c.get("lado") or c.get("direcao")
+                            lado_norm = c.get("lado_normalizado")
+
+                            nome = c.get("nome")
+                            descricao = c.get("descricao")
+                            matricula_cft = c.get("matricula")
+                            identificacao = c.get("identificacao")
+
+                            # 🔥 REGRA: precisa ter pelo menos alguma informação útil
+                            if not any([nome, descricao, matricula_cft, identificacao]):
+                                continue
+
+                            confrontantes_processados.append(
+                                {
+                                    "lado": lado,
+                                    "lado_normalizado": lado_norm,
+                                    "nome": nome,
+                                    "descricao": descricao,
+                                    "matricula": matricula_cft,
+                                    "identificacao": identificacao,
+                                }
+                            )
+
+                    if not confrontantes_processados:
+                        print("⚠️ Nenhum confrontante válido após normalização")
+
                     confrontantes = ConfrontanteService.processar_confrontantes(
                         db=db,
                         imovel=imovel,
                         geometria=geometria,
-                        confrontantes_ocr=dados.get("confrontantes"),
+                        confrontantes_ocr=confrontantes_processados,
                     )
 
                     result["steps"]["confrontantes"] = {
                         "success": True,
                         "total": len(confrontantes),
+                        "normalizados": len(confrontantes_processados),
                     }
+
+                    print(f"✅ Confrontantes processados: {len(confrontantes)}")
 
                 except Exception as exc:
                     OcrPipelineService._rollback_safely(db)
+
                     result["steps"]["confrontantes"] = {
                         "success": False,
                         "message": f"Falha ao processar confrontantes: {str(exc)}",
                     }
+
                     result["errors"].append(f"Confrontantes: {str(exc)}")
+
+                    print(f"❌ Falha confrontantes: {str(exc)}")
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
@@ -881,6 +984,30 @@ class OcrPipelineService:
 
         print("🏁 Pipeline OCR concluído")
         return result
+    
+    @staticmethod
+    def _normalizar_texto_simples(valor: Any) -> Optional[str]:
+        if valor is None:
+            return None
+
+        texto = str(valor).strip()
+        if not texto:
+            return None
+
+        return " ".join(texto.split())
+
+    @staticmethod
+    def _normalizar_numero_matricula(valor: Any) -> Optional[str]:
+        if valor is None:
+            return None
+
+        texto = str(valor).strip()
+        if not texto:
+            return None
+
+        texto = re.sub(r"[^\d./-]", "", texto)
+
+        return texto or None
 
     @staticmethod
     def _upsert_matricula(
@@ -890,17 +1017,152 @@ class OcrPipelineService:
     ) -> Optional[Matricula]:
         numero_matricula: Optional[str] = None
 
-        if isinstance(dados.get("matricula"), dict):
-            numero_matricula = dados["matricula"].get("numero")
+        matricula_payload = dados.get("matricula")
+        if isinstance(matricula_payload, dict):
+            numero_matricula = matricula_payload.get("numero")
 
         if not numero_matricula:
-            numero_matricula = dados.get("numero_matricula") or dados.get("matricula")
+            numero_matricula = (
+                dados.get("numero_matricula")
+                or dados.get("matricula")
+            )
 
-        if numero_matricula is not None:
-            numero_matricula = str(numero_matricula).strip()
+        numero_matricula = OcrPipelineService._normalizar_numero_matricula(
+            numero_matricula
+        )
 
         if not numero_matricula:
             return None
+
+        livro: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("livro")
+            or (
+                matricula_payload.get("livro")
+                if isinstance(matricula_payload, dict)
+                else None
+            )
+        )
+
+        folha: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("folha")
+            or (
+                matricula_payload.get("folha")
+                if isinstance(matricula_payload, dict)
+                else None
+            )
+        )
+
+        comarca: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("comarca")
+            or (
+                matricula_payload.get("comarca")
+                if isinstance(matricula_payload, dict)
+                else None
+            )
+        )
+
+        cartorio: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("cartorio")
+            or (
+                matricula_payload.get("cartorio")
+                if isinstance(matricula_payload, dict)
+                else None
+            )
+        )
+
+        codigo_cartorio: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("codigo_cartorio")
+            or dados.get("codigo_cartorio_id")
+            or dados.get("codigo")
+        )
+
+        descricao_imovel: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("descricao_imovel")
+            or (
+                dados.get("imovel", {}).get("descricao")
+                if isinstance(dados.get("imovel"), dict)
+                else None
+            )
+        )
+
+        observacoes: Optional[str] = OcrPipelineService._normalizar_texto_simples(
+            dados.get("observacoes")
+        )
+
+        proprietarios = dados.get("proprietarios")
+        confrontantes = dados.get("confrontantes")
+
+        inteiro_teor_partes: list[str] = []
+
+        if descricao_imovel:
+            inteiro_teor_partes.append(f"DESCRIÇÃO DO IMÓVEL: {descricao_imovel}")
+
+        if comarca:
+            inteiro_teor_partes.append(f"COMARCA: {comarca}")
+
+        if cartorio:
+            inteiro_teor_partes.append(f"CARTÓRIO: {cartorio}")
+
+        if livro:
+            inteiro_teor_partes.append(f"LIVRO: {livro}")
+
+        if folha:
+            inteiro_teor_partes.append(f"FOLHA: {folha}")
+
+        if isinstance(proprietarios, list) and proprietarios:
+            inteiro_teor_partes.append("PROPRIETÁRIOS:")
+            for item in proprietarios:
+                if not isinstance(item, dict):
+                    continue
+
+                nome = OcrPipelineService._normalizar_texto_simples(item.get("nome"))
+                cpf_cnpj = OcrPipelineService._normalizar_texto_simples(item.get("cpf_cnpj"))
+                tipo = OcrPipelineService._normalizar_texto_simples(item.get("tipo"))
+
+                if not nome:
+                    continue
+
+                linha = f"- {nome}"
+                if cpf_cnpj:
+                    linha += f" | CPF/CNPJ: {cpf_cnpj}"
+                if tipo:
+                    linha += f" | Tipo: {tipo}"
+
+                inteiro_teor_partes.append(linha)
+
+        if isinstance(confrontantes, list) and confrontantes:
+            inteiro_teor_partes.append("CONFRONTANTES:")
+            for item in confrontantes:
+                if not isinstance(item, dict):
+                    continue
+
+                direcao = OcrPipelineService._normalizar_texto_simples(
+                    item.get("direcao") or item.get("lado")
+                )
+                nome = OcrPipelineService._normalizar_texto_simples(item.get("nome"))
+                descricao = OcrPipelineService._normalizar_texto_simples(item.get("descricao"))
+                matricula_confrontante = OcrPipelineService._normalizar_texto_simples(
+                    item.get("matricula") or item.get("numero_matricula")
+                )
+
+                partes_linha: list[str] = []
+
+                if direcao:
+                    partes_linha.append(f"DIREÇÃO: {direcao}")
+                if nome:
+                    partes_linha.append(f"NOME: {nome}")
+                if matricula_confrontante:
+                    partes_linha.append(f"MATRÍCULA: {matricula_confrontante}")
+                if descricao:
+                    partes_linha.append(f"DESCRIÇÃO: {descricao}")
+
+                if partes_linha:
+                    inteiro_teor_partes.append("- " + " | ".join(partes_linha))
+
+        if observacoes:
+            inteiro_teor_partes.append(f"OBSERVAÇÕES: {observacoes}")
+
+        inteiro_teor_montado = "\n".join(inteiro_teor_partes).strip() or None
 
         matricula: Optional[Matricula] = (
             db.query(Matricula)
@@ -911,36 +1173,17 @@ class OcrPipelineService:
             .first()
         )
 
-        descricao_imovel: Optional[str] = (
-            dados.get("descricao_imovel")
-            or (
-                dados.get("imovel", {}).get("descricao")
-                if isinstance(dados.get("imovel"), dict)
-                else None
-            )
-        )
-
-        comarca: Optional[str] = (
-            dados.get("comarca")
-            or (
-                dados.get("matricula", {}).get("comarca")
-                if isinstance(dados.get("matricula"), dict)
-                else None
-            )
-        )
-
-        if descricao_imovel is not None:
-            descricao_imovel = str(descricao_imovel).strip()
-
-        if comarca is not None:
-            comarca = str(comarca).strip()
-
         if not matricula:
             matricula = Matricula(
                 imovel_id=imovel.id,
                 numero_matricula=numero_matricula,
+                livro=livro,
+                folha=folha,
                 comarca=comarca,
-                inteiro_teor=descricao_imovel,
+                codigo_cartorio=codigo_cartorio,
+                inteiro_teor=inteiro_teor_montado,
+                observacoes=observacoes,
+                status="ATIVA",
             )
 
             db.add(matricula)
@@ -952,13 +1195,31 @@ class OcrPipelineService:
 
         alterou: bool = False
 
-        if comarca and not matricula.comarca:
+        if livro and livro != matricula.livro:
+            matricula.livro = livro
+            alterou = True
+
+        if folha and folha != matricula.folha:
+            matricula.folha = folha
+            alterou = True
+
+        if comarca and comarca != matricula.comarca:
             matricula.comarca = comarca
             alterou = True
 
-        if descricao_imovel and not matricula.inteiro_teor:
-            matricula.inteiro_teor = descricao_imovel
+        if codigo_cartorio and codigo_cartorio != matricula.codigo_cartorio:
+            matricula.codigo_cartorio = codigo_cartorio
             alterou = True
+
+        if inteiro_teor_montado:
+            if not matricula.inteiro_teor or len(inteiro_teor_montado) > len(matricula.inteiro_teor):
+                matricula.inteiro_teor = inteiro_teor_montado
+                alterou = True
+
+        if observacoes:
+            if not matricula.observacoes or observacoes != matricula.observacoes:
+                matricula.observacoes = observacoes
+                alterou = True
 
         if alterou:
             db.commit()
@@ -971,6 +1232,61 @@ class OcrPipelineService:
 
     @staticmethod
     def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
+
+        # =========================================================
+        # 🔥 PRIORIDADE: ESTRUTURA NORMALIZADA (OCR NORMALIZER)
+        # =========================================================
+
+        geometria = dados.get("geometria")
+
+        if isinstance(geometria, dict):
+
+            geojson = geometria.get("geojson")
+            segmentos = geometria.get("segmentos")
+            memorial_texto = geometria.get("memorial_texto")
+
+            # ================= GEOJSON DIRETO =================
+            geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
+
+            if geojson_normalizado:
+                try:
+                    parsed = json.loads(geojson_normalizado)
+
+                    if (
+                        isinstance(parsed, dict)
+                        and parsed.get("type") in ["Polygon", "MultiPolygon"]
+                        and isinstance(parsed.get("coordinates"), list)
+                    ):
+                        print("✅ GeoJSON válido (estrutura normalizada)")
+                        return geojson_normalizado
+
+                except Exception:
+                    print("⚠️ GeoJSON inválido após normalização")
+
+            # ================= SEGMENTOS =================
+            if isinstance(segmentos, list) and segmentos:
+                geojson_por_segmentos = OcrPipelineService._gerar_geojson_por_segmentos(
+                    segmentos
+                )
+
+                if geojson_por_segmentos:
+                    print("✅ GeoJSON gerado via segmentos (normalizado)")
+                    return geojson_por_segmentos
+
+            # ================= MEMORIAL =================
+            if isinstance(memorial_texto, str) and memorial_texto.strip():
+                geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
+                    memorial_texto
+                )
+
+                if geojson_por_memorial:
+                    print("✅ GeoJSON gerado via memorial (normalizado)")
+                    return geojson_por_memorial
+
+        # =========================================================
+        # 🔄 FALLBACK LEGADO (NÃO QUEBRAR SISTEMA ATUAL)
+        # =========================================================
+
         geojson = dados.get("geojson")
 
         geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
@@ -982,23 +1298,15 @@ class OcrPipelineService:
                 if (
                     isinstance(parsed, dict)
                     and parsed.get("type") in ["Polygon", "MultiPolygon"]
-                    and isinstance(parsed.get("coordinates"), list)
                 ):
-                    print("✅ GeoJSON válido recebido diretamente do OCR")
+                    print("⚠️ GeoJSON legado utilizado")
                     return geojson_normalizado
-                else:
-                    print("⚠️ GeoJSON do OCR ignorado (estrutura inválida)")
 
             except Exception:
-                print("⚠️ GeoJSON do OCR inválido (json malformado)")
+                print("⚠️ GeoJSON legado inválido")
 
-        segmentos_memorial = None
-
-        if isinstance(dados.get("geometria"), dict):
-            segmentos_memorial = dados["geometria"].get("segmentos")
-
-        if not segmentos_memorial:
-            segmentos_memorial = dados.get("segmentos_memorial")
+        # ================= SEGMENTOS LEGADO =================
+        segmentos_memorial = dados.get("segmentos_memorial")
 
         if isinstance(segmentos_memorial, list) and segmentos_memorial:
             geojson_por_segmentos = OcrPipelineService._gerar_geojson_por_segmentos(
@@ -1006,24 +1314,20 @@ class OcrPipelineService:
             )
 
             if geojson_por_segmentos:
-                print("✅ GeoJSON gerado a partir de segmentos")
+                print("⚠️ GeoJSON gerado via segmentos (legado)")
                 return geojson_por_segmentos
 
-        memorial_texto = None
+        # ================= MEMORIAL LEGADO =================
+        memorial_texto = dados.get("memorial_texto")
 
-        if isinstance(dados.get("geometria"), dict):
-            memorial_texto = dados["geometria"].get("memorial_texto")
+        if isinstance(memorial_texto, str) and memorial_texto.strip():
+            geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
+                memorial_texto
+            )
 
-        if not memorial_texto:
-            memorial_texto = dados.get("memorial_texto")
-
-        geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
-            memorial_texto
-        )
-
-        if geojson_por_memorial:
-            print("✅ GeoJSON gerado a partir de memorial_texto")
-            return geojson_por_memorial
+            if geojson_por_memorial:
+                print("⚠️ GeoJSON gerado via memorial (legado)")
+                return geojson_por_memorial
 
         print("❌ Nenhuma fonte geométrica válida encontrada")
         return None
