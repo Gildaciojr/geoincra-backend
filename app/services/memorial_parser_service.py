@@ -125,6 +125,26 @@ class MemorialParserService:
 
         return coords
 
+    @staticmethod
+    def _adicionar_segmento(
+        segmentos: list[dict[str, Any]],
+        tipo: str,
+        rumo_original: str,
+        azimute: float,
+        distancia: float,
+    ) -> None:
+        if distancia <= 0:
+            return
+
+        segmentos.append(
+            {
+                "tipo": tipo,
+                "rumo": rumo_original.strip(),
+                "azimute": azimute,
+                "distancia": distancia,
+            }
+        )
+
     # 🔥 CORREÇÃO CRÍTICA: AGORA DENTRO DA CLASSE
     @staticmethod
     def extrair_segmentos(memorial_texto: str) -> list[dict[str, Any]]:
@@ -133,6 +153,9 @@ class MemorialParserService:
 
         segmentos: list[dict[str, Any]] = []
 
+        # =========================================================
+        # PADRÃO 1: "Rumo X Distância Y"
+        # =========================================================
         pattern_rumo = re.compile(
             r"Rumo\s*(.*?)\s*[—\-]?\s*Dist[aâ]ncia\s*(\d+(?:[.,]\d+)?)",
             re.IGNORECASE,
@@ -143,20 +166,19 @@ class MemorialParserService:
                 az = MemorialParserService._rumo_para_azimute(rumo)
                 dist = MemorialParserService._parse_distancia(distancia)
 
-                if dist <= 0:
-                    continue
-
-                segmentos.append(
-                    {
-                        "tipo": "rumo",
-                        "rumo": rumo.strip(),
-                        "azimute": az,
-                        "distancia": dist,
-                    }
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="rumo",
+                    rumo_original=rumo,
+                    azimute=az,
+                    distancia=dist,
                 )
             except Exception:
                 continue
 
+        # =========================================================
+        # PADRÃO 2: "azimute X distância Y"
+        # =========================================================
         pattern_azimute_livre = re.compile(
             r"azimute\s*(?:de)?\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
             r".{0,40}?"
@@ -169,28 +191,125 @@ class MemorialParserService:
                 az = MemorialParserService._azimute_dms_para_decimal(az_str)
                 dist = MemorialParserService._parse_distancia(distancia)
 
-                if dist <= 0:
-                    continue
-
-                segmentos.append(
-                    {
-                        "tipo": "azimute",
-                        "rumo": az_str.strip(),
-                        "azimute": az,
-                        "distancia": dist,
-                    }
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="azimute",
+                    rumo_original=az_str,
+                    azimute=az,
+                    distancia=dist,
                 )
             except Exception:
                 continue
 
-        if not segmentos:
-            raise ValueError("Nenhum segmento válido encontrado no memorial")
+        # =========================================================
+        # PADRÃO 3: TEXTO REAL DE CARTÓRIO
+        # Ex:
+        # "do marco X ao marco Y, com azimute de 01°22'35", na distância de 495,50 metros"
+        # "com azimute de ..., distância de ..."
+        # =========================================================
+        pattern_cartorio = re.compile(
+            r"azimute\s*de\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
+            r".{0,80}?"
+            r"dist[âa]ncia\s*de\s*(\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
+        )
 
-        return segmentos
+        for az_str, distancia in pattern_cartorio.findall(memorial_texto):
+            try:
+                az = MemorialParserService._azimute_dms_para_decimal(az_str)
+                dist = MemorialParserService._parse_distancia(distancia)
+
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="cartorio",
+                    rumo_original=az_str,
+                    azimute=az,
+                    distancia=dist,
+                )
+            except Exception:
+                continue
+
+        # =========================================================
+        # PADRÃO 4: VARIAÇÃO COM "na distância de"
+        # =========================================================
+        pattern_cartorio_na_distancia = re.compile(
+            r"azimute\s*de\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
+            r".{0,100}?"
+            r"na\s+dist[âa]ncia\s*de\s*(\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        for az_str, distancia in pattern_cartorio_na_distancia.findall(memorial_texto):
+            try:
+                az = MemorialParserService._azimute_dms_para_decimal(az_str)
+                dist = MemorialParserService._parse_distancia(distancia)
+
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="cartorio_na_distancia",
+                    rumo_original=az_str,
+                    azimute=az,
+                    distancia=dist,
+                )
+            except Exception:
+                continue
+
+        # =========================================================
+        # PADRÃO 5: VARIAÇÃO COM "metros" EXPLÍCITO
+        # =========================================================
+        pattern_cartorio_metros = re.compile(
+            r"azimute\s*de\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
+            r".{0,120}?"
+            r"dist[âa]ncia\s*de\s*(\d+(?:[.,]\d+)?)\s*metros?",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        for az_str, distancia in pattern_cartorio_metros.findall(memorial_texto):
+            try:
+                az = MemorialParserService._azimute_dms_para_decimal(az_str)
+                dist = MemorialParserService._parse_distancia(distancia)
+
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="cartorio_metros",
+                    rumo_original=az_str,
+                    azimute=az,
+                    distancia=dist,
+                )
+            except Exception:
+                continue
+
+        # =========================================================
+        # DEDUPLICAÇÃO SIMPLES
+        # Evita repetir o mesmo segmento capturado por múltiplos padrões
+        # =========================================================
+        segmentos_unicos: list[dict[str, Any]] = []
+        vistos: set[tuple[str, float, float]] = set()
+
+        for seg in segmentos:
+            chave = (
+                str(seg.get("rumo", "")).strip().upper(),
+                round(float(seg.get("azimute", 0.0)), 8),
+                round(float(seg.get("distancia", 0.0)), 8),
+            )
+
+            if chave in vistos:
+                continue
+
+            vistos.add(chave)
+            segmentos_unicos.append(seg)
+
+        if not segmentos_unicos:
+            return []
+
+        return segmentos_unicos
 
     @staticmethod
     def gerar_geometria(memorial_texto: str) -> dict[str, Any]:
         segmentos = MemorialParserService.extrair_segmentos(memorial_texto)
+
+        if not segmentos:
+            raise ValueError("Não foi possível gerar geometria: memorial sem segmentos válidos")
 
         x: float = 0.0
         y: float = 0.0

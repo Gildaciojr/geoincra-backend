@@ -232,6 +232,36 @@ class ConfrontanteService:
                 return seg
 
         return None
+    
+    @staticmethod
+    def extrair_confrontantes_do_texto(texto: str) -> list[dict[str, Any]]:
+        import re
+
+        if not texto:
+            return []
+
+        texto_upper = texto.upper()
+
+        padrao = re.findall(
+            r"(NORTE|SUL|LESTE|OESTE)[:\-]\s*(.*?)(?=(NORTE|SUL|LESTE|OESTE|$))",
+            texto_upper,
+            re.DOTALL,
+        )
+
+        confrontantes = []
+
+        for direcao, conteudo, _ in padrao:
+            descricao = conteudo.strip()
+
+            if not descricao:
+                continue
+
+            confrontantes.append({
+                "direcao": direcao,
+                "descricao": descricao,
+            })
+
+        return confrontantes
 
     @staticmethod
     def processar_confrontantes(
@@ -240,6 +270,18 @@ class ConfrontanteService:
         geometria: Geometria,
         confrontantes_ocr: list[dict[str, Any]] | None,
     ) -> list[Confrontante]:
+        if not confrontantes_ocr:
+            # 🔥 fallback inteligente via texto do imóvel
+            texto_base = None
+
+            try:
+                texto_base = getattr(imovel, "descricao", None)
+            except Exception:
+                texto_base = None
+
+            if texto_base:
+                confrontantes_ocr = ConfrontanteService.extrair_confrontantes_do_texto(texto_base)
+
         if not confrontantes_ocr:
             return []
         

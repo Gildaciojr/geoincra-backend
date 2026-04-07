@@ -145,6 +145,7 @@ class OcrPipelineService:
             "pipeline": "MATRICULA",
             "steps": {
                 "matricula": {},
+                "matricula_pdf": {},
                 "analise_juridica": {},
                 "geometria": {},
                 "confrontantes": {},
@@ -711,7 +712,6 @@ class OcrPipelineService:
         if geometria:
             try:
                 from app.services.shp_export_service import ShpExportService
-                import os
 
                 gdf = ShpExportService.gerar_shp(geometria.geojson)
 
@@ -732,6 +732,7 @@ class OcrPipelineService:
                     raise Exception("Arquivo .shp não encontrado na pasta gerada")
 
                 arquivo_path = f"{path_folder}/{shp_file}"
+
                 arquivo_url = OcrPipelineService._build_file_url(
                     base_url,
                     arquivo_path,
@@ -767,12 +768,16 @@ class OcrPipelineService:
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
+
                 result["steps"]["shp"] = {
                     "success": False,
                     "message": f"Falha ao gerar SHP: {str(exc)}",
                 }
+
                 result["errors"].append(f"SHP: {str(exc)}")
+
                 print(f"❌ Falha ao gerar SHP: {str(exc)}")
+
         else:
             result["steps"]["shp"] = {
                 "success": False,
