@@ -8,15 +8,33 @@ from pydantic import BaseModel, Field, field_validator
 # SEGMENTO
 # =========================================================
 class SegmentoOCR(BaseModel):
-    azimute_raw: str = Field(..., min_length=2)
+    azimute_raw: Optional[str] = None
     distancia: float = Field(..., gt=0)
 
+    # 🔥 NOVO — pré-processamento inteligente
+    @field_validator("azimute_raw", mode="before")
+    @classmethod
+    def resolver_azimute(cls, v, info):
+        if v and str(v).strip():
+            return str(v).strip()
+
+        data = info.data if hasattr(info, "data") else {}
+
+        return (
+            data.get("azimute")
+            or data.get("rumo")
+            or data.get("bearing")
+            or data.get("valor")
+            or data.get("azimute_decimal")
+        )
+
+    # 🔥 VALIDAÇÃO FINAL (mantém rigor)
     @field_validator("azimute_raw")
     @classmethod
-    def validar_azimute(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("Azimute vazio")
-        return v
+    def validar_azimute(cls, v: Optional[str]) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("Azimute vazio ou não identificado")
+        return str(v).strip()
 
 
 # =========================================================
