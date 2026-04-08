@@ -654,15 +654,44 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
             warnings.append(f"Segmento {i} ignorado (estrutura inválida)")
             continue
 
+        # =========================================================
+        # 🔥 AZIMUTE / RUMO — NORMALIZAÇÃO ROBUSTA (NOVO)
+        # =========================================================
         azimute_raw = _normalizar_texto(
             _coalesce(
                 s.get("azimute_raw"),
                 s.get("azimute"),
                 s.get("rumo"),
                 s.get("bearing"),
+                s.get("angulo"),
+                s.get("direcao"),
+                s.get("valor"),
+                s.get("azimute_decimal"),
             )
         )
 
+        # 🔥 fallback baseado no tipo (OCR novo)
+        if not azimute_raw:
+            tipo = str(s.get("tipo") or "").lower()
+
+            if tipo == "azimute_decimal":
+                val = _coalesce(s.get("valor"), s.get("azimute"))
+                if val is not None:
+                    azimute_raw = _normalizar_texto(val)
+
+            elif tipo == "azimute":
+                val = _coalesce(s.get("rumo"), s.get("valor"))
+                if val:
+                    azimute_raw = _normalizar_texto(val)
+
+            elif tipo == "cartorio_metros":
+                val = _coalesce(s.get("rumo"), s.get("descricao"))
+                if val:
+                    azimute_raw = _normalizar_texto(val)
+
+        # =========================================================
+        # DISTÂNCIA
+        # =========================================================
         distancia = _to_float(
             _coalesce(
                 s.get("distancia"),
@@ -692,6 +721,9 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
             )
         )
 
+        # =========================================================
+        # VALIDAÇÕES (MANTIDAS)
+        # =========================================================
         if not azimute_raw and distancia is None:
             warnings.append(f"Segmento {i} ignorado (sem azimute/rumo e sem distância)")
             continue
@@ -725,15 +757,15 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
         segmentos.append(segmento)
 
     # =========================================================
-    # NOVO BLOCO — USAR MEMORIAL SE NECESSÁRIO
+    # NOVO BLOCO — USAR MEMORIAL SE NECESSÁRIO (MANTIDO + SEGURO)
     # =========================================================
     if not segmentos or len(segmentos) < 3:
+        geometria_dict = _first_dict(dados.get("geometria"))
+
         memorial_texto = _normalizar_memorial_texto(
             _coalesce(
                 dados.get("memorial_texto"),
-                _first_dict(dados.get("geometria")).get("memorial_texto")
-                if isinstance(dados.get("geometria"), dict)
-                else None,
+                geometria_dict.get("memorial_texto") if geometria_dict else None,
             )
         )
 
@@ -744,16 +776,36 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
                 if segmentos_extraidos and len(segmentos_extraidos) >= 3:
                     warnings.append("Segmentos gerados automaticamente a partir do memorial descritivo")
 
-                    segmentos = [
-                        {
-                            "azimute_raw": seg.get("rumo"),
-                            "distancia": float(seg.get("distancia")),
-                            "ordem": seg.get("ordem"),
-                            "vertice_inicial": seg.get("vertice_inicial"),
-                            "vertice_final": seg.get("vertice_final"),
+                    segmentos = []
+                    for seg in segmentos_extraidos:
+                        az = _normalizar_texto(
+                            _coalesce(
+                                seg.get("azimute_raw"),
+                                seg.get("rumo"),
+                                seg.get("azimute"),
+                            )
+                        )
+
+                        dist = _to_float(seg.get("distancia"))
+
+                        if not az or dist is None or dist <= 0:
+                            continue
+
+                        novo_seg: Dict[str, Any] = {
+                            "azimute_raw": az,
+                            "distancia": float(dist),
                         }
-                        for seg in segmentos_extraidos
-                    ]
+
+                        if seg.get("ordem") is not None:
+                            novo_seg["ordem"] = seg.get("ordem")
+
+                        if seg.get("vertice_inicial"):
+                            novo_seg["vertice_inicial"] = seg.get("vertice_inicial")
+
+                        if seg.get("vertice_final"):
+                            novo_seg["vertice_final"] = seg.get("vertice_final")
+
+                        segmentos.append(novo_seg)
 
                 else:
                     warnings.append("Memorial não gerou segmentos suficientes")
@@ -762,7 +814,7 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
                 warnings.append(f"Falha ao extrair segmentos do memorial: {str(e)}")
 
     # =========================================================
-    # REGRA ORIGINAL (mantida)
+    # REGRA ORIGINAL (MANTIDA)
     # =========================================================
     if segmentos and len(segmentos) < 3:
         warnings.append("Segmentos insuficientes para formar polígono; será tentado memorial_texto/geojson")
