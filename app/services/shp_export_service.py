@@ -5,7 +5,9 @@ import os
 from datetime import datetime
 
 import geopandas as gpd
-from shapely.geometry import shape, Polygon
+
+from shapely.geometry import Polygon
+from app.services.geometria_service import GeometriaService
 
 
 class ShpExportService:
@@ -15,29 +17,10 @@ class ShpExportService:
     # =========================================================
     @staticmethod
     def validar_geometria(geojson: str) -> Polygon:
-        geom = shape(json.loads(geojson))
-
-        if geom.is_empty:
-            raise ValueError("Geometria vazia")
-
-        if not geom.is_valid:
-            geom = geom.buffer(0)
-
-        if geom.is_empty or not geom.is_valid:
-            raise ValueError("Geometria inválida após correção topológica")
-
-        if not isinstance(geom, Polygon):
-            raise ValueError("Geometria deve ser POLYGON")
-
-        coords = list(geom.exterior.coords)
-
-        if len(coords) < 4:
-            raise ValueError("Polígono inválido")
-
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-
-        return Polygon(coords)
+        try:
+            return GeometriaService._parse_polygon_geojson(geojson)
+        except Exception as exc:
+            raise ValueError("Geometria inválida para SHP") from exc
 
     # =========================================================
     # GERAR SHP PROFISSIONAL

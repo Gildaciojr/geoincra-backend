@@ -4,7 +4,9 @@ import json
 import math
 import os
 from datetime import datetime
-from shapely.geometry import shape
+
+from shapely.geometry import Polygon
+from app.services.geometria_service import GeometriaService
 
 
 class CsvExportService:
@@ -37,19 +39,10 @@ class CsvExportService:
     @staticmethod
     def gerar_csv(geojson: str):
 
-        try:
-            geom = shape(json.loads(geojson))
+        try: 
+            geom: Polygon = GeometriaService._parse_polygon_geojson(geojson)
         except Exception as exc:
             raise ValueError("GeoJSON inválido para exportação CSV") from exc
-
-        if geom.is_empty:
-            raise ValueError("Geometria vazia para CSV")
-
-        if not geom.is_valid:
-            geom = geom.buffer(0)
-
-        if geom.is_empty or not geom.is_valid:
-            raise ValueError("Geometria inválida para CSV")
 
         coords = list(geom.exterior.coords)
         coords = CsvExportService._sanear_coords(coords)

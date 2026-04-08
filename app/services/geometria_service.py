@@ -95,9 +95,33 @@ class GeometriaService:
         )
 
     @staticmethod
-    def _corrigir_geometria(geom: Polygon) -> Polygon:
+    def _selecionar_maior_polygon(geom: MultiPolygon) -> Polygon:
+        partes = sorted(geom.geoms, key=lambda g: g.area, reverse=True)
+
+        if not partes:
+            raise HTTPException(
+                status_code=400,
+                detail="Geometria MULTIPOLYGON vazia.",
+            )
+
+        maior = partes[0]
+
+        if maior.is_empty:
+            raise HTTPException(
+                status_code=400,
+                detail="Geometria MULTIPOLYGON inválida.",
+            )
+
+        return maior
+
+    @staticmethod
+    def _corrigir_geometria(geom: Polygon | MultiPolygon) -> Polygon:
         if geom.is_valid and not geom.is_empty:
-            return geom
+            if isinstance(geom, Polygon):
+                return geom
+
+            if isinstance(geom, MultiPolygon):
+                return GeometriaService._selecionar_maior_polygon(geom)
 
         geom_corrigida = geom.buffer(0)
 
@@ -111,13 +135,7 @@ class GeometriaService:
             return geom_corrigida
 
         if isinstance(geom_corrigida, MultiPolygon):
-            partes = sorted(geom_corrigida.geoms, key=lambda g: g.area, reverse=True)
-            if not partes:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Geometria inválida após correção.",
-                )
-            return partes[0]
+            return GeometriaService._selecionar_maior_polygon(geom_corrigida)
 
         raise HTTPException(
             status_code=400,
@@ -159,10 +177,10 @@ class GeometriaService:
         return coords_saneados
 
     # =========================================================
-    # PARSE GEOJSON
+    # NORMALIZAÇÃO PÚBLICA DE GEOMETRIA
     # =========================================================
     @staticmethod
-    def _parse_polygon_geojson(geojson: Any) -> Polygon:
+    def parse_geometry_or_raise(geojson: Any):
         try:
             obj = GeometriaService._normalizar_geojson_input(geojson)
             geom = shape(obj)
@@ -174,11 +192,14 @@ class GeometriaService:
         if geom.is_empty:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
+        return geom
+
+    @staticmethod
+    def normalizar_para_polygon(geojson: Any) -> Polygon:
+        geom = GeometriaService.parse_geometry_or_raise(geojson)
+
         if isinstance(geom, MultiPolygon):
-            partes = sorted(geom.geoms, key=lambda g: g.area, reverse=True)
-            if not partes:
-                raise HTTPException(status_code=400, detail="Geometria MULTIPOLYGON vazia.")
-            geom = partes[0]
+            geom = GeometriaService._selecionar_maior_polygon(geom)
 
         if not isinstance(geom, Polygon):
             raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
@@ -207,6 +228,17 @@ class GeometriaService:
             )
 
         return geom
+
+    @staticmethod
+    def parse_polygon_or_raise(geojson: Any) -> Polygon:
+        return GeometriaService.normalizar_para_polygon(geojson)
+
+    # =========================================================
+    # PARSE GEOJSON
+    # =========================================================
+    @staticmethod
+    def _parse_polygon_geojson(geojson: Any) -> Polygon:
+        return GeometriaService.parse_polygon_or_raise(geojson)
 
     # =========================================================
     # ANALISAR REFERENCIAL

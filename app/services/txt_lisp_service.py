@@ -5,7 +5,8 @@ import os
 from datetime import datetime
 from typing import List, Tuple
 
-from shapely.geometry import shape, Polygon
+from shapely.geometry import Polygon
+from app.services.geometria_service import GeometriaService
 
 
 class TxtLispService:
@@ -24,13 +25,10 @@ class TxtLispService:
     # =========================================================
     @staticmethod
     def gerar_txt(geojson: str) -> str:
-        geom = shape(json.loads(geojson))
-
-        if geom.is_empty or not geom.is_valid:
-            raise ValueError("Geometria inválida para exportação TXT")
-
-        if not isinstance(geom, Polygon):
-            raise ValueError("Geometria deve ser POLYGON")
+        try:
+            geom: Polygon = GeometriaService._parse_polygon_geojson(geojson)
+        except Exception as exc:
+            raise ValueError("Geometria inválida para exportação TXT") from exc
 
         coords: List[Tuple[float, float]] = list(geom.exterior.coords)
 

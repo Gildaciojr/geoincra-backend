@@ -7,7 +7,8 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from shapely.geometry import Polygon, shape
+from shapely.geometry import Polygon
+from app.services.geometria_service import GeometriaService
 
 
 class CroquiService:
@@ -79,24 +80,8 @@ class CroquiService:
 
     @staticmethod
     def _parse_polygon(geojson: str) -> Polygon:
-        try:
-            geom = shape(json.loads(geojson))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="GeoJSON inválido.") from exc
+        return GeometriaService._parse_polygon_geojson(geojson)
 
-        if not isinstance(geom, Polygon):
-            raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
-
-        if geom.is_empty:
-            raise HTTPException(status_code=400, detail="Geometria vazia.")
-
-        if not geom.is_valid:
-            geom = geom.buffer(0)
-
-        if geom.is_empty or not geom.is_valid:
-            raise HTTPException(status_code=400, detail="Geometria inválida para croqui.")
-
-        return geom
 
     @staticmethod
     def _drawing_bounds(size: int) -> Dict[str, float]:

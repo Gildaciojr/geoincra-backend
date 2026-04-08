@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.confrontante import Confrontante
 from app.models.geometria import Geometria
+from app.services.geometria_service import GeometriaService
 from app.models.imovel import Imovel
 
 
@@ -100,23 +101,10 @@ class ConfrontanteService:
     @staticmethod
     def _parse_polygon_geojson(geojson: str) -> Polygon:
         try:
-            geom = shape(json.loads(geojson))
+            return GeometriaService.parse_polygon_or_raise(geojson)
         except Exception as exc:
             raise ValueError("GeoJSON inválido para confrontantes.") from exc
 
-        if not isinstance(geom, Polygon):
-            raise ValueError("Geometria deve ser POLYGON para confrontantes.")
-
-        if geom.is_empty:
-            raise ValueError("Geometria vazia para confrontantes.")
-
-        if not geom.is_valid:
-            geom = geom.buffer(0)
-
-        if geom.is_empty or not geom.is_valid:
-            raise ValueError("Geometria inválida para confrontantes.")
-
-        return geom
 
     @staticmethod
     def _segmento_direcao(
