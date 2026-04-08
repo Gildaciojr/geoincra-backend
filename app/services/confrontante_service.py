@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Optional
 
 from shapely.geometry import Polygon, shape
@@ -32,7 +33,17 @@ class ConfrontanteService:
         if not texto:
             return None
 
-        return " ".join(texto.split())
+        texto = " ".join(texto.split())
+
+        # 🔥 NOVO — limpeza leve para OCR real
+        texto = (
+            texto.replace(" ,", ",")
+            .replace(" .", ".")
+            .replace(" ;", ";")
+            .replace(" :", ":")
+        )
+
+        return texto
 
     @staticmethod
     def _normalizar_direcao(valor: Any) -> Optional[str]:
@@ -81,7 +92,10 @@ class ConfrontanteService:
             "SW": "SW",
         }
 
-        return mapa.get(texto_upper, texto_upper if texto_upper in ConfrontanteService.DIRECOES_VALIDAS else None)
+        return mapa.get(
+            texto_upper,
+            texto_upper if texto_upper in ConfrontanteService.DIRECOES_VALIDAS else None
+        )
 
     @staticmethod
     def _parse_polygon_geojson(geojson: str) -> Polygon:
@@ -138,6 +152,16 @@ class ConfrontanteService:
 
         return "N" if dy >= 0 else "S"
 
+    # 🔥 NOVO — distância euclidiana para futuras heurísticas
+    @staticmethod
+    def _distancia(
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+    ) -> float:
+        dx = float(p2[0]) - float(p1[0])
+        dy = float(p2[1]) - float(p1[1])
+        return math.sqrt((dx * dx) + (dy * dy))
+
     @staticmethod
     def _extrair_segmentos_geometria(geometria: Geometria) -> list[dict[str, Any]]:
         geom = ConfrontanteService._parse_polygon_geojson(geometria.geojson)
@@ -166,6 +190,12 @@ class ConfrontanteService:
                 centery=centery,
             )
 
+            # 🔥 NOVO — comprimento do segmento disponível para debug e futuras regras
+            comprimento = ConfrontanteService._distancia(
+                (float(x1), float(y1)),
+                (float(x2), float(y2)),
+            )
+
             segmentos.append(
                 {
                     "ordem_segmento": i + 1,
@@ -174,6 +204,7 @@ class ConfrontanteService:
                     "p1": (float(x1), float(y1)),
                     "p2": (float(x2), float(y2)),
                     "midpoint": (midx, midy),
+                    "comprimento": comprimento,
                 }
             )
 
@@ -202,6 +233,11 @@ class ConfrontanteService:
             or item.get("imovel")
         )
 
+        # 🔥 NOVO — preservar dados enriquecidos pelo normalizer sem quebrar contrato atual
+        tipo = ConfrontanteService._normalizar_texto(item.get("tipo"))
+        lote = ConfrontanteService._normalizar_texto(item.get("lote"))
+        gleba = ConfrontanteService._normalizar_texto(item.get("gleba"))
+
         if not nome and not descricao and not matricula and not identificacao:
             return None
 
@@ -212,6 +248,9 @@ class ConfrontanteService:
             "descricao": descricao,
             "matricula_confrontante": matricula,
             "identificacao_imovel_confrontante": identificacao,
+            "tipo": tipo,
+            "lote": lote,
+            "gleba": gleba,
         }
 
     @staticmethod
@@ -232,7 +271,7 @@ class ConfrontanteService:
                 return seg
 
         return None
-    
+
     @staticmethod
     def extrair_confrontantes_do_texto(texto: str) -> list[dict[str, Any]]:
         import re
@@ -242,8 +281,9 @@ class ConfrontanteService:
 
         texto_upper = texto.upper()
 
+        # 🔥 NOVO — regex um pouco mais tolerante
         padrao = re.findall(
-            r"(NORTE|SUL|LESTE|OESTE)[:\-]\s*(.*?)(?=(NORTE|SUL|LESTE|OESTE|$))",
+            r"(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE)\s*[:\-]\s*(.*?)(?=(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE|$))",
             texto_upper,
             re.DOTALL,
         )
@@ -284,7 +324,7 @@ class ConfrontanteService:
 
         if not confrontantes_ocr:
             return []
-        
+
         if not geometria or not geometria.geojson:
             return []
 
@@ -343,6 +383,29 @@ class ConfrontanteService:
                     .first()
                 )
 
+            # 🔥 NOVO — fallback adicional por nome + descrição no mesmo imóvel
+            if not existente and (item.get("nome_confrontante") or item.get("descricao")):
+                existente = (
+                    db.query(Confrontante)
+                    .filter(
+                        Confrontante.imovel_id == imovel.id,
+                        Confrontante.nome_confrontante == item.get("nome_confrontante"),
+                        Confrontante.descricao == item.get("descricao"),
+                    )
+                    .first()
+                )
+
+            observacoes_partes = ["Atualizado automaticamente via OCR/geometria"]
+
+            if item.get("tipo"):
+                observacoes_partes.append(f"TIPO={item.get('tipo')}")
+            if item.get("lote"):
+                observacoes_partes.append(f"LOTE={item.get('lote')}")
+            if item.get("gleba"):
+                observacoes_partes.append(f"GLEBA={item.get('gleba')}")
+
+            observacoes_texto = " | ".join(observacoes_partes)
+
             if existente:
                 existente.geometria_id = geometria.id
                 existente.direcao = item["direcao"]
@@ -353,7 +416,7 @@ class ConfrontanteService:
                 existente.matricula_confrontante = item.get("matricula_confrontante")
                 existente.identificacao_imovel_confrontante = item.get("identificacao_imovel_confrontante")
                 existente.descricao = item.get("descricao")
-                existente.observacoes = "Atualizado automaticamente via OCR/geometria"
+                existente.observacoes = observacoes_texto
                 persistidos.append(existente)
                 continue
 
@@ -368,7 +431,7 @@ class ConfrontanteService:
                 matricula_confrontante=item.get("matricula_confrontante"),
                 identificacao_imovel_confrontante=item.get("identificacao_imovel_confrontante"),
                 descricao=item.get("descricao"),
-                observacoes="Criado automaticamente via OCR/geometria",
+                observacoes=observacoes_texto,
             )
 
             db.add(novo)

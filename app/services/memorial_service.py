@@ -132,7 +132,6 @@ class MemorialService:
             return f"S {MemorialService._deg_to_dms_str(az - 180)} W"
         return f"N {MemorialService._deg_to_dms_str(360 - az)} W"
 
-    # 🚀 NOVO: salvar arquivo
     @staticmethod
     def _salvar_arquivo(imovel_id: int, texto: str) -> tuple[str, str]:
 
@@ -158,14 +157,18 @@ class MemorialService:
         geojson: str,
         area_hectares: float,
         perimetro_m: float,
-        imovel_id: int,  # 🔥 IMPORTANTE
+        imovel_id: int,
         prefixo_vertice: str = "V",
         epsg_origem: int | None = 4326,
     ) -> dict:
 
         epsg_utm, pts, tipo = MemorialService._to_points(geojson, epsg_origem)
 
+        if len(pts) < 4:
+            raise ValueError("Geometria insuficiente para gerar memorial")
+
         linhas = []
+        soma_distancias = 0.0
 
         for i in range(len(pts) - 1):
             p1, p2 = pts[i], pts[i + 1]
@@ -173,24 +176,35 @@ class MemorialService:
             dist = MemorialService._dist_m(p1, p2)
             az = MemorialService._azimute_deg(p1, p2)
 
+            if dist <= 0:
+                raise ValueError(f"Segmento inválido detectado na posição {i+1}")
+
+            soma_distancias += dist
+
             linhas.append(
                 {
                     "ordem": i + 1,
-                    "de_vertice": f"V{i + 1}",
-                    "ate_vertice": f"V{i + 2}" if i + 1 < len(pts) - 1 else "V1",
+                    "de_vertice": f"{prefixo_vertice}{i + 1}",
+                    "ate_vertice": f"{prefixo_vertice}{i + 2}" if i + 1 < len(pts) - 1 else f"{prefixo_vertice}1",
                     "azimute_graus": az,
                     "rumo": MemorialService._rumo_from_azimute(az),
                     "distancia_m": dist,
                 }
             )
 
+        erro_perimetro = abs(soma_distancias - (perimetro_m or soma_distancias))
+
         texto = "\n".join([
-            "MEMORIAL DESCRITIVO\n",
+            "MEMORIAL DESCRITIVO",
+            "",
             f"Referencial: {tipo}",
             f"EPSG UTM: {epsg_utm or 'N/A'}",
             f"Área (ha): {area_hectares:.4f}",
             f"Perímetro (m): {perimetro_m:.3f}",
-            "\nSegmentos:\n",
+            f"Erro de fechamento (m): {erro_perimetro:.4f}",
+            "",
+            "DESCRIÇÃO DOS SEGMENTOS:",
+            "",
             *[
                 f"{l['ordem']:02d}. {l['de_vertice']} -> {l['ate_vertice']} | "
                 f"Azimute: {l['azimute_graus']:.6f}° | "
@@ -200,7 +214,6 @@ class MemorialService:
             ]
         ])
 
-        # 🔥 AQUI ESTÁ O PONTO CRÍTICO
         caminho, url = MemorialService._salvar_arquivo(imovel_id, texto)
 
         return {

@@ -9,20 +9,25 @@ from typing import Any
 
 from fastapi import HTTPException
 from pyproj import CRS, Transformer
-from shapely.geometry import Polygon, shape
+from shapely.geometry import MultiPolygon, Polygon, shape
 
 
 class GeometriaService:
+
+    GEO_LON_MIN = -180.0
+    GEO_LON_MAX = 180.0
+    GEO_LAT_MIN = -90.0
+    GEO_LAT_MAX = 90.0
 
     # =========================================================
     # UTM EPSG
     # =========================================================
     @staticmethod
     def _utm_epsg_from_lonlat(lon: float, lat: float) -> int:
-        if not (-180.0 <= lon <= 180.0):
+        if not (GeometriaService.GEO_LON_MIN <= lon <= GeometriaService.GEO_LON_MAX):
             raise HTTPException(status_code=400, detail=f"Longitude inválida: {lon}")
 
-        if not (-90.0 <= lat <= 90.0):
+        if not (GeometriaService.GEO_LAT_MIN <= lat <= GeometriaService.GEO_LAT_MAX):
             raise HTTPException(status_code=400, detail=f"Latitude inválida: {lat}")
 
         zona = int(floor((lon + 180.0) / 6.0) + 1)
@@ -46,6 +51,80 @@ class GeometriaService:
             return 0.0
 
     # =========================================================
+    # HELPERS DE GEOMETRIA
+    # =========================================================
+    @staticmethod
+    def _coords_anel_fechado(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if not coords:
+            return []
+
+        if coords[0] != coords[-1]:
+            return coords + [coords[0]]
+
+        return coords
+
+    @staticmethod
+    def _count_vertices(geom: Polygon) -> int:
+        try:
+            coords = list(geom.exterior.coords)
+            return max(0, len(coords) - 1)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _bbox_info(geom: Polygon) -> dict[str, float]:
+        minx, miny, maxx, maxy = geom.bounds
+        return {
+            "minx": float(minx),
+            "miny": float(miny),
+            "maxx": float(maxx),
+            "maxy": float(maxy),
+            "spanx": float(maxx - minx),
+            "spany": float(maxy - miny),
+        }
+
+    @staticmethod
+    def _coordenadas_parecem_geograficas(geom: Polygon) -> bool:
+        bounds = GeometriaService._bbox_info(geom)
+
+        return (
+            GeometriaService.GEO_LON_MIN <= bounds["minx"] <= GeometriaService.GEO_LON_MAX
+            and GeometriaService.GEO_LON_MIN <= bounds["maxx"] <= GeometriaService.GEO_LON_MAX
+            and GeometriaService.GEO_LAT_MIN <= bounds["miny"] <= GeometriaService.GEO_LAT_MAX
+            and GeometriaService.GEO_LAT_MIN <= bounds["maxy"] <= GeometriaService.GEO_LAT_MAX
+        )
+
+    @staticmethod
+    def _corrigir_geometria(geom: Polygon) -> Polygon:
+        if geom.is_valid and not geom.is_empty:
+            return geom
+
+        geom_corrigida = geom.buffer(0)
+
+        if geom_corrigida.is_empty or not geom_corrigida.is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail="Geometria inválida após correção.",
+            )
+
+        if isinstance(geom_corrigida, Polygon):
+            return geom_corrigida
+
+        if isinstance(geom_corrigida, MultiPolygon):
+            partes = sorted(geom_corrigida.geoms, key=lambda g: g.area, reverse=True)
+            if not partes:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Geometria inválida após correção.",
+                )
+            return partes[0]
+
+        raise HTTPException(
+            status_code=400,
+            detail="Geometria corrigida não resultou em POLYGON.",
+        )
+
+    # =========================================================
     # PARSE GEOJSON
     # =========================================================
     @staticmethod
@@ -56,27 +135,38 @@ class GeometriaService:
         except Exception as exc:
             raise HTTPException(status_code=400, detail="GeoJSON inválido.") from exc
 
-        if not isinstance(geom, Polygon):
-            raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
-
         if geom.is_empty:
             raise HTTPException(status_code=400, detail="Geometria vazia.")
 
+        if isinstance(geom, MultiPolygon):
+            partes = sorted(geom.geoms, key=lambda g: g.area, reverse=True)
+            if not partes:
+                raise HTTPException(status_code=400, detail="Geometria MULTIPOLYGON vazia.")
+            geom = partes[0]
+
+        if not isinstance(geom, Polygon):
+            raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
+
         coords = list(geom.exterior.coords)
+
         if len(coords) < 4:
-            raise HTTPException(status_code=400, detail="Polígono inválido (menos de 4 vértices).")
-
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-            geom = Polygon(coords)
-
-        if not geom.is_valid:
-            geom = geom.buffer(0)
-
-        if geom.is_empty or not geom.is_valid:
             raise HTTPException(
                 status_code=400,
-                detail="Geometria inválida após correção.",
+                detail="Polígono inválido (menos de 4 vértices).",
+            )
+
+        coords = GeometriaService._coords_anel_fechado(
+            [(float(x), float(y)) for x, y in coords]
+        )
+        geom = Polygon(coords)
+
+        geom = GeometriaService._corrigir_geometria(geom)
+
+        coords_validos = list(geom.exterior.coords)
+        if len(coords_validos) < 4:
+            raise HTTPException(
+                status_code=400,
+                detail="Polígono inválido após correção (menos de 4 vértices).",
             )
 
         return geom
@@ -92,9 +182,9 @@ class GeometriaService:
 
         geom = GeometriaService._parse_polygon_geojson(geojson)
 
-        minx, miny, maxx, maxy = geom.bounds
-        spanx = float(maxx - minx)
-        spany = float(maxy - miny)
+        bounds = GeometriaService._bbox_info(geom)
+        spanx = bounds["spanx"]
+        spany = bounds["spany"]
 
         centroid = geom.centroid
         cx = float(centroid.x)
@@ -103,13 +193,11 @@ class GeometriaService:
         if math.isnan(cx) or math.isnan(cy):
             raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
 
-        faixa_geografica_valida = (
-            -180 <= minx <= 180 and
-            -180 <= maxx <= 180 and
-            -90 <= miny <= 90 and
-            -90 <= maxy <= 90
-        )
+        faixa_geografica_valida = GeometriaService._coordenadas_parecem_geograficas(geom)
 
+        # Heurística:
+        # se a geometria parece geográfica e está em escala compatível com graus,
+        # tratamos como GEOGRAFICA; caso contrário, LOCAL_CARTESIANA.
         escala_graus = spanx < 5 and spany < 5
 
         if epsg_origem is not None and int(epsg_origem) <= 0:
@@ -124,18 +212,16 @@ class GeometriaService:
         return {
             "tipo_referencial": tipo,
             "geom": geom,
-            "bounds": {
-                "minx": float(minx),
-                "miny": float(miny),
-                "maxx": float(maxx),
-                "maxy": float(maxy),
-                "spanx": spanx,
-                "spany": spany,
-            },
+            "bounds": bounds,
             "centroid": {
                 "x": cx,
                 "y": cy,
             },
+            "vertices": GeometriaService._count_vertices(geom),
+            "area_bruta_unidades": GeometriaService._safe_float(geom.area),
+            "perimetro_bruto_unidades": GeometriaService._safe_float(geom.length),
+            "faixa_geografica_valida": faixa_geografica_valida,
+            "escala_graus_valida": escala_graus,
         }
 
     # =========================================================
@@ -163,38 +249,58 @@ class GeometriaService:
         lon = float(analise["centroid"]["x"])
         lat = float(analise["centroid"]["y"])
 
-        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
-            return None, geom.area / 10000.0, geom.length
+        if not (
+            GeometriaService.GEO_LON_MIN <= lon <= GeometriaService.GEO_LON_MAX
+            and GeometriaService.GEO_LAT_MIN <= lat <= GeometriaService.GEO_LAT_MAX
+        ):
+            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
-        transformer = Transformer.from_crs(
-            CRS.from_epsg(epsg_origem),
-            CRS.from_epsg(epsg_utm),
-            always_xy=True,
-        )
+        try:
+            transformer = Transformer.from_crs(
+                CRS.from_epsg(epsg_origem),
+                CRS.from_epsg(epsg_utm),
+                always_xy=True,
+            )
+        except Exception:
+            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
 
-        proj_coords = []
+        proj_coords: list[tuple[float, float]] = []
+
         for x, y in geom.exterior.coords:
-            if not (-180 <= x <= 180 and -90 <= y <= 90):
+            x = float(x)
+            y = float(y)
+
+            if not (
+                GeometriaService.GEO_LON_MIN <= x <= GeometriaService.GEO_LON_MAX
+                and GeometriaService.GEO_LAT_MIN <= y <= GeometriaService.GEO_LAT_MAX
+            ):
                 continue
 
-            X, Y = transformer.transform(x, y)
-            proj_coords.append((X, Y))
+            try:
+                X, Y = transformer.transform(x, y)
+            except Exception:
+                continue
+
+            if math.isnan(X) or math.isnan(Y) or math.isinf(X) or math.isinf(Y):
+                continue
+
+            proj_coords.append((float(X), float(Y)))
 
         if len(proj_coords) < 4:
-            return None, geom.area / 10000.0, geom.length
+            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
 
+        proj_coords = GeometriaService._coords_anel_fechado(proj_coords)
         geom_utm = Polygon(proj_coords)
 
-        if not geom_utm.is_valid:
-            geom_utm = geom_utm.buffer(0)
+        try:
+            geom_utm = GeometriaService._corrigir_geometria(geom_utm)
+        except Exception:
+            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
 
-        if geom_utm.is_empty or not geom_utm.is_valid:
-            return None, geom.area / 10000.0, geom.length
-
-        area_m2 = geom_utm.area
-        perimetro_m = geom_utm.length
+        area_m2 = GeometriaService._safe_float(geom_utm.area)
+        perimetro_m = GeometriaService._safe_float(geom_utm.length)
 
         return epsg_utm, area_m2 / 10000.0, perimetro_m
 
@@ -208,7 +314,6 @@ class GeometriaService:
 
         timestamp = int(datetime.utcnow().timestamp())
         nome_arquivo = f"geometria_{timestamp}.geojson"
-
         caminho = f"{pasta}/{nome_arquivo}"
 
         try:
@@ -219,7 +324,6 @@ class GeometriaService:
             with open(caminho, "w", encoding="utf-8") as f:
                 f.write(geojson)
 
-        
         base_url = "https://geoincra.escriturafacil.com"
         url = f"{base_url}/{caminho.replace('app/', '')}"
 

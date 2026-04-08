@@ -12,6 +12,23 @@ from shapely.geometry import Polygon
 class MemorialParserService:
 
     FECHAMENTO_TOLERANCIA_METROS = 2.0
+    DISTANCIA_MINIMA_METROS = 0.01
+
+    @staticmethod
+    def _normalizar_espacos(texto: str) -> str:
+        return " ".join(str(texto or "").strip().split())
+
+    @staticmethod
+    def _normalizar_texto_base(texto: str) -> str:
+        return (
+            MemorialParserService._normalizar_espacos(texto)
+            .replace("–", "-")
+            .replace("—", "-")
+            .replace("“", '"')
+            .replace("”", '"')
+            .replace("´", "'")
+            .replace("`", "'")
+        )
 
     @staticmethod
     def _dms_para_decimal(
@@ -23,7 +40,7 @@ class MemorialParserService:
 
     @staticmethod
     def _rumo_para_azimute(rumo: str) -> float:
-        rumo_normalizado = " ".join(rumo.upper().strip().split())
+        rumo_normalizado = MemorialParserService._normalizar_texto_base(rumo).upper()
 
         match = re.search(
             r"([NS])\s*(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?\s*([EW])",
@@ -45,6 +62,9 @@ class MemorialParserService:
             segundos,
         )
 
+        if angulo < 0 or angulo > 90:
+            raise ValueError(f"Rumo inválido fora do quadrante: {rumo}")
+
         if ns == "N" and ew == "E":
             return angulo
         if ns == "S" and ew == "E":
@@ -58,7 +78,7 @@ class MemorialParserService:
 
     @staticmethod
     def _azimute_dms_para_decimal(azimute: str) -> float:
-        azimute_normalizado = " ".join(azimute.strip().split())
+        azimute_normalizado = MemorialParserService._normalizar_texto_base(azimute)
 
         match = re.search(
             r"(\d+)[°º]\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?",
@@ -70,19 +90,77 @@ class MemorialParserService:
 
         g, m, s = match.groups()
 
-        return MemorialParserService._dms_para_decimal(
+        decimal = MemorialParserService._dms_para_decimal(
             float(g),
             float(m),
             float(s or 0),
         )
 
+        if decimal < 0 or decimal > 360:
+            raise ValueError(f"Azimute fora do intervalo válido: {azimute}")
+
+        return decimal
+
+    @staticmethod
+    def _azimute_decimal_para_float(azimute: str) -> float:
+        texto = MemorialParserService._normalizar_texto_base(azimute)
+        texto = texto.replace(",", ".")
+
+        try:
+            valor = float(texto)
+        except Exception:
+            raise ValueError(f"Azimute decimal inválido: {azimute}")
+
+        if valor < 0 or valor > 360:
+            raise ValueError(f"Azimute decimal fora do intervalo válido: {azimute}")
+
+        return valor
+
+    @staticmethod
+    def _parse_azimute_ou_rumo(valor: str) -> float:
+        texto = MemorialParserService._normalizar_texto_base(valor)
+
+        # primeiro tenta rumo quadrantal
+        if re.search(r"^[NS]\s*.+\s*[EW]$", texto.upper()):
+            return MemorialParserService._rumo_para_azimute(texto)
+
+        # depois tenta DMS
+        if re.search(r"\d+[°º]\s*\d+", texto):
+            return MemorialParserService._azimute_dms_para_decimal(texto)
+
+        # por último tenta decimal puro
+        return MemorialParserService._azimute_decimal_para_float(texto)
+
     @staticmethod
     def _parse_distancia(valor: Any) -> float:
         if isinstance(valor, (int, float)):
-            return float(valor)
+            dist = float(valor)
+            if dist <= 0:
+                raise ValueError("Distância deve ser positiva")
+            return dist
 
-        texto = str(valor).strip()
-        texto = texto.replace(".", "").replace(",", ".")
+        texto = MemorialParserService._normalizar_texto_base(str(valor))
+
+        if not texto:
+            raise ValueError("Distância vazia")
+
+        texto = texto.lower()
+        texto = texto.replace("metros", "")
+        texto = texto.replace("metro", "")
+        texto = texto.replace("m.", "")
+        texto = texto.replace("m", "")
+        texto = texto.strip()
+
+        if "," in texto and "." in texto:
+            if texto.rfind(",") > texto.rfind("."):
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
+        else:
+            if "," in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
 
         try:
             dist = float(texto)
@@ -104,26 +182,26 @@ class MemorialParserService:
         return sqrt((dx * dx) + (dy * dy))
 
     @staticmethod
-    def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    def _fechar_anel(coords: list[tuple[float, float]]) -> tuple[list[tuple[float, float]], float]:
         if len(coords) < 3:
             raise ValueError("Quantidade insuficiente de vértices para polígono")
 
         primeiro = coords[0]
         ultimo = coords[-1]
 
-        distancia_fechamento = MemorialParserService._distancia_entre_pontos(
+        erro_fechamento = MemorialParserService._distancia_entre_pontos(
             primeiro,
             ultimo,
         )
 
-        if distancia_fechamento <= MemorialParserService.FECHAMENTO_TOLERANCIA_METROS:
+        if erro_fechamento <= MemorialParserService.FECHAMENTO_TOLERANCIA_METROS:
             coords[-1] = primeiro
-            return coords
+            return coords, erro_fechamento
 
-        if primeiro != ultimo:
-            coords.append(primeiro)
-
-        return coords
+        raise ValueError(
+            f"Erro de fechamento do polígono: {erro_fechamento:.3f} m "
+            f"(acima da tolerância de {MemorialParserService.FECHAMENTO_TOLERANCIA_METROS} m)"
+        )
 
     @staticmethod
     def _adicionar_segmento(
@@ -132,25 +210,71 @@ class MemorialParserService:
         rumo_original: str,
         azimute: float,
         distancia: float,
+        ordem: int | None = None,
+        vertice_inicial: str | None = None,
+        vertice_final: str | None = None,
     ) -> None:
         if distancia <= 0:
             return
 
-        segmentos.append(
-            {
-                "tipo": tipo,
-                "rumo": rumo_original.strip(),
-                "azimute": azimute,
-                "distancia": distancia,
-            }
-        )
+        segmento: dict[str, Any] = {
+            "tipo": tipo,
+            "rumo": MemorialParserService._normalizar_texto_base(rumo_original),
+            "azimute": float(azimute),
+            "distancia": float(distancia),
+        }
 
-    # 🔥 CORREÇÃO CRÍTICA: AGORA DENTRO DA CLASSE
+        if ordem is not None:
+            segmento["ordem"] = ordem
+
+        if vertice_inicial:
+            segmento["vertice_inicial"] = MemorialParserService._normalizar_texto_base(
+                vertice_inicial
+            ).upper()
+
+        if vertice_final:
+            segmento["vertice_final"] = MemorialParserService._normalizar_texto_base(
+                vertice_final
+            ).upper()
+
+        segmentos.append(segmento)
+
+    @staticmethod
+    def _deduplicar_segmentos(segmentos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        segmentos_unicos: list[dict[str, Any]] = []
+        vistos: set[tuple[str, float, float]] = set()
+
+        for seg in segmentos:
+            chave = (
+                str(seg.get("rumo", "")).strip().upper(),
+                round(float(seg.get("azimute", 0.0)), 8),
+                round(float(seg.get("distancia", 0.0)), 8),
+            )
+
+            if chave in vistos:
+                continue
+
+            vistos.add(chave)
+            segmentos_unicos.append(seg)
+
+        try:
+            segmentos_unicos.sort(
+                key=lambda x: (
+                    0 if x.get("ordem") is not None else 1,
+                    x.get("ordem") if x.get("ordem") is not None else 999999,
+                )
+            )
+        except Exception:
+            pass
+
+        return segmentos_unicos
+
     @staticmethod
     def extrair_segmentos(memorial_texto: str) -> list[dict[str, Any]]:
         if not memorial_texto or not memorial_texto.strip():
             raise ValueError("Memorial vazio")
 
+        texto = MemorialParserService._normalizar_texto_base(memorial_texto)
         segmentos: list[dict[str, Any]] = []
 
         # =========================================================
@@ -161,7 +285,7 @@ class MemorialParserService:
             re.IGNORECASE,
         )
 
-        for rumo, distancia in pattern_rumo.findall(memorial_texto):
+        for rumo, distancia in pattern_rumo.findall(texto):
             try:
                 az = MemorialParserService._rumo_para_azimute(rumo)
                 dist = MemorialParserService._parse_distancia(distancia)
@@ -186,7 +310,7 @@ class MemorialParserService:
             re.IGNORECASE | re.DOTALL,
         )
 
-        for az_str, distancia in pattern_azimute_livre.findall(memorial_texto):
+        for az_str, distancia in pattern_azimute_livre.findall(texto):
             try:
                 az = MemorialParserService._azimute_dms_para_decimal(az_str)
                 dist = MemorialParserService._parse_distancia(distancia)
@@ -203,9 +327,6 @@ class MemorialParserService:
 
         # =========================================================
         # PADRÃO 3: TEXTO REAL DE CARTÓRIO
-        # Ex:
-        # "do marco X ao marco Y, com azimute de 01°22'35", na distância de 495,50 metros"
-        # "com azimute de ..., distância de ..."
         # =========================================================
         pattern_cartorio = re.compile(
             r"azimute\s*de\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?)"
@@ -214,7 +335,7 @@ class MemorialParserService:
             re.IGNORECASE | re.DOTALL,
         )
 
-        for az_str, distancia in pattern_cartorio.findall(memorial_texto):
+        for az_str, distancia in pattern_cartorio.findall(texto):
             try:
                 az = MemorialParserService._azimute_dms_para_decimal(az_str)
                 dist = MemorialParserService._parse_distancia(distancia)
@@ -239,7 +360,7 @@ class MemorialParserService:
             re.IGNORECASE | re.DOTALL,
         )
 
-        for az_str, distancia in pattern_cartorio_na_distancia.findall(memorial_texto):
+        for az_str, distancia in pattern_cartorio_na_distancia.findall(texto):
             try:
                 az = MemorialParserService._azimute_dms_para_decimal(az_str)
                 dist = MemorialParserService._parse_distancia(distancia)
@@ -264,7 +385,7 @@ class MemorialParserService:
             re.IGNORECASE | re.DOTALL,
         )
 
-        for az_str, distancia in pattern_cartorio_metros.findall(memorial_texto):
+        for az_str, distancia in pattern_cartorio_metros.findall(texto):
             try:
                 az = MemorialParserService._azimute_dms_para_decimal(az_str)
                 dist = MemorialParserService._parse_distancia(distancia)
@@ -280,24 +401,101 @@ class MemorialParserService:
                 continue
 
         # =========================================================
-        # DEDUPLICAÇÃO SIMPLES
-        # Evita repetir o mesmo segmento capturado por múltiplos padrões
+        # PADRÃO 6: AZIMUTE DECIMAL + DISTÂNCIA
+        # Ex.: "azimute 123.456789 distância 495,50"
         # =========================================================
-        segmentos_unicos: list[dict[str, Any]] = []
-        vistos: set[tuple[str, float, float]] = set()
+        pattern_azimute_decimal = re.compile(
+            r"azimute\s*(?:de)?\s*(\d+(?:[.,]\d+)?)"
+            r".{0,50}?"
+            r"dist[âa]ncia\s*(?:de)?\s*(\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
+        )
 
-        for seg in segmentos:
-            chave = (
-                str(seg.get("rumo", "")).strip().upper(),
-                round(float(seg.get("azimute", 0.0)), 8),
-                round(float(seg.get("distancia", 0.0)), 8),
-            )
+        for az_str, distancia in pattern_azimute_decimal.findall(texto):
+            try:
+                az = MemorialParserService._azimute_decimal_para_float(az_str)
+                dist = MemorialParserService._parse_distancia(distancia)
 
-            if chave in vistos:
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="azimute_decimal",
+                    rumo_original=az_str,
+                    azimute=az,
+                    distancia=dist,
+                )
+            except Exception:
                 continue
 
-            vistos.add(chave)
-            segmentos_unicos.append(seg)
+        # =========================================================
+        # PADRÃO 7: RUMO + DISTÂNCIA + MARCOS/VÉRTICES
+        # Ex.: "do vértice V01 ao vértice V02 com rumo N 10°00'00" E e distância 100,00"
+        # =========================================================
+        pattern_vertices_rumo = re.compile(
+            r"(?:v[eé]rtice|marco)\s*([A-Z0-9.\-_/]+)"
+            r".{0,40}?"
+            r"(?:ao|até|ate)\s*(?:v[eé]rtice|marco)?\s*([A-Z0-9.\-_/]+)"
+            r".{0,60}?"
+            r"rumo\s*(.*?)\s*"
+            r".{0,40}?"
+            r"dist[âa]ncia\s*(?:de)?\s*(\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        ordem_local = 1
+        for v1, v2, rumo, distancia in pattern_vertices_rumo.findall(texto):
+            try:
+                az = MemorialParserService._rumo_para_azimute(rumo)
+                dist = MemorialParserService._parse_distancia(distancia)
+
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="vertices_rumo",
+                    rumo_original=rumo,
+                    azimute=az,
+                    distancia=dist,
+                    ordem=ordem_local,
+                    vertice_inicial=v1,
+                    vertice_final=v2,
+                )
+                ordem_local += 1
+            except Exception:
+                continue
+
+        # =========================================================
+        # PADRÃO 8: MARCOS/VÉRTICES + AZIMUTE + DISTÂNCIA
+        # =========================================================
+        pattern_vertices_azimute = re.compile(
+            r"(?:v[eé]rtice|marco)\s*([A-Z0-9.\-_/]+)"
+            r".{0,40}?"
+            r"(?:ao|até|ate)\s*(?:v[eé]rtice|marco)?\s*([A-Z0-9.\-_/]+)"
+            r".{0,80}?"
+            r"azimute\s*(?:de)?\s*(\d+[°º]\s*\d+'?\s*\d*(?:\.\d+)?\"?|\d+(?:[.,]\d+)?)"
+            r".{0,60}?"
+            r"dist[âa]ncia\s*(?:de)?\s*(\d+(?:[.,]\d+)?)",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        ordem_local = 1
+        for v1, v2, azimute_raw, distancia in pattern_vertices_azimute.findall(texto):
+            try:
+                az = MemorialParserService._parse_azimute_ou_rumo(azimute_raw)
+                dist = MemorialParserService._parse_distancia(distancia)
+
+                MemorialParserService._adicionar_segmento(
+                    segmentos=segmentos,
+                    tipo="vertices_azimute",
+                    rumo_original=azimute_raw,
+                    azimute=az,
+                    distancia=dist,
+                    ordem=ordem_local,
+                    vertice_inicial=v1,
+                    vertice_final=v2,
+                )
+                ordem_local += 1
+            except Exception:
+                continue
+
+        segmentos_unicos = MemorialParserService._deduplicar_segmentos(segmentos)
 
         if not segmentos_unicos:
             return []
@@ -316,15 +514,26 @@ class MemorialParserService:
 
         coords: list[tuple[float, float]] = [(x, y)]
 
-        for seg in segmentos:
+        distancias_calculadas: list[float] = []
+        azimutes_calculados: list[float] = []
+
+        for idx, seg in enumerate(segmentos, start=1):
             azimute = seg.get("azimute")
             distancia = seg.get("distancia")
 
             if azimute is None or distancia is None:
-                raise ValueError("Segmento inválido: azimute ou distância ausente")
+                raise ValueError(f"Segmento inválido na posição {idx}: azimute ou distância ausente")
 
             az = radians(float(azimute))
             dist = float(distancia)
+
+            if dist <= 0:
+                raise ValueError(f"Segmento inválido na posição {idx}: distância não positiva")
+
+            if dist < MemorialParserService.DISTANCIA_MINIMA_METROS:
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: distância muito pequena ({dist})"
+                )
 
             dx = dist * sin(az)
             dy = dist * cos(az)
@@ -333,8 +542,23 @@ class MemorialParserService:
             y += dy
 
             coords.append((x, y))
+            distancias_calculadas.append(dist)
+            azimutes_calculados.append(float(seg.get("azimute")))
 
-        coords = MemorialParserService._fechar_anel(coords)
+        if len(coords) < 4:
+            raise ValueError("Geometria inválida: número insuficiente de vértices")
+
+        for i in range(len(coords) - 1):
+            dx = coords[i + 1][0] - coords[i][0]
+            dy = coords[i + 1][1] - coords[i][1]
+            dist = sqrt(dx * dx + dy * dy)
+
+            if dist < MemorialParserService.DISTANCIA_MINIMA_METROS:
+                raise ValueError(
+                    f"Segmento inválido detectado (distância muito pequena: {dist})"
+                )
+
+        coords, erro_fechamento = MemorialParserService._fechar_anel(coords)
 
         polygon = Polygon(coords)
 
@@ -347,8 +571,23 @@ class MemorialParserService:
         if polygon.is_empty or not polygon.is_valid:
             raise ValueError("Geometria inválida gerada do memorial")
 
+        area_m2 = float(polygon.area)
+        perimetro_m = float(polygon.length)
+
         return {
             "geojson": polygon.__geo_interface__,
             "coords": coords,
             "segmentos": segmentos,
+            "controle": {
+                "total_segmentos": len(segmentos),
+                "vertices": len(coords),
+                "fechamento": True,
+                "erro_fechamento_m": erro_fechamento,
+                "area_m2": area_m2,
+                "perimetro_m": perimetro_m,
+                "distancia_minima_m": min(distancias_calculadas) if distancias_calculadas else None,
+                "distancia_maxima_m": max(distancias_calculadas) if distancias_calculadas else None,
+                "azimute_min_graus": min(azimutes_calculados) if azimutes_calculados else None,
+                "azimute_max_graus": max(azimutes_calculados) if azimutes_calculados else None,
+            },
         }
