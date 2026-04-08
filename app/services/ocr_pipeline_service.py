@@ -351,9 +351,18 @@ class OcrPipelineService:
         # ================= GEOMETRIA =================
         geojson: Optional[str] = None
         geometria: Optional[Geometria] = None
+        fonte_geom: Optional[str] = None
 
         try:
             geojson = OcrPipelineService._resolver_geojson(dados)
+
+            # 🔥 NOVO — identificar fonte geométrica (sem quebrar legado)
+            try:
+                if isinstance(dados.get("geometria"), dict):
+                    fonte_geom = dados.get("geometria", {}).get("fonte")
+            except Exception:
+                fonte_geom = None
+
         except Exception as exc:
             OcrPipelineService._rollback_safely(db)
             result["errors"].append(f"Resolver geojson: {str(exc)}")
@@ -404,6 +413,7 @@ class OcrPipelineService:
                             "geometria_id": geometria.id,
                             "epsg_origem": geometria.epsg_origem,
                             "epsg_utm": geometria.epsg_utm,
+                            "fonte_geom": fonte_geom,  # 🔥 NOVO
                         },
                         gerado_em=datetime.utcnow(),
                     ),
@@ -425,6 +435,7 @@ class OcrPipelineService:
                     "arquivo_path": geo_file.get("arquivo_path"),
                     "arquivo_url": url_geo,
                     "documento_tecnico_id": doc_geo.id,
+                    "fonte": fonte_geom,  # 🔥 NOVO
                 }
 
                 try:
@@ -461,6 +472,11 @@ class OcrPipelineService:
                                     "descricao": descricao,
                                     "matricula": matricula_cft,
                                     "identificacao": identificacao,
+
+                                    # 🔥 NOVO — NÃO PERDER DADOS DO NORMALIZER
+                                    "tipo": c.get("tipo"),
+                                    "lote": c.get("lote"),
+                                    "gleba": c.get("gleba"),
                                 }
                             )
 
@@ -478,6 +494,7 @@ class OcrPipelineService:
                         "success": True,
                         "total": len(confrontantes),
                         "normalizados": len(confrontantes_processados),
+                        "fonte_geom": fonte_geom,  # 🔥 NOVO
                     }
 
                     print(f"✅ Confrontantes processados: {len(confrontantes)}")
@@ -499,12 +516,14 @@ class OcrPipelineService:
                 result["steps"]["geometria"] = {
                     "success": False,
                     "message": f"Falha ao gerar geometria: {str(exc)}",
+                    "fonte": fonte_geom,  # 🔥 NOVO
                 }
                 result["errors"].append(f"Geometria: {str(exc)}")
         else:
             result["steps"]["geometria"] = {
                 "success": False,
                 "message": "Nenhuma fonte geométrica válida encontrada.",
+                "fonte": fonte_geom,  # 🔥 NOVO
             }
 
         # ================= MEMORIAL =================
@@ -541,6 +560,7 @@ class OcrPipelineService:
                             "tipo_referencial": memorial.get("tipo_referencial"),
                             "arquivo_path": memorial.get("arquivo_path"),
                             "arquivo_url": memorial.get("arquivo_url"),
+                            "fonte_geom": fonte_geom,  # 🔥 NOVO
                         },
                         arquivo_path=memorial.get("arquivo_path"),
                         arquivo_url=memorial.get("arquivo_url"),
@@ -555,6 +575,7 @@ class OcrPipelineService:
                     "arquivo_url": memorial.get("arquivo_url"),
                     "tipo_referencial": memorial.get("tipo_referencial"),
                     "epsg_utm": memorial.get("epsg_utm"),
+                    "fonte": fonte_geom,  # 🔥 NOVO
                     "message": "Memorial gerado com arquivo.",
                 }
 
@@ -563,6 +584,7 @@ class OcrPipelineService:
                 result["steps"]["memorial"] = {
                     "success": False,
                     "message": f"Falha ao gerar memorial: {str(exc)}",
+                    "fonte": fonte_geom,  # 🔥 NOVO
                 }
                 result["errors"].append(f"Memorial: {str(exc)}")
         else:
@@ -570,6 +592,7 @@ class OcrPipelineService:
                 "success": False,
                 "skipped": True,
                 "message": "Memorial não executado: geometria inexistente.",
+                "fonte": fonte_geom,  # 🔥 NOVO
             }
 
         # =========================================================
@@ -974,13 +997,53 @@ class OcrPipelineService:
 
         epsg_origem_atual = geometria.epsg_origem if geometria else None
 
-        if geometria and epsg_origem_atual and epsg_origem_atual > 0:
-            sigef_ok = bool(result["steps"]["sigef_csv"].get("success"))
-            result["success"] = (
-                geometria_ok and memorial_ok and croqui_ok and cad_ok and sigef_ok
-            )
-        else:
-            result["success"] = geometria_ok and memorial_ok and croqui_ok and cad_ok
+        # 🔥 NOVO — QUALIDADE OCR (SEM QUEBRAR CONTRATO)
+        qualidade_ocr = dados.get("qualidade") if isinstance(dados, dict) else None
+
+        score_ocr = 0
+        confianca_geral = None
+
+        if isinstance(qualidade_ocr, dict):
+            score_ocr = qualidade_ocr.get("score", 0) or 0
+            confianca_geral = qualidade_ocr.get("confianca_geral")
+
+        # 🔥 NOVO — CONTROLE DE SIGEF
+        sigef_obrigatorio = bool(
+            geometria
+            and epsg_origem_atual
+            and epsg_origem_atual > 0
+        )
+
+        sigef_ok = bool(result["steps"]["sigef_csv"].get("success"))
+
+        # 🔥 NOVO — REGRAS DE SUCESSO
+        sucesso_base = (
+            geometria_ok
+            and memorial_ok
+            and croqui_ok
+            and cad_ok
+        )
+
+        if sigef_obrigatorio:
+            sucesso_base = sucesso_base and sigef_ok
+
+        # 🔥 NOVO — VALIDAÇÃO DE QUALIDADE (SEM QUEBRAR FLUXO)
+        qualidade_minima_ok = score_ocr >= 60
+
+        result["success"] = sucesso_base and qualidade_minima_ok
+
+        # 🔥 NOVO — DEBUG E RASTREABILIDADE (CRÍTICO PARA PRODUÇÃO)
+        result["validacao_pipeline"] = {
+            "geometria_ok": geometria_ok,
+            "memorial_ok": memorial_ok,
+            "croqui_ok": croqui_ok,
+            "cad_ok": cad_ok,
+            "sigef_obrigatorio": sigef_obrigatorio,
+            "sigef_ok": sigef_ok,
+            "qualidade_score": score_ocr,
+            "qualidade_minima_ok": qualidade_minima_ok,
+            "confianca_geral": confianca_geral,
+        }
 
         print("🏁 Pipeline OCR concluído")
         return result

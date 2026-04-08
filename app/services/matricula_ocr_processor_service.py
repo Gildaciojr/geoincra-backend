@@ -297,13 +297,86 @@ class MatriculaOcrProcessorService:
             .all()
         )
 
+        # =========================================================
+        # 🔥 NOVO — BUSCAR OCR MAIS RECENTE (ENRIQUECIMENTO)
+        # =========================================================
+
+        ocr = (
+            db.query(OcrResult)
+            .order_by(OcrResult.created_at.desc())
+            .first()
+        )
+
+        dados_ocr = {}
+
+        if ocr and ocr.dados_extraidos_json:
+            dados_ocr = MatriculaOcrProcessorService._parse_json(
+                ocr.dados_extraidos_json
+            )
+
+        # =========================================================
+        # 🔥 PROPRIETÁRIOS (AGORA VEM DO OCR)
+        # =========================================================
+
+        proprietarios = []
+
+        if isinstance(dados_ocr.get("proprietarios"), list):
+            for p in dados_ocr.get("proprietarios"):
+
+                if not isinstance(p, dict):
+                    continue
+
+                nome = p.get("nome")
+                cpf = p.get("cpf_cnpj")
+                tipo = p.get("tipo")
+
+                if not nome:
+                    continue
+
+                proprietarios.append({
+                    "nome": nome,
+                    "cpf_cnpj": cpf,
+                    "tipo": tipo,
+                })
+
+        # =========================================================
+        # 🔥 DADOS COMPLEMENTARES DO OCR
+        # =========================================================
+
+        descricao_imovel = dados_ocr.get("descricao_imovel")
+        area_total = dados_ocr.get("area_total")
+        unidade_area = dados_ocr.get("unidade_area")
+
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO LEVE (SEM QUEBRAR NADA)
+        # =========================================================
+
+        def _safe(v):
+            if v is None:
+                return None
+            return str(v).strip()
+
+        # =========================================================
+        # PAYLOAD FINAL (EXPANDIDO)
+        # =========================================================
+
         return {
+            # 🔹 LEGADO (NÃO ALTERAR)
             "matricula": matricula.numero_matricula,
             "livro": matricula.livro,
             "folha": matricula.folha,
             "comarca": matricula.comarca,
             "codigo_cartorio": matricula.codigo_cartorio,
             "status": matricula.status,
+
+            # 🔥 NOVOS CAMPOS (PDF PROFISSIONAL)
+            "numero_matricula": matricula.numero_matricula,
+            "descricao_imovel": _safe(descricao_imovel),
+            "area_total": area_total,
+            "unidade_area": unidade_area,
+
+            "proprietarios": proprietarios,
+
             "confrontantes": [
                 {
                     "direcao": c.direcao,
@@ -313,5 +386,13 @@ class MatriculaOcrProcessorService:
                     "identificacao": c.identificacao_imovel_confrontante,
                 }
                 for c in confrontantes
-            ]
+            ],
+
+            # 🔥 DEBUG / RASTREABILIDADE
+            "metadata": {
+                "origem": "matricula_ocr_processor_service",
+                "possui_ocr": bool(dados_ocr),
+                "total_confrontantes": len(confrontantes),
+                "total_proprietarios": len(proprietarios),
+            }
         }
