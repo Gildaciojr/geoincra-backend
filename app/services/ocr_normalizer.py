@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional
+from app.services.memorial_parser_service import MemorialParserService
 
 
 # =========================================================
@@ -639,6 +640,7 @@ def _resolver_proprietarios(dados: Dict[str, Any], warnings: List[str]) -> List[
 
 def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[List[Dict[str, Any]], List[str]]:
     erros: List[str] = []
+
     segmentos_raw = _first_list(
         dados.get("segmentos_memorial"),
         dados.get("segmentos"),
@@ -660,6 +662,7 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
                 s.get("bearing"),
             )
         )
+
         distancia = _to_float(
             _coalesce(
                 s.get("distancia"),
@@ -670,6 +673,7 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
         )
 
         ordem = s.get("ordem")
+
         vertice_inicial = _normalizar_numero_vertice(
             _coalesce(
                 s.get("vertice_inicial"),
@@ -678,6 +682,7 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
                 s.get("de"),
             )
         )
+
         vertice_final = _normalizar_numero_vertice(
             _coalesce(
                 s.get("vertice_final"),
@@ -710,16 +715,55 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
 
         if ordem is not None:
             segmento["ordem"] = ordem
+
         if vertice_inicial:
             segmento["vertice_inicial"] = vertice_inicial
+
         if vertice_final:
             segmento["vertice_final"] = vertice_final
 
         segmentos.append(segmento)
 
-    # regra segura:
-    # - menos de 3 segmentos não é erro fatal se existir memorial_texto ou geojson;
-    # - vira warning e o pipeline pode usar outra fonte geométrica.
+    # =========================================================
+    # NOVO BLOCO — USAR MEMORIAL SE NECESSÁRIO
+    # =========================================================
+    if not segmentos or len(segmentos) < 3:
+        memorial_texto = _normalizar_memorial_texto(
+            _coalesce(
+                dados.get("memorial_texto"),
+                _first_dict(dados.get("geometria")).get("memorial_texto")
+                if isinstance(dados.get("geometria"), dict)
+                else None,
+            )
+        )
+
+        if memorial_texto:
+            try:
+                segmentos_extraidos = MemorialParserService.extrair_segmentos(memorial_texto)
+
+                if segmentos_extraidos and len(segmentos_extraidos) >= 3:
+                    warnings.append("Segmentos gerados automaticamente a partir do memorial descritivo")
+
+                    segmentos = [
+                        {
+                            "azimute_raw": seg.get("rumo"),
+                            "distancia": float(seg.get("distancia")),
+                            "ordem": seg.get("ordem"),
+                            "vertice_inicial": seg.get("vertice_inicial"),
+                            "vertice_final": seg.get("vertice_final"),
+                        }
+                        for seg in segmentos_extraidos
+                    ]
+
+                else:
+                    warnings.append("Memorial não gerou segmentos suficientes")
+
+            except Exception as e:
+                warnings.append(f"Falha ao extrair segmentos do memorial: {str(e)}")
+
+    # =========================================================
+    # REGRA ORIGINAL (mantida)
+    # =========================================================
     if segmentos and len(segmentos) < 3:
         warnings.append("Segmentos insuficientes para formar polígono; será tentado memorial_texto/geojson")
         segmentos = []
@@ -733,7 +777,8 @@ def _resolver_geometria(
     warnings: List[str],
 ) -> Dict[str, Any]:
     geometria_dict = _first_dict(dados.get("geometria"))
-    geojson = _normalizar_geojson(
+
+    geojson_existente = _normalizar_geojson(
         _coalesce(
             dados.get("geojson"),
             geometria_dict.get("geojson") if geometria_dict else None,
@@ -750,14 +795,49 @@ def _resolver_geometria(
     )
 
     fonte: Optional[str] = None
+    geojson: Optional[Dict[str, Any]] = geojson_existente
 
+    # =========================================================
+    # TENTAR GERAR GEOMETRIA A PARTIR DOS SEGMENTOS
+    # =========================================================
     if segmentos_validos:
-        fonte = "segmentos"
-    elif memorial_texto:
-        fonte = "memorial"
-    elif geojson:
+        try:
+            texto_base = memorial_texto or ""
+
+            geometria_gerada = MemorialParserService.gerar_geometria(texto_base)
+
+            if geometria_gerada:
+                geojson = geometria_gerada.get("geojson")
+                segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
+                fonte = "segmentos_processados"
+
+        except Exception as e:
+            warnings.append(f"Falha ao gerar geometria via segmentos: {str(e)}")
+
+    # =========================================================
+    # FALLBACK: GERAR VIA MEMORIAL
+    # =========================================================
+    if not fonte and memorial_texto:
+        try:
+            geometria_gerada = MemorialParserService.gerar_geometria(memorial_texto)
+
+            if geometria_gerada:
+                geojson = geometria_gerada.get("geojson")
+                segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
+                fonte = "memorial_processado"
+
+        except Exception as e:
+            warnings.append(f"Falha ao gerar geometria via memorial: {str(e)}")
+
+    # =========================================================
+    # FALLBACK FINAL: GEOJSON EXISTENTE
+    # =========================================================
+    if not fonte and geojson_existente:
         fonte = "geojson"
 
+    # =========================================================
+    # NENHUMA FONTE
+    # =========================================================
     if not fonte:
         warnings.append("Nenhuma fonte geométrica válida identificada")
 

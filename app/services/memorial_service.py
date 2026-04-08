@@ -77,14 +77,29 @@ class MemorialService:
 
         coords = list(geom.exterior.coords)
 
+        coords = [
+            (
+                MemorialService._safe_float(x),
+                MemorialService._safe_float(y),
+            )
+            for x, y in coords
+        ]
+
         if len(coords) < 4:
             raise HTTPException(status_code=400, detail="Polígono inválido.")
 
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
+        if len(coords) < 4:
+            raise HTTPException(status_code=400, detail="Polígono inválido após normalização.")
+
         if tipo_referencial == "LOCAL_CARTESIANA":
-            return None, [_PontoPlano(float(x), float(y)) for x, y in coords], tipo_referencial
+            return (
+                None,
+                [_PontoPlano(float(x), float(y)) for x, y in coords],
+                tipo_referencial,
+            )
 
         lon = float(analise["centroid"]["x"])
         lat = float(analise["centroid"]["y"])
@@ -96,10 +111,18 @@ class MemorialService:
             always_xy=True,
         )
 
-        pontos = []
+        pontos: List[_PontoPlano] = []
+
         for x, y in coords:
             X, Y = transformer.transform(float(x), float(y))
+
+            X = MemorialService._safe_float(X)
+            Y = MemorialService._safe_float(Y)
+
             pontos.append(_PontoPlano(X, Y))
+
+        if len(pontos) < 4:
+            raise HTTPException(status_code=400, detail="Geometria insuficiente após projeção.")
 
         return epsg_utm, pontos, tipo_referencial
 
@@ -176,8 +199,11 @@ class MemorialService:
             dist = MemorialService._dist_m(p1, p2)
             az = MemorialService._azimute_deg(p1, p2)
 
-            if dist <= 0:
+            if dist <= 0 or math.isnan(dist) or math.isinf(dist):
                 raise ValueError(f"Segmento inválido detectado na posição {i+1}")
+
+            if math.isnan(az) or math.isinf(az):
+                raise ValueError(f"Azimute inválido no segmento {i+1}")
 
             soma_distancias += dist
 

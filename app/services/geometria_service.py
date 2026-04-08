@@ -75,12 +75,12 @@ class GeometriaService:
     def _bbox_info(geom: Polygon) -> dict[str, float]:
         minx, miny, maxx, maxy = geom.bounds
         return {
-            "minx": float(minx),
-            "miny": float(miny),
-            "maxx": float(maxx),
-            "maxy": float(maxy),
-            "spanx": float(maxx - minx),
-            "spany": float(maxy - miny),
+            "minx": GeometriaService._safe_float(minx),
+            "miny": GeometriaService._safe_float(miny),
+            "maxx": GeometriaService._safe_float(maxx),
+            "maxy": GeometriaService._safe_float(maxy),
+            "spanx": GeometriaService._safe_float(maxx - minx),
+            "spany": GeometriaService._safe_float(maxy - miny),
         }
 
     @staticmethod
@@ -124,14 +124,50 @@ class GeometriaService:
             detail="Geometria corrigida não resultou em POLYGON.",
         )
 
+    @staticmethod
+    def _normalizar_geojson_input(geojson: Any) -> dict[str, Any]:
+        if geojson is None:
+            raise HTTPException(status_code=400, detail="GeoJSON ausente.")
+
+        if isinstance(geojson, dict):
+            return geojson
+
+        if isinstance(geojson, str):
+            texto = geojson.strip()
+            if not texto:
+                raise HTTPException(status_code=400, detail="GeoJSON vazio.")
+            try:
+                return json.loads(texto)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="GeoJSON inválido.") from exc
+
+        raise HTTPException(status_code=400, detail="GeoJSON em formato inválido.")
+
+    @staticmethod
+    def _sanear_coords(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        coords_saneados: list[tuple[float, float]] = []
+
+        for x, y in coords:
+            xf = GeometriaService._safe_float(x)
+            yf = GeometriaService._safe_float(y)
+
+            if math.isnan(xf) or math.isnan(yf) or math.isinf(xf) or math.isinf(yf):
+                continue
+
+            coords_saneados.append((xf, yf))
+
+        return coords_saneados
+
     # =========================================================
     # PARSE GEOJSON
     # =========================================================
     @staticmethod
-    def _parse_polygon_geojson(geojson: str) -> Polygon:
+    def _parse_polygon_geojson(geojson: Any) -> Polygon:
         try:
-            obj = json.loads(geojson)
+            obj = GeometriaService._normalizar_geojson_input(geojson)
             geom = shape(obj)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail="GeoJSON inválido.") from exc
 
@@ -148,6 +184,9 @@ class GeometriaService:
             raise HTTPException(status_code=400, detail="Geometria deve ser POLYGON.")
 
         coords = list(geom.exterior.coords)
+        coords = GeometriaService._sanear_coords(
+            [(float(x), float(y)) for x, y in coords]
+        )
 
         if len(coords) < 4:
             raise HTTPException(
@@ -155,14 +194,12 @@ class GeometriaService:
                 detail="Polígono inválido (menos de 4 vértices).",
             )
 
-        coords = GeometriaService._coords_anel_fechado(
-            [(float(x), float(y)) for x, y in coords]
-        )
+        coords = GeometriaService._coords_anel_fechado(coords)
         geom = Polygon(coords)
 
         geom = GeometriaService._corrigir_geometria(geom)
 
-        coords_validos = list(geom.exterior.coords)
+        coords_validos = GeometriaService._sanear_coords(list(geom.exterior.coords))
         if len(coords_validos) < 4:
             raise HTTPException(
                 status_code=400,
@@ -176,7 +213,7 @@ class GeometriaService:
     # =========================================================
     @staticmethod
     def analisar_referencial(
-        geojson: str,
+        geojson: Any,
         epsg_origem: int | None = 4326,
     ) -> dict[str, Any]:
 
@@ -187,17 +224,18 @@ class GeometriaService:
         spany = bounds["spany"]
 
         centroid = geom.centroid
-        cx = float(centroid.x)
-        cy = float(centroid.y)
+        cx = GeometriaService._safe_float(centroid.x)
+        cy = GeometriaService._safe_float(centroid.y)
 
-        if math.isnan(cx) or math.isnan(cy):
-            raise HTTPException(status_code=400, detail="Centroide inválido (NaN).")
+        if math.isnan(cx) or math.isnan(cy) or math.isinf(cx) or math.isinf(cy):
+            raise HTTPException(status_code=400, detail="Centroide inválido (NaN/Inf).")
 
         faixa_geografica_valida = GeometriaService._coordenadas_parecem_geograficas(geom)
 
         # Heurística:
-        # se a geometria parece geográfica e está em escala compatível com graus,
-        # tratamos como GEOGRAFICA; caso contrário, LOCAL_CARTESIANA.
+        # - se EPSG <= 0: LOCAL_CARTESIANA
+        # - se bounds não parecem geográficos: LOCAL_CARTESIANA
+        # - se escala em graus é desproporcional: LOCAL_CARTESIANA
         escala_graus = spanx < 5 and spany < 5
 
         if epsg_origem is not None and int(epsg_origem) <= 0:
@@ -229,7 +267,7 @@ class GeometriaService:
     # =========================================================
     @staticmethod
     def calcular_area_perimetro(
-        geojson: str,
+        geojson: Any,
         epsg_origem: int = 4326,
     ) -> tuple[int | None, float, float]:
 
@@ -246,14 +284,18 @@ class GeometriaService:
             perimetro_m = GeometriaService._safe_float(geom.length)
             return None, area_m2 / 10000.0, perimetro_m
 
-        lon = float(analise["centroid"]["x"])
-        lat = float(analise["centroid"]["y"])
+        lon = GeometriaService._safe_float(analise["centroid"]["x"])
+        lat = GeometriaService._safe_float(analise["centroid"]["y"])
 
         if not (
             GeometriaService.GEO_LON_MIN <= lon <= GeometriaService.GEO_LON_MAX
             and GeometriaService.GEO_LAT_MIN <= lat <= GeometriaService.GEO_LAT_MAX
         ):
-            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
+            return (
+                None,
+                GeometriaService._safe_float(geom.area) / 10000.0,
+                GeometriaService._safe_float(geom.length),
+            )
 
         epsg_utm = GeometriaService._utm_epsg_from_lonlat(lon, lat)
 
@@ -264,13 +306,17 @@ class GeometriaService:
                 always_xy=True,
             )
         except Exception:
-            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
+            return (
+                None,
+                GeometriaService._safe_float(geom.area) / 10000.0,
+                GeometriaService._safe_float(geom.length),
+            )
 
         proj_coords: list[tuple[float, float]] = []
 
         for x, y in geom.exterior.coords:
-            x = float(x)
-            y = float(y)
+            x = GeometriaService._safe_float(x)
+            y = GeometriaService._safe_float(y)
 
             if not (
                 GeometriaService.GEO_LON_MIN <= x <= GeometriaService.GEO_LON_MAX
@@ -283,13 +329,20 @@ class GeometriaService:
             except Exception:
                 continue
 
+            X = GeometriaService._safe_float(X)
+            Y = GeometriaService._safe_float(Y)
+
             if math.isnan(X) or math.isnan(Y) or math.isinf(X) or math.isinf(Y):
                 continue
 
-            proj_coords.append((float(X), float(Y)))
+            proj_coords.append((X, Y))
 
         if len(proj_coords) < 4:
-            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
+            return (
+                None,
+                GeometriaService._safe_float(geom.area) / 10000.0,
+                GeometriaService._safe_float(geom.length),
+            )
 
         proj_coords = GeometriaService._coords_anel_fechado(proj_coords)
         geom_utm = Polygon(proj_coords)
@@ -297,7 +350,11 @@ class GeometriaService:
         try:
             geom_utm = GeometriaService._corrigir_geometria(geom_utm)
         except Exception:
-            return None, GeometriaService._safe_float(geom.area) / 10000.0, GeometriaService._safe_float(geom.length)
+            return (
+                None,
+                GeometriaService._safe_float(geom.area) / 10000.0,
+                GeometriaService._safe_float(geom.length),
+            )
 
         area_m2 = GeometriaService._safe_float(geom_utm.area)
         perimetro_m = GeometriaService._safe_float(geom_utm.length)
@@ -308,7 +365,7 @@ class GeometriaService:
     # EXPORTAR GEOJSON PARA ARQUIVO
     # =========================================================
     @staticmethod
-    def exportar_geojson(imovel_id: int, geojson: str) -> dict:
+    def exportar_geojson(imovel_id: int, geojson: Any) -> dict:
         pasta = f"app/uploads/imoveis/{imovel_id}/geometria"
         os.makedirs(pasta, exist_ok=True)
 
@@ -317,12 +374,17 @@ class GeometriaService:
         caminho = f"{pasta}/{nome_arquivo}"
 
         try:
-            parsed = json.loads(geojson)
+            if isinstance(geojson, dict):
+                parsed = geojson
+            else:
+                parsed = json.loads(geojson)
+
             with open(caminho, "w", encoding="utf-8") as f:
                 json.dump(parsed, f, ensure_ascii=False, indent=2)
+
         except Exception:
             with open(caminho, "w", encoding="utf-8") as f:
-                f.write(geojson)
+                f.write(str(geojson))
 
         base_url = "https://geoincra.escriturafacil.com"
         url = f"{base_url}/{caminho.replace('app/', '')}"
