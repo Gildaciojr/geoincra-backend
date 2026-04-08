@@ -294,17 +294,26 @@ class DxfExportService:
             )
 
         # =========================================================
-        # TEXTOS DOS SEGMENTOS
+        # TEXTOS DOS SEGMENTOS (PROFISSIONAL)
         # =========================================================
-        for index in range(len(coords) - 1):
+        segmentos = GeometriaService.extract_segmentos(geojson)
+
+        for index, seg in enumerate(segmentos):
+            if index >= len(coords) - 1:
+                continue
+
             p1 = coords[index]
             p2 = coords[index + 1]
 
             mx, my = DxfExportService._calc_midpoint(p1, p2)
-            distancia = DxfExportService._calc_distance(p1, p2)
+
+            distancia = seg["distancia"]
+            az = seg["azimute_graus"]
+
+            texto = f"L{index + 1} = {distancia:.2f} m | Az: {az:.2f}°"
 
             msp.add_text(
-                f"L{index + 1} = {distancia:.2f} m",
+                texto,
                 dxfattribs={
                     "layer": DxfExportService.LAYER_SEGMENTOS,
                     "height": text_height * 0.85,

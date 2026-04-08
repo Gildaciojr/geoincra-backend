@@ -426,3 +426,83 @@ class GeometriaService:
             "arquivo_path": caminho,
             "arquivo_url": url,
         }
+
+    # =========================================================
+    # ENGENHARIA DE SEGMENTOS (NOVO BLOCO)
+    # =========================================================
+    @staticmethod
+    def _calcular_azimute(dx: float, dy: float) -> float:
+        """
+        Azimute geodésico simplificado:
+        0° = Norte, sentido horário
+        """
+        if dx == 0 and dy == 0:
+            return 0.0
+
+        az = math.degrees(math.atan2(dx, dy))
+        return (az + 360.0) % 360.0
+
+    @staticmethod
+    def _calcular_distancia(x1: float, y1: float, x2: float, y2: float) -> float:
+        dx = x2 - x1
+        dy = y2 - y1
+        return math.sqrt(dx * dx + dy * dy)
+
+    # =========================================================
+    # EXTRAÇÃO DE SEGMENTOS (NÍVEL ENGENHARIA)
+    # =========================================================
+    @staticmethod
+    def extract_segmentos(geojson: Any) -> list[dict[str, Any]]:
+        geom = GeometriaService.parse_polygon_or_raise(geojson)
+
+        coords = list(geom.exterior.coords)
+
+        if len(coords) < 4:
+            raise HTTPException(
+                status_code=400,
+                detail="Polígono inválido para extração de segmentos.",
+            )
+
+        segmentos = []
+
+        for i in range(len(coords) - 1):
+            x1, y1 = coords[i]
+            x2, y2 = coords[i + 1]
+
+            x1 = GeometriaService._safe_float(x1)
+            y1 = GeometriaService._safe_float(y1)
+            x2 = GeometriaService._safe_float(x2)
+            y2 = GeometriaService._safe_float(y2)
+
+            distancia = GeometriaService._calcular_distancia(x1, y1, x2, y2)
+            azimute = GeometriaService._calcular_azimute(x2 - x1, y2 - y1)
+
+            segmentos.append({
+                "indice": i + 1,
+                "ponto_inicial": {"x": x1, "y": y1},
+                "ponto_final": {"x": x2, "y": y2},
+                "distancia": GeometriaService._safe_float(distancia),
+                "azimute_graus": GeometriaService._safe_float(azimute),
+            })
+
+        return segmentos
+
+    # =========================================================
+    # EXTRAÇÃO DE VÉRTICES (PARA MEMORIAL / CROQUI / CAD)
+    # =========================================================
+    @staticmethod
+    def extract_vertices_enriquecidos(geojson: Any) -> list[dict[str, Any]]:
+        segmentos = GeometriaService.extract_segmentos(geojson)
+
+        vertices = []
+
+        for seg in segmentos:
+            vertices.append({
+                "indice": seg["indice"],
+                "x": seg["ponto_inicial"]["x"],
+                "y": seg["ponto_inicial"]["y"],
+                "distancia": seg["distancia"],
+                "azimute_graus": seg["azimute_graus"],
+            })
+
+        return vertices

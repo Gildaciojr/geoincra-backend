@@ -309,18 +309,34 @@ class CroquiService:
         """
 
     @staticmethod
-    def _render_segment_labels(norm: List[Tuple[float, float]], original_coords: List[Tuple[float, float]]) -> str:
+    def _render_segment_labels(
+        norm: List[Tuple[float, float]],
+        geojson: str
+    ) -> str:
+
+        segmentos = GeometriaService.extract_segmentos(geojson)
+
         labels = []
 
-        for i, ((x1, y1), (x2, y2)) in enumerate(zip(norm[:-1], norm[1:]), start=1):
+        for i, seg in enumerate(segmentos):
+            if i >= len(norm) - 1:
+                continue
+
+            x1, y1 = norm[i]
+            x2, y2 = norm[i + 1]
+
             mx, my = CroquiService._segment_midpoint((x1, y1), (x2, y2))
-            dist = CroquiService._distancia(original_coords[i - 1], original_coords[i])
+
+            dist = seg["distancia"]
+            az = seg["azimute_graus"]
+
+            texto = f"{CroquiService._format_num(dist, 2)} m | {az:.1f}°"
 
             labels.append(
-                f'<text x="{mx:.2f}" y="{my - 8:.2f}" text-anchor="middle" '
-                f'font-size="10" font-family="Arial" fill="#475569" '
-                f'paint-order="stroke" stroke="#FFFFFF" stroke-width="3">'
-                f'{CroquiService._format_num(dist, 2)} m</text>'
+                f'<text x="{mx:.2f}" y="{my - 10:.2f}" text-anchor="middle" '
+                f'font-size="10" font-family="Arial" fill="#1E293B" '
+                f'paint-order="stroke" stroke="#FFFFFF" stroke-width="3.5">'
+                f'{texto}</text>'
             )
 
         return "\n".join(labels)
@@ -460,7 +476,7 @@ class CroquiService:
 
         vertices_svg = CroquiService._render_vertices(norm)
         confrontantes_svg = CroquiService._render_confrontantes(confrontantes or [], norm)
-        segmentos_svg = CroquiService._render_segment_labels(norm, original_coords)
+        segmentos_svg = CroquiService._render_segment_labels(norm, geojson)
 
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
@@ -483,7 +499,7 @@ class CroquiService:
     ry="8"
   />
 
-  <polygon points="{poly_points}" fill="none" stroke="#0F172A" stroke-width="3.5"/>
+  <polygon points="{poly_points}" fill="rgba(15, 23, 42, 0.04)" stroke="#0F172A" stroke-width="4.5"/>
 
   {segmentos_svg}
 

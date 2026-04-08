@@ -123,3 +123,133 @@ def gerar_pdf_contrato(project_id: int, html_simples: str) -> str:
     HTML(string=html_simples).write_pdf(str(file_path))
 
     return str(file_path.relative_to(base_root))
+
+
+# =========================================================
+# 📄 PDF TÉCNICO COMPLETO (CROQUI + MEMORIAL)
+# =========================================================
+def gerar_pdf_imovel(
+    imovel_id: int,
+    nome_imovel: str,
+    area_ha: float,
+    perimetro_m: float,
+    memorial_texto: str,
+    croqui_svg: str,
+) -> str:
+
+    base_root = _resolve_base()
+    base = base_root / "imoveis" / f"{imovel_id}" / "pdfs"
+    _ensure_dir(base)
+
+    filename = f"imovel_{imovel_id}_{int(datetime.utcnow().timestamp())}.pdf"
+    file_path = base / filename
+
+    # =========================================================
+    # HTML PROFISSIONAL
+    # =========================================================
+    html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 40px;
+                color: #1e293b;
+            }}
+
+            h1 {{
+                font-size: 22px;
+                text-align: center;
+                margin-bottom: 10px;
+            }}
+
+            h2 {{
+                font-size: 16px;
+                margin-top: 30px;
+                border-bottom: 1px solid #cbd5e1;
+                padding-bottom: 4px;
+            }}
+
+            .box {{
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 12px;
+                margin-top: 10px;
+            }}
+
+            .grid {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+                font-size: 12px;
+            }}
+
+            .label {{
+                color: #64748b;
+            }}
+
+            .value {{
+                font-weight: bold;
+            }}
+
+            .memorial {{
+                white-space: pre-wrap;
+                font-size: 12px;
+                line-height: 1.5;
+            }}
+
+            .footer {{
+                margin-top: 40px;
+                font-size: 10px;
+                color: #64748b;
+                text-align: center;
+            }}
+
+            svg {{
+                width: 100%;
+                height: auto;
+            }}
+        </style>
+    </head>
+
+    <body>
+
+        <h1>DOCUMENTAÇÃO TÉCNICA DO IMÓVEL</h1>
+
+        <div class="box">
+            <div class="grid">
+                <div><span class="label">Imóvel:</span> <span class="value">{nome_imovel}</span></div>
+                <div><span class="label">Área (ha):</span> <span class="value">{area_ha:.4f}</span></div>
+                <div><span class="label">Perímetro (m):</span> <span class="value">{perimetro_m:.3f}</span></div>
+                <div><span class="label">Data:</span> <span class="value">{datetime.utcnow().strftime("%d/%m/%Y")}</span></div>
+            </div>
+        </div>
+
+        <h2>CROQUI DO IMÓVEL</h2>
+
+        <div class="box">
+            {croqui_svg}
+        </div>
+
+        <h2>MEMORIAL DESCRITIVO</h2>
+
+        <div class="box memorial">
+            {memorial_texto}
+        </div>
+
+        <div class="footer">
+            Documento gerado automaticamente pelo sistema GeoINCRA<br/>
+            Pipeline: OCR + IA + Geometria + Engenharia de Documentos
+        </div>
+
+    </body>
+    </html>
+    """
+
+    # =========================================================
+    # GERAÇÃO DO PDF
+    # =========================================================
+    HTML(string=html).write_pdf(str(file_path))
+
+    return str(file_path.relative_to(base_root))
