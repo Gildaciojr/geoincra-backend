@@ -34,6 +34,8 @@ import app.models.documento_tecnico_checklist
 
 import app.models.geometria
 import app.models.sobreposicao
+import app.models.vertice
+import app.models.segmento
 
 import app.models.pagamento
 import app.models.parcela_pagamento

@@ -852,16 +852,23 @@ def _resolver_geometria(
     # =========================================================
     # TENTAR GERAR GEOMETRIA A PARTIR DOS SEGMENTOS
     # =========================================================
-    if segmentos_validos:
+    if segmentos_validos and len(segmentos_validos) >= 3:
         try:
             texto_base = memorial_texto or ""
 
             geometria_gerada = MemorialParserService.gerar_geometria(texto_base)
 
-            if geometria_gerada:
-                geojson = geometria_gerada.get("geojson")
-                segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
-                fonte = "segmentos_processados"
+            if (
+                geometria_gerada
+                and isinstance(geometria_gerada, dict)
+                and geometria_gerada.get("geojson")
+            ):
+                novo_geojson = geometria_gerada.get("geojson")
+
+                if novo_geojson:
+                    geojson = novo_geojson
+                    segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
+                    fonte = "segmentos_processados"
 
         except Exception as e:
             warnings.append(f"Falha ao gerar geometria via segmentos: {str(e)}")
@@ -873,10 +880,17 @@ def _resolver_geometria(
         try:
             geometria_gerada = MemorialParserService.gerar_geometria(memorial_texto)
 
-            if geometria_gerada:
-                geojson = geometria_gerada.get("geojson")
-                segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
-                fonte = "memorial_processado"
+            if (
+                geometria_gerada
+                and isinstance(geometria_gerada, dict)
+                and geometria_gerada.get("geojson")
+            ):
+                novo_geojson = geometria_gerada.get("geojson")
+
+                if novo_geojson:
+                    geojson = novo_geojson
+                    segmentos_validos = geometria_gerada.get("segmentos") or segmentos_validos
+                    fonte = "memorial_processado"
 
         except Exception as e:
             warnings.append(f"Falha ao gerar geometria via memorial: {str(e)}")
@@ -885,7 +899,24 @@ def _resolver_geometria(
     # FALLBACK FINAL: GEOJSON EXISTENTE
     # =========================================================
     if not fonte and geojson_existente:
+        geojson = geojson_existente
         fonte = "geojson"
+
+    # =========================================================
+    # NORMALIZAÇÃO FINAL DO GEOJSON (CRÍTICO)
+    # =========================================================
+    if geojson and isinstance(geojson, dict):
+        if geojson.get("type") != "FeatureCollection":
+            if "geometry" in geojson:
+                geojson = {
+                    "type": "FeatureCollection",
+                    "features": [geojson],
+                }
+            else:
+                geojson = {
+                    "type": "FeatureCollection",
+                    "features": [],
+                }
 
     # =========================================================
     # NENHUMA FONTE
@@ -918,10 +949,15 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                 continue
 
             extraidos = _extrair_lote_gleba_de_texto(descricao)
+
+            lado_original = _normalizar_lado_original(descricao)
+            lado_normalizado = _normalizar_direcao(descricao)
+
             confrontantes.append(
                 {
-                    "lado": None,
-                    "lado_normalizado": None,
+                    "lado": lado_original,
+                    "lado_normalizado": lado_normalizado,
+                    "direcao": lado_normalizado or lado_original,
                     "nome": None,
                     "descricao": descricao,
                     "matricula": None,
@@ -972,6 +1008,8 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                 c.get("identificacao_imovel"),
                 c.get("imovel"),
                 c.get("nome_imovel"),
+                nome,
+                descricao,
             )
         )
 
@@ -993,7 +1031,7 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
-        tipo = _normalizar_texto(
+        tipo = _normalizar_texto_upper_sem_acentos(
             _coalesce(
                 c.get("tipo"),
                 _inferir_tipo_confrontante(nome, descricao, identificacao),
@@ -1003,6 +1041,11 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
         lado_original = _normalizar_lado_original(lado_bruto)
         lado_normalizado = _normalizar_direcao(lado_bruto)
 
+        # 🔥 fallback inteligente (quando OCR não traz lado)
+        if not lado_normalizado and descricao:
+            lado_normalizado = _normalizar_direcao(descricao)
+            lado_original = _normalizar_lado_original(descricao)
+
         if not nome and not descricao and not matricula_confrontante and not identificacao:
             warnings.append(f"Confrontante {i} ignorado (sem conteúdo útil)")
             continue
@@ -1011,6 +1054,7 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             {
                 "lado": lado_original,
                 "lado_normalizado": lado_normalizado,
+                "direcao": lado_normalizado or lado_original,
                 "nome": nome,
                 "descricao": descricao,
                 "matricula": matricula_confrontante,
@@ -1060,16 +1104,27 @@ def _calcular_score_qualidade(
     memorial_texto = geometria.get("memorial_texto")
     geojson = geometria.get("geojson")
 
-    if not segmentos and not memorial_texto and not geojson:
+    # 🔥 VALIDAÇÃO ROBUSTA DO GEOJSON
+    geojson_valido = False
+    if isinstance(geojson, dict):
+        features = geojson.get("features")
+        if isinstance(features, list) and len(features) > 0:
+            geojson_valido = True
+
+    # 🔥 AVALIAÇÃO DE GEOMETRIA MAIS INTELIGENTE
+    if not segmentos and not memorial_texto and not geojson_valido:
         score -= 35
     elif not segmentos:
+        score -= 10
+
+    # 🔥 PENALIDADE EXTRA PARA GEOJSON INVÁLIDO/Vazio
+    if geojson and not geojson_valido:
         score -= 10
 
     if not confrontantes:
         score -= 8
 
     return max(score, 0)
-
 
 # =========================================================
 # NORMALIZADOR PRINCIPAL
@@ -1111,6 +1166,9 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     resultado["descricao_imovel"] = imovel["descricao"]
     resultado["area_total"] = (imovel.get("area") or {}).get("valor")
     resultado["unidade_area"] = (imovel.get("area") or {}).get("unidade_original")
+
+    # 🔥 NOVO (CRÍTICO): padronização definitiva da área em hectares
+    resultado["area_hectares"] = (imovel.get("area") or {}).get("hectares")
 
     # =========================================================
     # PROPRIETÁRIOS

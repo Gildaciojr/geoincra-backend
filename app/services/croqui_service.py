@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from shapely.geometry import Polygon
@@ -79,9 +79,65 @@ class CroquiService:
         )
 
     @staticmethod
-    def _parse_polygon(geojson: str) -> Polygon:
-        return GeometriaService._parse_polygon_geojson(geojson)
+    def _normalizar_geojson(geojson: Any) -> Dict[str, Any]:
+        if geojson is None:
+            raise HTTPException(status_code=400, detail="GeoJSON ausente.")
 
+        obj = geojson
+
+        if isinstance(obj, str):
+            texto = obj.strip()
+            if not texto:
+                raise HTTPException(status_code=400, detail="GeoJSON vazio.")
+            try:
+                obj = json.loads(texto)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="GeoJSON inválido.") from exc
+
+        if not isinstance(obj, dict):
+            raise HTTPException(status_code=400, detail="GeoJSON em formato inválido.")
+
+        tipo = obj.get("type")
+
+        if tipo == "FeatureCollection":
+            features = obj.get("features") or []
+            if not isinstance(features, list) or not features:
+                raise HTTPException(
+                    status_code=400,
+                    detail="FeatureCollection sem features válidas.",
+                )
+
+            primeira_feature = features[0]
+            if not isinstance(primeira_feature, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Feature inválida na FeatureCollection.",
+                )
+
+            geometry = primeira_feature.get("geometry")
+            if not isinstance(geometry, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="FeatureCollection sem geometria válida.",
+                )
+
+            return geometry
+
+        if tipo == "Feature":
+            geometry = obj.get("geometry")
+            if not isinstance(geometry, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Feature sem geometria válida.",
+                )
+            return geometry
+
+        return obj
+
+    @staticmethod
+    def _parse_polygon(geojson: Any) -> Polygon:
+        geojson_normalizado = CroquiService._normalizar_geojson(geojson)
+        return GeometriaService.parse_polygon_or_raise(geojson_normalizado)
 
     @staticmethod
     def _drawing_bounds(size: int) -> Dict[str, float]:
@@ -145,36 +201,50 @@ class CroquiService:
 
     @staticmethod
     def _segment_midpoint(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[float, float]:
-        return ((p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0)
+        return (
+            (float(p1[0]) + float(p2[0])) / 2.0,
+            (float(p1[1]) + float(p2[1])) / 2.0
+        )
 
     @staticmethod
     def _render_grid(size: int) -> str:
         draw = CroquiService._drawing_bounds(size)
         lines = []
 
-        x = draw["left"]
-        while x <= draw["right"]:
-            lines.append(
-                f'<line x1="{x:.2f}" y1="{draw["top"]:.2f}" x2="{x:.2f}" y2="{draw["bottom"]:.2f}" '
-                f'stroke="#E5E7EB" stroke-width="1"/>'
-            )
-            x += CroquiService.GRID_STEP
+        left = float(draw["left"])
+        right = float(draw["right"])
+        top = float(draw["top"])
+        bottom = float(draw["bottom"])
 
-        y = draw["top"]
-        while y <= draw["bottom"]:
+        step = float(CroquiService.GRID_STEP or 1)
+
+        # Linhas verticais
+        x = left
+        while x <= right:
             lines.append(
-                f'<line x1="{draw["left"]:.2f}" y1="{y:.2f}" x2="{draw["right"]:.2f}" y2="{y:.2f}" '
+                f'<line x1="{x:.2f}" y1="{top:.2f}" x2="{x:.2f}" y2="{bottom:.2f}" '
                 f'stroke="#E5E7EB" stroke-width="1"/>'
             )
-            y += CroquiService.GRID_STEP
+            x += step
+
+        # Linhas horizontais
+        y = top
+        while y <= bottom:
+            lines.append(
+                f'<line x1="{left:.2f}" y1="{y:.2f}" x2="{right:.2f}" y2="{y:.2f}" '
+                f'stroke="#E5E7EB" stroke-width="1"/>'
+            )
+            y += step
 
         return "\n".join(lines)
 
     @staticmethod
     def _render_header(size: int) -> str:
+        size = float(size)
+
         return f"""
         <g>
-            <rect x="0" y="0" width="{size}" height="{CroquiService.HEADER_H}" fill="#0F172A"/>
+            <rect x="0" y="0" width="{size:.2f}" height="{CroquiService.HEADER_H}" fill="#0F172A"/>
             <text x="{size / 2:.2f}" y="34" text-anchor="middle"
                   font-size="26" font-family="Arial" font-weight="bold" fill="#FFFFFF">
                   CROQUI DO IMÓVEL
@@ -188,18 +258,20 @@ class CroquiService:
 
     @staticmethod
     def _render_footer(size: int) -> str:
+        size = float(size)
         footer_y = size - CroquiService.FOOTER_H + 20
+
         return f"""
         <g>
-            <rect x="0" y="{size - CroquiService.FOOTER_H}" width="{size}" height="{CroquiService.FOOTER_H}" fill="#F8FAFC" stroke="#CBD5E1"/>
-            <text x="40" y="{footer_y}" font-size="12" font-family="Arial" font-weight="bold" fill="#0F172A">
+            <rect x="0" y="{size - CroquiService.FOOTER_H:.2f}" width="{size:.2f}" height="{CroquiService.FOOTER_H}" fill="#F8FAFC" stroke="#CBD5E1"/>
+            <text x="40" y="{footer_y:.2f}" font-size="12" font-family="Arial" font-weight="bold" fill="#0F172A">
                 Documento técnico gerado automaticamente
             </text>
-            <text x="40" y="{footer_y + 22}" font-size="11" font-family="Arial" fill="#334155">
+            <text x="40" y="{footer_y + 22:.2f}" font-size="11" font-family="Arial" fill="#334155">
                 Este croqui possui finalidade técnica ilustrativa e deve ser interpretado em conjunto com memorial,
                 geometria e demais documentos do processo.
             </text>
-            <text x="40" y="{footer_y + 44}" font-size="11" font-family="Arial" fill="#334155">
+            <text x="40" y="{footer_y + 44:.2f}" font-size="11" font-family="Arial" fill="#334155">
                 GeoINCRA • Pipeline OCR + IA + Geometria + Documentação Técnica
             </text>
         </g>
@@ -207,11 +279,13 @@ class CroquiService:
 
     @staticmethod
     def _render_north_arrow(size: int) -> str:
+        size = float(size)
+
         x = size - CroquiService.RIGHT_INFO_W + 80
         y = CroquiService.HEADER_H + 40
 
         return f"""
-        <g transform="translate({x},{y})">
+        <g transform="translate({x:.2f},{y:.2f})">
           <line x1="0" y1="45" x2="0" y2="0" stroke="#0F172A" stroke-width="4"/>
           <polygon points="0,-14 -11,8 11,8" fill="#0F172A"/>
           <text x="0" y="68" text-anchor="middle" font-size="18" font-family="Arial" font-weight="bold" fill="#0F172A">N</text>
@@ -221,9 +295,9 @@ class CroquiService:
     @staticmethod
     def _render_scale_bar(size: int, scale: float) -> str:
         # barra em metros proporcional ao espaço normalizado
-        # tenta escolher automaticamente 50, 100, 200 ou 500 m
         candidatos = [25, 50, 100, 200, 500, 1000]
-        pixels_por_metro = scale if scale > 0 else 1.0
+
+        pixels_por_metro = float(scale) if scale and scale > 0 else 1.0
 
         escolhido = 100
         for c in candidatos:
@@ -233,11 +307,12 @@ class CroquiService:
                 break
 
         largura_px = escolhido * pixels_por_metro
-        x0 = 50
-        y0 = size - 70
+
+        x0 = 50.0
+        y0 = float(size) - 70.0
 
         return f"""
-        <g transform="translate({x0},{y0})">
+        <g transform="translate({x0:.2f},{y0:.2f})">
             <line x1="0" y1="0" x2="{largura_px:.2f}" y2="0" stroke="#111827" stroke-width="3"/>
             <line x1="0" y1="-7" x2="0" y2="7" stroke="#111827" stroke-width="2"/>
             <line x1="{largura_px/2:.2f}" y1="-7" x2="{largura_px/2:.2f}" y2="7" stroke="#111827" stroke-width="2"/>
@@ -251,11 +326,13 @@ class CroquiService:
 
     @staticmethod
     def _render_legenda(size: int) -> str:
+        size = float(size)
+
         x = size - CroquiService.RIGHT_INFO_W + 20
         y = size - CroquiService.FOOTER_H - 140
 
         return f"""
-        <g transform="translate({x},{y})">
+        <g transform="translate({x:.2f},{y:.2f})">
             <rect x="0" y="0" width="210" height="115" rx="8" ry="8" fill="#FFFFFF" stroke="#CBD5E1"/>
             <text x="12" y="20" font-size="13" font-family="Arial" font-weight="bold" fill="#0F172A">LEGENDA</text>
 
@@ -281,11 +358,13 @@ class CroquiService:
         total_vertices: int,
         escala_aprox: float,
     ) -> str:
+        size = float(size)
+
         x = size - CroquiService.RIGHT_INFO_W + 20
         y = CroquiService.HEADER_H + 110
 
         return f"""
-        <g transform="translate({x},{y})">
+        <g transform="translate({x:.2f},{y:.2f})">
             <rect x="0" y="0" width="210" height="165" rx="8" ry="8" fill="#FFFFFF" stroke="#CBD5E1"/>
             <text x="12" y="20" font-size="13" font-family="Arial" font-weight="bold" fill="#0F172A">QUADRO TÉCNICO</text>
 
@@ -302,7 +381,7 @@ class CroquiService:
             <text x="198" y="110" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">{total_vertices}</text>
 
             <text x="12" y="132" font-size="11" font-family="Arial" fill="#334155">Escala gráfica aprox.:</text>
-            <text x="198" y="132" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">1:{int(max(1, escala_aprox))}</text>
+            <text x="198" y="132" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">1:{int(max(1, escala_aprox or 1))}</text>
 
             <text x="12" y="154" font-size="10" font-family="Arial" fill="#64748B">Croqui não substitui planta topográfica oficial.</text>
         </g>
@@ -311,10 +390,12 @@ class CroquiService:
     @staticmethod
     def _render_segment_labels(
         norm: List[Tuple[float, float]],
-        geojson: str
+        geojson: Any
     ) -> str:
 
-        segmentos = GeometriaService.extract_segmentos(geojson)
+        geojson_normalizado = CroquiService._normalizar_geojson(geojson)
+
+        segmentos = GeometriaService.extract_segmentos(geojson_normalizado)
 
         labels = []
 
@@ -327,8 +408,8 @@ class CroquiService:
 
             mx, my = CroquiService._segment_midpoint((x1, y1), (x2, y2))
 
-            dist = seg["distancia"]
-            az = seg["azimute_graus"]
+            dist = float(seg.get("distancia") or 0)
+            az = float(seg.get("azimute_graus") or 0)
 
             texto = f"{CroquiService._format_num(dist, 2)} m | {az:.1f}°"
 
@@ -340,12 +421,17 @@ class CroquiService:
             )
 
         return "\n".join(labels)
+    
+    
 
     @staticmethod
     def _render_vertices(norm: List[Tuple[float, float]]) -> str:
         labels = []
 
         for i, (x, y) in enumerate(norm[:-1], start=1):
+            x = CroquiService._safe_float(x)
+            y = CroquiService._safe_float(y)
+
             labels.append(
                 f'<circle cx="{x:.2f}" cy="{y:.2f}" r="4.2" fill="#111827" stroke="#FFFFFF" stroke-width="1.5"/>'
             )
@@ -367,6 +453,7 @@ class CroquiService:
         linhas = []
         usados_por_lado: Dict[str, int] = {}
 
+        # 🔥 alinhado com normalizador
         lado_para_segmento = {
             "NORTE": 0,
             "LESTE": 1,
@@ -381,7 +468,14 @@ class CroquiService:
         total_segmentos = max(1, len(norm) - 1)
 
         for idx, c in enumerate(confrontantes, start=1):
-            lado = str(c.get("lado") or "").upper().strip()
+
+            # 🔥 prioridade correta (normalizador primeiro)
+            lado = str(
+                c.get("lado_normalizado")
+                or c.get("lado")
+                or ""
+            ).upper().strip()
+
             nome = str(c.get("nome") or "").strip()
             descricao = str(c.get("descricao") or "").strip()
             lote = str(c.get("lote") or "").strip()
@@ -391,9 +485,14 @@ class CroquiService:
             if not texto_principal:
                 continue
 
+            # =========================================================
+            # COMPLEMENTO
+            # =========================================================
             complemento = []
+
             if lote:
                 complemento.append(f"Lote {lote}")
+
             if gleba:
                 complemento.append(f"Gleba {gleba}")
 
@@ -401,7 +500,11 @@ class CroquiService:
             if complemento:
                 texto_final += " • " + " • ".join(complemento)
 
+            # =========================================================
+            # POSICIONAMENTO
+            # =========================================================
             segmento_index = lado_para_segmento.get(lado)
+
             if segmento_index is None:
                 segmento_index = min(idx - 1, total_segmentos - 1)
 
@@ -409,12 +512,18 @@ class CroquiService:
 
             p1 = norm[segmento_index]
             p2 = norm[(segmento_index + 1) % len(norm)]
+
             mx, my = CroquiService._segment_midpoint(p1, p2)
 
-            count = usados_por_lado.get(lado or f"AUTO_{segmento_index}", 0)
-            usados_por_lado[lado or f"AUTO_{segmento_index}"] = count + 1
+            # =========================================================
+            # CONTROLE DE SOBREPOSIÇÃO (MELHORADO)
+            # =========================================================
+            chave_lado = lado or f"AUTO_{segmento_index}"
 
-            offset_y = 18 + (count * 14)
+            count = usados_por_lado.get(chave_lado, 0)
+            usados_por_lado[chave_lado] = count + 1
+
+            offset_y = 18 + (count * 16)  # 🔥 mais espaçamento
             anchor = "middle"
 
             linhas.append(
@@ -425,14 +534,15 @@ class CroquiService:
             )
 
         return "\n".join(linhas)
-
+    
     @staticmethod
     def gerar_svg(
-        geojson: str,
+        geojson: str | Dict[str, Any],
         confrontantes: Optional[List[Dict[str, Optional[str]]]] = None
     ) -> str:
 
-        geom = CroquiService._parse_polygon(geojson)
+        geojson_normalizado = CroquiService._normalizar_geojson(geojson)
+        geom = CroquiService._parse_polygon(geojson_normalizado)
 
         coords = list(geom.exterior.coords)
 
@@ -442,7 +552,13 @@ class CroquiService:
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
-        original_coords = [(float(x), float(y)) for x, y in coords]
+        original_coords = [
+            (
+                CroquiService._safe_float(x),
+                CroquiService._safe_float(y),
+            )
+            for x, y in coords
+        ]
 
         norm, scale, meta = CroquiService._normalize_points(
             original_coords,
@@ -453,9 +569,31 @@ class CroquiService:
 
         poly_points = " ".join([f"{x:.2f},{y:.2f}" for x, y in norm])
 
+        # =========================================================
+        # MÉTRICAS TÉCNICAS (ALINHADAS COM GEOMETRIAS)
+        # =========================================================
         area_m2 = CroquiService._polygon_area(original_coords)
         area_ha = area_m2 / 10000.0 if area_m2 > 0 else 0.0
         perimetro_m = CroquiService._polygon_perimeter(original_coords)
+
+        try:
+            epsg_utm, area_calc_ha, perimetro_calc_m = GeometriaService.calcular_area_perimetro(
+                geojson=geojson_normalizado,
+                epsg_origem=4326,
+            )
+
+            if area_calc_ha and area_calc_ha > 0:
+                area_ha = CroquiService._safe_float(area_calc_ha)
+                area_m2 = area_ha * 10000.0
+
+            if perimetro_calc_m and perimetro_calc_m > 0:
+                perimetro_m = CroquiService._safe_float(perimetro_calc_m)
+
+        except Exception:
+            area_m2 = CroquiService._safe_float(area_m2)
+            area_ha = CroquiService._safe_float(area_ha)
+            perimetro_m = CroquiService._safe_float(perimetro_m)
+
         total_vertices = max(0, len(norm) - 1)
         escala_aprox = (1 / scale) * 1000 if scale > 0 else 1
 
@@ -476,7 +614,9 @@ class CroquiService:
 
         vertices_svg = CroquiService._render_vertices(norm)
         confrontantes_svg = CroquiService._render_confrontantes(confrontantes or [], norm)
-        segmentos_svg = CroquiService._render_segment_labels(norm, geojson)
+        segmentos_svg = CroquiService._render_segment_labels(norm, geojson_normalizado)
+
+        draw_bounds = CroquiService._drawing_bounds(size)
 
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
@@ -488,10 +628,10 @@ class CroquiService:
   {grid}
 
   <rect
-    x="{CroquiService._drawing_bounds(size)['left']:.2f}"
-    y="{CroquiService._drawing_bounds(size)['top']:.2f}"
-    width="{CroquiService._drawing_bounds(size)['width']:.2f}"
-    height="{CroquiService._drawing_bounds(size)['height']:.2f}"
+    x="{draw_bounds['left']:.2f}"
+    y="{draw_bounds['top']:.2f}"
+    width="{draw_bounds['width']:.2f}"
+    height="{draw_bounds['height']:.2f}"
     fill="none"
     stroke="#CBD5E1"
     stroke-width="1.2"

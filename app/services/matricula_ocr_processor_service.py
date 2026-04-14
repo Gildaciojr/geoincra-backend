@@ -11,9 +11,11 @@ from app.models.matricula import Matricula
 from app.models.confrontante import Confrontante
 from app.models.ocr_result import OcrResult
 
+from app.services.ocr_normalizer import normalizar_dados_ocr
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
 from app.services.geometria_service import GeometriaService
+from app.services.geometria_persistencia_service import GeometriaPersistenciaService
 
 
 class MatriculaOcrProcessorService:
@@ -56,12 +58,18 @@ class MatriculaOcrProcessorService:
             if not ocr.dados_extraidos_json:
                 raise Exception("OCR não possui dados estruturados.")
 
-            dados = MatriculaOcrProcessorService._parse_json(
+            dados_brutos = MatriculaOcrProcessorService._parse_json(
                 ocr.dados_extraidos_json
             )
 
+            try:
+                dados = normalizar_dados_ocr(dados_brutos)
+            except Exception as e:
+                raise Exception(f"OCR inválido após normalização: {str(e)}")
+
             numero_matricula = MatriculaOcrProcessorService._normalizar_matricula(
                 dados.get("numero_matricula")
+                or (dados.get("matricula") or {}).get("numero")
                 or dados.get("matricula")
             )
 
@@ -109,13 +117,18 @@ class MatriculaOcrProcessorService:
                     or matricula.inteiro_teor
                 )
 
+                if document.file_path:
+                    matricula.arquivo_path = document.file_path
+
             # =========================================================
-            # PROPRIETÁRIOS (NOVO)
+            # PROPRIETÁRIOS (NORMALIZADOS)
             # =========================================================
 
             proprietarios = dados.get("proprietarios")
 
             if proprietarios and isinstance(proprietarios, list):
+
+                proprietarios_validos = []
 
                 for p in proprietarios:
 
@@ -129,16 +142,17 @@ class MatriculaOcrProcessorService:
                     if not nome:
                         continue
 
-                    linha = f"PROPRIETÁRIO: {nome}"
+                    proprietarios_validos.append(
+                        {
+                            "nome": nome,
+                            "cpf_cnpj": cpf_cnpj,
+                            "tipo": tipo,
+                        }
+                    )
 
-                    if cpf_cnpj:
-                        linha += f" | CPF/CNPJ: {cpf_cnpj}"
-
-                    if tipo:
-                        linha += f" | TIPO: {tipo}"
-
-                    if linha not in (matricula.inteiro_teor or ""):
-                        matricula.inteiro_teor = (matricula.inteiro_teor or "") + "\n" + linha
+                # Mantemos os proprietários estruturados no payload normalizado,
+                # sem poluir o inteiro_teor da matrícula com dados derivados do OCR.
+                proprietarios = proprietarios_validos
 
             # =========================================================
             # CONFRONTANTES (MELHORADO)
@@ -158,34 +172,77 @@ class MatriculaOcrProcessorService:
             # =========================================================
 
             geojson = None
+            geometria_payload = dados.get("geometria") or {}
 
-            memorial_texto = dados.get("memorial_texto")
+            if not isinstance(geometria_payload, dict):
+                geometria_payload = {}
 
-            if memorial_texto:
+            memorial_texto = (
+                geometria_payload.get("memorial_texto")
+                or dados.get("memorial_texto")
+            )
 
-                parsed = MemorialParserService.gerar_geometria(memorial_texto)
+            geojson = geometria_payload.get("geojson")
 
-                geojson = parsed.get("geojson")
+            # =========================================================
+            # 🔥 TENTATIVA DE GERAR GEOJSON VIA PARSER
+            # =========================================================
+            if not geojson and memorial_texto:
+                try:
+                    parsed = MemorialParserService.gerar_geometria(memorial_texto)
+                    geojson = parsed.get("geojson")
+                except Exception as e:
+                    print(f"[ERRO] Parser de memorial falhou: {str(e)}")
+                    geojson = None
 
-                if geojson:
+            # =========================================================
+            # 🔥 PIPELINE DE GEOMETRIA COMPLETO
+            # =========================================================
+            if geojson:
+
+                try:
+                    # =========================================================
+                    # SALVAR GEOMETRIA BASE
+                    # =========================================================
                     geometria = GeometriaService.salvar_geometria(
                         db=db,
                         imovel_id=matricula.imovel_id,
                         geojson=geojson
                     )
 
-                    MemorialService.gerar_memorial(
-                        geometria_id=geometria.id,
-                        geojson=geojson,
-                        area_hectares=dados.get("area_total", 0),
-                        perimetro_m=0,
-                        imovel_id=matricula.imovel_id
-                    )
+                    # =========================================================
+                    # 🔥 PERSISTÊNCIA DE ENGENHARIA (VÉRTICES + SEGMENTOS)
+                    # =========================================================
+                    try:
+                        GeometriaPersistenciaService.persistir_estrutura(
+                            db=db,
+                            geometria_id=geometria.id,
+                            geojson=geojson
+                        )
+                    except Exception as e:
+                        print(f"[ERRO] Persistência de geometria falhou: {str(e)}")
+
+                    # =========================================================
+                    # 🔥 GERAÇÃO DO MEMORIAL TÉCNICO
+                    # =========================================================
+                    try:
+                        MemorialService.gerar_memorial(
+                            geometria_id=geometria.id,
+                            geojson=geojson,
+                            area_hectares=dados.get("area_hectares") or dados.get("area_total") or 0,
+                            perimetro_m=getattr(geometria, "perimetro_m", 0) or 0,
+                            imovel_id=matricula.imovel_id
+                        )
+                    except Exception as e:
+                        print(f"[ERRO] Geração de memorial falhou: {str(e)}")
+
+                except Exception as e:
+                    print(f"[ERRO] Falha ao salvar geometria: {str(e)}")
+                    geojson = None
 
             # =========================================================
             # COMMIT FINAL
             # =========================================================
-
             db.commit()
             db.refresh(matricula)
 
@@ -221,25 +278,59 @@ class MatriculaOcrProcessorService:
             if not isinstance(item, dict):
                 continue
 
+            # =========================================================
+            # 🔥 DIREÇÃO (PRIORIDADE CORRETA DO NORMALIZADOR)
+            # =========================================================
             direcao = (
-                item.get("lado")
-                or item.get("direcao")
+                item.get("direcao")  # já vem pronto do normalizador
                 or item.get("lado_normalizado")
+                or item.get("lado")
             )
 
+            # fallback defensivo
+            if isinstance(direcao, str):
+                direcao = direcao.strip().upper()
+
+            if not direcao:
+                direcao = "NAO_INFORMADO"
+
+            # =========================================================
+            # CAMPOS PRINCIPAIS
+            # =========================================================
             nome = item.get("nome") or item.get("descricao")
             matricula_cft = item.get("matricula")
             identificacao = item.get("identificacao")
             descricao = item.get("descricao")
 
-            if not any([direcao, nome, matricula_cft, identificacao]):
+            # normalização leve (sem alterar estrutura original)
+            if isinstance(nome, str):
+                nome = nome.strip()
+
+            if isinstance(identificacao, str):
+                identificacao = identificacao.strip()
+
+            if isinstance(descricao, str):
+                descricao = descricao.strip()
+
+            if isinstance(matricula_cft, str):
+                matricula_cft = matricula_cft.strip()
+
+            # =========================================================
+            # VALIDAÇÃO DE CONTEÚDO
+            # =========================================================
+            if not any([nome, matricula_cft, identificacao, descricao]):
                 continue
 
+            # =========================================================
+            # 🔥 DEDUPLICAÇÃO MAIS ROBUSTA
+            # =========================================================
             existente = (
                 db.query(Confrontante)
                 .filter(
                     Confrontante.imovel_id == imovel_id,
-                    Confrontante.direcao == direcao
+                    Confrontante.direcao == direcao,
+                    Confrontante.nome_confrontante == nome,
+                    Confrontante.identificacao_imovel_confrontante == identificacao,
                 )
                 .first()
             )
@@ -247,10 +338,13 @@ class MatriculaOcrProcessorService:
             if existente:
                 continue
 
+            # =========================================================
+            # INSERT
+            # =========================================================
             db.add(
                 Confrontante(
                     imovel_id=imovel_id,
-                    direcao=direcao or "NAO_INFORMADO",
+                    direcao=direcao,
                     nome_confrontante=nome,
                     matricula_confrontante=matricula_cft,
                     identificacao_imovel_confrontante=identificacao,
@@ -298,30 +392,39 @@ class MatriculaOcrProcessorService:
         )
 
         # =========================================================
-        # 🔥 NOVO — BUSCAR OCR MAIS RECENTE (ENRIQUECIMENTO)
+        # 🔥 OCR VINCULADO AO DOCUMENTO CORRETO
         # =========================================================
 
         ocr = (
             db.query(OcrResult)
+            .join(Document, Document.id == OcrResult.document_id)
+            .filter(Document.file_path == matricula.arquivo_path)
             .order_by(OcrResult.created_at.desc())
             .first()
         )
 
         dados_ocr = {}
+        dados_normalizados = {}
 
         if ocr and ocr.dados_extraidos_json:
             dados_ocr = MatriculaOcrProcessorService._parse_json(
                 ocr.dados_extraidos_json
             )
 
+            try:
+                from app.services.ocr_normalizer import normalizar_dados_ocr
+                dados_normalizados = normalizar_dados_ocr(dados_ocr)
+            except Exception:
+                dados_normalizados = {}
+
         # =========================================================
-        # 🔥 PROPRIETÁRIOS (AGORA VEM DO OCR)
+        # 🔥 PROPRIETÁRIOS (NORMALIZADOS)
         # =========================================================
 
         proprietarios = []
 
-        if isinstance(dados_ocr.get("proprietarios"), list):
-            for p in dados_ocr.get("proprietarios"):
+        if isinstance(dados_normalizados.get("proprietarios"), list):
+            for p in dados_normalizados.get("proprietarios"):
 
                 if not isinstance(p, dict):
                     continue
@@ -340,12 +443,13 @@ class MatriculaOcrProcessorService:
                 })
 
         # =========================================================
-        # 🔥 DADOS COMPLEMENTARES DO OCR
+        # 🔥 DADOS NORMALIZADOS DO IMÓVEL
         # =========================================================
 
-        descricao_imovel = dados_ocr.get("descricao_imovel")
-        area_total = dados_ocr.get("area_total")
-        unidade_area = dados_ocr.get("unidade_area")
+        descricao_imovel = dados_normalizados.get("descricao_imovel")
+        area_total = dados_normalizados.get("area_total")
+        unidade_area = dados_normalizados.get("unidade_area")
+        area_hectares = dados_normalizados.get("area_hectares")
 
         # =========================================================
         # 🔥 NORMALIZAÇÃO LEVE (SEM QUEBRAR NADA)
@@ -357,7 +461,7 @@ class MatriculaOcrProcessorService:
             return str(v).strip()
 
         # =========================================================
-        # PAYLOAD FINAL (EXPANDIDO)
+        # PAYLOAD FINAL (EXPANDIDO E CONSISTENTE)
         # =========================================================
 
         return {
@@ -369,11 +473,12 @@ class MatriculaOcrProcessorService:
             "codigo_cartorio": matricula.codigo_cartorio,
             "status": matricula.status,
 
-            # 🔥 NOVOS CAMPOS (PDF PROFISSIONAL)
+            # 🔥 CAMPOS PADRONIZADOS
             "numero_matricula": matricula.numero_matricula,
             "descricao_imovel": _safe(descricao_imovel),
             "area_total": area_total,
             "unidade_area": unidade_area,
+            "area_hectares": area_hectares,
 
             "proprietarios": proprietarios,
 
@@ -391,8 +496,9 @@ class MatriculaOcrProcessorService:
             # 🔥 DEBUG / RASTREABILIDADE
             "metadata": {
                 "origem": "matricula_ocr_processor_service",
-                "possui_ocr": bool(dados_ocr),
+                "possui_ocr": bool(dados_normalizados),
                 "total_confrontantes": len(confrontantes),
                 "total_proprietarios": len(proprietarios),
+                "normalizado": True,
             }
         }

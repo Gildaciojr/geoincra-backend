@@ -282,6 +282,9 @@ class OcrPipelineService:
                     "dados_ocr": dados,
                 }
 
+                # =========================================================
+                # PROPRIETÁRIOS (OCR OK)
+                # =========================================================
                 try:
                     proprietarios = dados.get("proprietarios")
                     if isinstance(proprietarios, list):
@@ -289,10 +292,28 @@ class OcrPipelineService:
                 except Exception:
                     pass
 
+                # =========================================================
+                # CONFRONTANTES (USAR BANCO, NÃO OCR)
+                # =========================================================
                 try:
-                    confrontantes = dados.get("confrontantes")
-                    if isinstance(confrontantes, list):
-                        dados_analise["confrontantes"] = confrontantes
+                    confrontantes_formatados = []
+
+                    if confrontantes_db:
+                        for c in confrontantes_db:
+                            confrontantes_formatados.append(
+                                {
+                                    "nome": getattr(c, "nome", None),
+                                    "descricao": getattr(c, "descricao", None),
+                                    "lado": getattr(c, "lado", None),
+                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
+                                    "matricula": getattr(c, "matricula", None),
+                                    "identificacao": getattr(c, "identificacao", None),
+                                }
+                            )
+
+                    if confrontantes_formatados:
+                        dados_analise["confrontantes"] = confrontantes_formatados
+
                 except Exception:
                     pass
 
@@ -301,7 +322,6 @@ class OcrPipelineService:
                 )
 
                 # 🔥 ENRIQUECIMENTO SEM QUEBRAR O SERVICE
-
                 if isinstance(analise, dict):
 
                     classificacao = analise.get("classificacao") or {}
@@ -310,8 +330,8 @@ class OcrPipelineService:
                     if dados.get("proprietarios"):
                         classificacao["proprietarios_identificados"] = True
 
-                    # melhora leitura de confrontantes
-                    if dados.get("confrontantes"):
+                    # melhora leitura de confrontantes (AGORA BASEADO NO BANCO)
+                    if confrontantes_db:
                         classificacao["tem_confrontantes"] = True
 
                     analise["classificacao"] = classificacao
@@ -322,7 +342,7 @@ class OcrPipelineService:
                     if dados.get("proprietarios"):
                         score += 10
 
-                    if dados.get("confrontantes"):
+                    if confrontantes_db:
                         score += 10
 
                     if matricula.livro and matricula.folha:
@@ -440,6 +460,7 @@ class OcrPipelineService:
 
                 try:
                     from app.services.confrontante_service import ConfrontanteService
+                    from app.models.confrontante import Confrontante
 
                     confrontantes_raw = dados.get("confrontantes") or []
 
@@ -483,6 +504,9 @@ class OcrPipelineService:
                     if not confrontantes_processados:
                         print("⚠️ Nenhum confrontante válido após normalização")
 
+                    # =========================================================
+                    # 🔥 PERSISTÊNCIA (OCR → BANCO)
+                    # =========================================================
                     confrontantes = ConfrontanteService.processar_confrontantes(
                         db=db,
                         imovel=imovel,
@@ -490,17 +514,36 @@ class OcrPipelineService:
                         confrontantes_ocr=confrontantes_processados,
                     )
 
+                    print(f"✅ Confrontantes processados: {len(confrontantes)}")
+
+                    # =========================================================
+                    # 🔥 BUSCA DO BANCO (FONTE OFICIAL)
+                    # =========================================================
+                    try:
+                        confrontantes_db = (
+                            db.query(Confrontante)
+                            .filter(Confrontante.imovel_id == imovel.id)
+                            .all()
+                        )
+
+                        print(f"📦 Confrontantes carregados do banco: {len(confrontantes_db)}")
+
+                    except Exception as exc_db:
+                        confrontantes_db = []
+                        print(f"⚠️ Falha ao carregar confrontantes do banco: {str(exc_db)}")
+
                     result["steps"]["confrontantes"] = {
                         "success": True,
                         "total": len(confrontantes),
                         "normalizados": len(confrontantes_processados),
+                        "persistidos": len(confrontantes_db),
                         "fonte_geom": fonte_geom,  # 🔥 NOVO
                     }
 
-                    print(f"✅ Confrontantes processados: {len(confrontantes)}")
-
                 except Exception as exc:
                     OcrPipelineService._rollback_safely(db)
+
+                    confrontantes_db = []  # 🔥 garante continuidade do pipeline
 
                     result["steps"]["confrontantes"] = {
                         "success": False,
@@ -529,6 +572,37 @@ class OcrPipelineService:
         # ================= MEMORIAL =================
         if geometria:
             try:
+                # =========================================================
+                # CONFRONTANTES DO BANCO → FORMATO DO MEMORIAL
+                # =========================================================
+                confrontantes_formatados = []
+
+                try:
+                    if confrontantes_db:
+                        for c in confrontantes_db:
+                            confrontantes_formatados.append(
+                                {
+                                    "nome": getattr(c, "nome", None),
+                                    "descricao": getattr(c, "descricao", None),
+                                    "lado": getattr(c, "lado", None),
+                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
+                                    "matricula": getattr(c, "matricula", None),
+                                    "identificacao": getattr(c, "identificacao", None),
+                                }
+                            )
+                except Exception:
+                    confrontantes_formatados = []
+
+                # =========================================================
+                # DADOS AUXILIARES DO IMÓVEL
+                # =========================================================
+                nome_imovel = None
+
+                try:
+                    nome_imovel = getattr(imovel, "nome", None)
+                except Exception:
+                    nome_imovel = None
+
                 memorial = MemorialService.gerar_memorial(
                     geometria_id=geometria.id,
                     geojson=geometria.geojson,
@@ -536,6 +610,8 @@ class OcrPipelineService:
                     area_hectares=geometria.area_hectares or 0,
                     perimetro_m=geometria.perimetro_m or 0,
                     imovel_id=imovel.id,
+                    confrontantes=confrontantes_formatados,
+                    nome_imovel=nome_imovel,
                 )
 
                 memorial_json = OcrPipelineService._json_safe(memorial)
@@ -560,7 +636,9 @@ class OcrPipelineService:
                             "tipo_referencial": memorial.get("tipo_referencial"),
                             "arquivo_path": memorial.get("arquivo_path"),
                             "arquivo_url": memorial.get("arquivo_url"),
-                            "fonte_geom": fonte_geom,  # 🔥 NOVO
+                            "fonte_geom": fonte_geom,
+                            "total_confrontantes": len(confrontantes_formatados),
+                            "nome_imovel": nome_imovel,
                         },
                         arquivo_path=memorial.get("arquivo_path"),
                         arquivo_url=memorial.get("arquivo_url"),
@@ -572,10 +650,12 @@ class OcrPipelineService:
                     "success": True,
                     "documento_tecnico_id": doc_memorial.id,
                     "texto_preview": memorial_texto[:4000],
+                    "arquivo_path": memorial.get("arquivo_path"),
                     "arquivo_url": memorial.get("arquivo_url"),
                     "tipo_referencial": memorial.get("tipo_referencial"),
                     "epsg_utm": memorial.get("epsg_utm"),
-                    "fonte": fonte_geom,  # 🔥 NOVO
+                    "fonte": fonte_geom,
+                    "total_confrontantes": len(confrontantes_formatados),
                     "message": "Memorial gerado com arquivo.",
                 }
 
@@ -584,7 +664,7 @@ class OcrPipelineService:
                 result["steps"]["memorial"] = {
                     "success": False,
                     "message": f"Falha ao gerar memorial: {str(exc)}",
-                    "fonte": fonte_geom,  # 🔥 NOVO
+                    "fonte": fonte_geom,
                 }
                 result["errors"].append(f"Memorial: {str(exc)}")
         else:
@@ -592,7 +672,7 @@ class OcrPipelineService:
                 "success": False,
                 "skipped": True,
                 "message": "Memorial não executado: geometria inexistente.",
-                "fonte": fonte_geom,  # 🔥 NOVO
+                "fonte": fonte_geom,
             }
 
         # =========================================================
@@ -600,16 +680,30 @@ class OcrPipelineService:
         # =========================================================
         if geometria:
             try:
-                confrontantes = None
+                # =========================================================
+                # CONFRONTANTES DO BANCO (PADRÃO CORRETO DO PIPELINE)
+                # =========================================================
+                confrontantes_formatados = []
+
                 try:
-                    if isinstance(dados, dict):
-                        confrontantes = dados.get("confrontantes")
+                    if confrontantes_db:
+                        for c in confrontantes_db:
+                            confrontantes_formatados.append(
+                                {
+                                    "nome": getattr(c, "nome", None),
+                                    "descricao": getattr(c, "descricao", None),
+                                    "lado": getattr(c, "lado", None),
+                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
+                                    "matricula": getattr(c, "matricula", None),
+                                    "identificacao": getattr(c, "identificacao", None),
+                                }
+                            )
                 except Exception:
-                    confrontantes = None
+                    confrontantes_formatados = []
 
                 svg = CroquiService.gerar_svg(
                     geometria.geojson,
-                    confrontantes=confrontantes,
+                    confrontantes=confrontantes_formatados,
                 )
 
                 folder = f"app/uploads/imoveis/{imovel.id}/croqui"
@@ -632,7 +726,8 @@ class OcrPipelineService:
                         arquivo_path=path_svg,
                         metadata_json={
                             "geometria_id": geometria.id,
-                            "confrontantes_incluidos": bool(confrontantes),
+                            "confrontantes_incluidos": bool(confrontantes_formatados),
+                            "total_confrontantes": len(confrontantes_formatados),
                         },
                         gerado_em=datetime.utcnow(),
                     ),
@@ -643,7 +738,8 @@ class OcrPipelineService:
                     "arquivo_path": path_svg,
                     "arquivo_url": url_svg,
                     "documento_tecnico_id": doc_croqui.id,
-                    "confrontantes_incluidos": bool(confrontantes),
+                    "confrontantes_incluidos": bool(confrontantes_formatados),
+                    "total_confrontantes": len(confrontantes_formatados),
                     "message": f"Croqui salvo: {path_svg}",
                 }
 
@@ -782,7 +878,34 @@ class OcrPipelineService:
             try:
                 from app.services.dxf_export_service import DxfExportService
 
-                doc_dxf_file = DxfExportService.gerar_dxf(geometria.geojson)
+                # =========================================================
+                # CONFRONTANTES DO BANCO (PADRÃO DO PIPELINE)
+                # =========================================================
+                confrontantes_formatados = []
+
+                try:
+                    if confrontantes_db:
+                        for c in confrontantes_db:
+                            confrontantes_formatados.append(
+                                {
+                                    "nome": getattr(c, "nome", None),
+                                    "descricao": getattr(c, "descricao", None),
+                                    "lado": getattr(c, "lado", None),
+                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
+                                    "matricula": getattr(c, "matricula", None),
+                                    "identificacao": getattr(c, "identificacao", None),
+                                }
+                            )
+                except Exception:
+                    confrontantes_formatados = []
+
+                # =========================================================
+                # GERAÇÃO DO DXF COM CONTEXTO COMPLETO
+                # =========================================================
+                doc_dxf_file = DxfExportService.gerar_dxf(
+                    geometria.geojson,
+                    confrontantes=confrontantes_formatados,
+                )
 
                 path_dxf = DxfExportService.salvar_dxf(
                     imovel_id=imovel.id,
@@ -802,6 +925,7 @@ class OcrPipelineService:
                         metadata_json={
                             "geometria_id": geometria.id,
                             "formato": "DXF",
+                            "total_confrontantes": len(confrontantes_formatados),
                         },
                         gerado_em=datetime.utcnow(),
                     ),
@@ -812,6 +936,7 @@ class OcrPipelineService:
                     "arquivo_path": path_dxf,
                     "arquivo_url": url_dxf,
                     "documento_tecnico_id": doc_dxf.id,
+                    "total_confrontantes": len(confrontantes_formatados),
                     "message": f"DXF gerado: {path_dxf}",
                 }
 

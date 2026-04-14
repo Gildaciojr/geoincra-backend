@@ -18,15 +18,9 @@ class Geometria(Base):
         index=True,
     )
 
-    # GeoJSON bruto do polígono
     geojson = Column(Text, nullable=False)
 
-    # EPSG origem:
-    # - > 0  => geometria geográfica conhecida
-    # - 0    => geometria local/cartesiana derivada de memorial
     epsg_origem = Column(Integer, nullable=False, default=4326)
-
-    # Preenchido apenas quando houver projeção UTM real
     epsg_utm = Column(Integer, nullable=True)
 
     area_hectares = Column(Float, nullable=True)
@@ -47,10 +41,30 @@ class Geometria(Base):
         nullable=False,
     )
 
+    # =========================================================
+    # RELACIONAMENTOS
+    # =========================================================
+
     imovel = relationship(
         "Imovel",
         back_populates="geometrias",
         lazy="joined",
+    )
+
+    vertices = relationship(
+        "Vertice",
+        back_populates="geometria",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Vertice.indice"
+    )
+
+    segmentos = relationship(
+        "Segmento",
+        back_populates="geometria",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Segmento.indice"
     )
 
     def __repr__(self) -> str:
