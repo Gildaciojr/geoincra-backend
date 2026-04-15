@@ -463,27 +463,77 @@ class GeometriaService:
                 detail="Polígono inválido para extração de segmentos.",
             )
 
-        segmentos = []
+        # =========================================================
+        # 🔥 SANEAR COORDENADAS
+        # =========================================================
+        coords = [
+            (
+                GeometriaService._safe_float(x),
+                GeometriaService._safe_float(y),
+            )
+            for x, y in coords
+        ]
 
+        # =========================================================
+        # 🔥 GARANTIR FECHAMENTO
+        # =========================================================
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO DE ORIENTAÇÃO (CRÍTICO)
+        # Garante sentido anti-horário (padrão técnico consistente)
+        # =========================================================
+        try:
+            if not geom.exterior.is_ccw:
+                coords = list(reversed(coords))
+        except Exception:
+            pass  # fallback seguro sem quebrar execução
+
+        segmentos: list[dict[str, Any]] = []
+
+        # =========================================================
+        # EXTRAÇÃO SEGMENTADA
+        # =========================================================
         for i in range(len(coords) - 1):
+
             x1, y1 = coords[i]
             x2, y2 = coords[i + 1]
 
-            x1 = GeometriaService._safe_float(x1)
-            y1 = GeometriaService._safe_float(y1)
-            x2 = GeometriaService._safe_float(x2)
-            y2 = GeometriaService._safe_float(y2)
+            # proteção adicional
+            if (
+                math.isnan(x1) or math.isnan(y1)
+                or math.isnan(x2) or math.isnan(y2)
+                or math.isinf(x1) or math.isinf(y1)
+                or math.isinf(x2) or math.isinf(y2)
+            ):
+                continue
+
+            dx = x2 - x1
+            dy = y2 - y1
+
+            # =====================================================
+            # 🔥 EVITA SEGMENTOS DEGENERADOS
+            # =====================================================
+            if dx == 0 and dy == 0:
+                continue
 
             distancia = GeometriaService._calcular_distancia(x1, y1, x2, y2)
-            azimute = GeometriaService._calcular_azimute(x2 - x1, y2 - y1)
+            azimute = GeometriaService._calcular_azimute(dx, dy)
 
             segmentos.append({
-                "indice": i + 1,
+                "indice": len(segmentos) + 1,
                 "ponto_inicial": {"x": x1, "y": y1},
                 "ponto_final": {"x": x2, "y": y2},
                 "distancia": GeometriaService._safe_float(distancia),
                 "azimute_graus": GeometriaService._safe_float(azimute),
             })
+
+        if not segmentos:
+            raise HTTPException(
+                status_code=400,
+                detail="Não foi possível extrair segmentos válidos da geometria.",
+            )
 
         return segmentos
 

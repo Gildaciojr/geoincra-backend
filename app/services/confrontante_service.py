@@ -171,25 +171,51 @@ class ConfrontanteService:
 
     @staticmethod
     def _extrair_segmentos_geometria(geometria: Geometria) -> list[dict[str, Any]]:
-        geom = ConfrontanteService._parse_polygon_geojson(geometria.geojson)
 
-        coords = list(geom.exterior.coords)
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
+        if not geometria or not geometria.geojson:
+            return []
 
-        center = geom.centroid
-        centerx = float(center.x)
-        centery = float(center.y)
+        # =========================================================
+        # 🔥 FONTE ÚNICA DE VERDADE → GeometriaService
+        # =========================================================
+        segmentos_base = GeometriaService.extract_segmentos(geometria.geojson)
+
+        if not segmentos_base:
+            return []
+
+        # =========================================================
+        # 🔥 CENTROIDE PARA DIREÇÃO
+        # =========================================================
+        try:
+            geom = ConfrontanteService._parse_polygon_geojson(geometria.geojson)
+            center = geom.centroid
+            centerx = float(center.x)
+            centery = float(center.y)
+        except Exception:
+            centerx = 0.0
+            centery = 0.0
 
         segmentos: list[dict[str, Any]] = []
 
-        for i in range(len(coords) - 1):
-            x1, y1 = coords[i]
-            x2, y2 = coords[i + 1]
+        # =========================================================
+        # 🔥 ENRIQUECIMENTO DOS SEGMENTOS
+        # =========================================================
+        for seg in segmentos_base:
 
-            midx = (float(x1) + float(x2)) / 2.0
-            midy = (float(y1) + float(y2)) / 2.0
+            try:
+                x1 = float(seg["ponto_inicial"]["x"])
+                y1 = float(seg["ponto_inicial"]["y"])
+                x2 = float(seg["ponto_final"]["x"])
+                y2 = float(seg["ponto_final"]["y"])
+            except Exception:
+                continue
 
+            midx = (x1 + x2) / 2.0
+            midy = (y1 + y2) / 2.0
+
+            # =====================================================
+            # DIREÇÃO GEOMÉTRICA
+            # =====================================================
             direcao = ConfrontanteService._segmento_direcao(
                 midx=midx,
                 midy=midy,
@@ -198,19 +224,19 @@ class ConfrontanteService:
             )
 
             comprimento = ConfrontanteService._distancia(
-                (float(x1), float(y1)),
-                (float(x2), float(y2)),
+                (x1, y1),
+                (x2, y2),
             )
 
             segmentos.append(
                 {
-                    "ordem_segmento": i + 1,
-                    "lado_label": f"LADO_{i + 1:02d}",
+                    "ordem_segmento": int(seg.get("indice")),
+                    "lado_label": f"LADO_{int(seg.get('indice')):02d}",
                     "direcao_normalizada": direcao,
-                    "p1": (float(x1), float(y1)),
-                    "p2": (float(x2), float(y2)),
+                    "p1": (x1, y1),
+                    "p2": (x2, y2),
                     "midpoint": (midx, midy),
-                    "comprimento": comprimento,
+                    "comprimento": float(comprimento),
                 }
             )
 

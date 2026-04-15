@@ -189,21 +189,89 @@ class MemorialService:
 
     @staticmethod
     def _deg_to_dms_str(deg: float) -> str:
+        """
+        Converte graus decimais para formato DMS (graus, minutos, segundos)
+        com controle de arredondamento técnico para evitar propagação de erro.
+        """
+
+        deg = MemorialService._safe_float(deg)
+
+        if math.isnan(deg) or math.isinf(deg):
+            return "00°00'00.00\""
+
+        # =========================================================
+        # NORMALIZAÇÃO (0–360)
+        # =========================================================
+        deg = deg % 360.0
+
+        # =========================================================
+        # CONVERSÃO PRECISA
+        # =========================================================
         d = int(deg)
-        m = int((deg - d) * 60)
-        s = ((deg - d) * 60 - m) * 60
-        return f"{d:02d}°{m:02d}'{s:05.2f}\""
+
+        minutos_total = (deg - d) * 60.0
+        m = int(minutos_total)
+
+        segundos = (minutos_total - m) * 60.0
+
+        # =========================================================
+        # 🔥 CORREÇÃO DE ARREDONDAMENTO (CRÍTICO)
+        # =========================================================
+        segundos = round(segundos, 2)
+
+        if segundos >= 60.0:
+            segundos = 0.0
+            m += 1
+
+        if m >= 60:
+            m = 0
+            d += 1
+
+        if d >= 360:
+            d = 0
+
+        return f"{d:02d}°{m:02d}'{segundos:05.2f}\""
 
     @staticmethod
     def _rumo_from_azimute(az: float) -> str:
-        az = az % 360
-        if az < 90:
-            return f"N {MemorialService._deg_to_dms_str(az)} E"
-        if az < 180:
-            return f"S {MemorialService._deg_to_dms_str(180 - az)} E"
-        if az < 270:
-            return f"S {MemorialService._deg_to_dms_str(az - 180)} W"
-        return f"N {MemorialService._deg_to_dms_str(360 - az)} W"
+        """
+        Converte azimute (0–360) em rumo (quadrantal)
+        no padrão técnico: N/S xx°xx'xx" E/W
+        """
+
+        az = MemorialService._safe_float(az)
+
+        if math.isnan(az) or math.isinf(az):
+            return "N 00°00'00.00\" E"
+
+        az = az % 360.0
+
+        # =========================================================
+        # QUADRANTES
+        # =========================================================
+        if 0 <= az < 90:
+            ang = az
+            prefixo = "N"
+            sufixo = "E"
+
+        elif 90 <= az < 180:
+            ang = 180.0 - az
+            prefixo = "S"
+            sufixo = "E"
+
+        elif 180 <= az < 270:
+            ang = az - 180.0
+            prefixo = "S"
+            sufixo = "W"
+
+        else:
+            ang = 360.0 - az
+            prefixo = "N"
+            sufixo = "W"
+
+        ang_str = MemorialService._deg_to_dms_str(ang)
+
+        return f"{prefixo} {ang_str} {sufixo}"
 
     @staticmethod
     def _salvar_arquivo(imovel_id: int, texto: str) -> tuple[str, str]:
@@ -275,80 +343,78 @@ class MemorialService:
                 return None
 
             # =====================================================
-            # 1. PRIORIDADE POR ORDEM / ÍNDICE
+            # 1. PRIORIDADE ABSOLUTA → ORDEM DO BANCO (ordem_segmento)
             # =====================================================
             for c in confrontantes_lista:
                 if not isinstance(c, dict):
                     continue
 
                 ordem = c.get("ordem_segmento")
-                indice = c.get("indice")
-                numero = c.get("numero")
 
-                for valor in (ordem, indice, numero):
-                    try:
-                        if valor is not None and int(valor) == indice_segmento:
-                            nome = (
-                                c.get("nome")
-                                or c.get("confrontante")
-                                or c.get("descricao")
-                                or c.get("identificacao")
-                            )
-                            if nome:
-                                return " ".join(str(nome).strip().split())
-                    except Exception:
-                        continue
-
-            # =====================================================
-            # 2. PRIORIDADE POR LADO / DIREÇÃO (fallback)
-            # =====================================================
-            mapa_lado = {
-                1: ["N", "NORTE"],
-                2: ["E", "L", "LESTE"],
-                3: ["S", "SUL"],
-                4: ["W", "O", "OESTE"],
-            }
-
-            lados_esperados = mapa_lado.get(indice_segmento, [])
-
-            if lados_esperados:
-                for c in confrontantes_lista:
-                    if not isinstance(c, dict):
-                        continue
-
-                    lado = (
-                        c.get("lado_normalizado")
-                        or c.get("direcao")
-                        or c.get("lado")
-                    )
-
-                    if not lado:
-                        continue
-
-                    lado_norm = str(lado).strip().upper()
-
-                    if lado_norm in lados_esperados:
+                try:
+                    if ordem is not None and int(ordem) == indice_segmento:
                         nome = (
-                            c.get("nome")
+                            c.get("nome_confrontante")
+                            or c.get("nome")
                             or c.get("confrontante")
                             or c.get("descricao")
-                            or c.get("identificacao")
+                            or c.get("identificacao_imovel_confrontante")
                         )
                         if nome:
                             return " ".join(str(nome).strip().split())
+                except Exception:
+                    continue
 
             # =====================================================
-            # 3. FALLBACK POR POSIÇÃO NA LISTA
+            # 2. PRIORIDADE SECUNDÁRIA → DIREÇÃO NORMALIZADA
+            # =====================================================
+            for c in confrontantes_lista:
+                if not isinstance(c, dict):
+                    continue
+
+                lado = (
+                    c.get("direcao_normalizada")
+                    or c.get("direcao")
+                    or c.get("lado_normalizado")
+                    or c.get("lado")
+                )
+
+                if not lado:
+                    continue
+
+                lado_norm = str(lado).strip().upper()
+
+                # fallback inteligente: tenta casar com sequência geométrica
+                try:
+                    ordem = c.get("ordem_segmento")
+                    if ordem is not None and int(ordem) == indice_segmento:
+                        nome = (
+                            c.get("nome_confrontante")
+                            or c.get("nome")
+                            or c.get("confrontante")
+                            or c.get("descricao")
+                            or c.get("identificacao_imovel_confrontante")
+                        )
+                        if nome:
+                            return " ".join(str(nome).strip().split())
+                except Exception:
+                    continue
+
+            # =====================================================
+            # 3. FALLBACK CONTROLADO → POSIÇÃO NA LISTA
             # =====================================================
             pos = indice_segmento - 1
+
             if 0 <= pos < len(confrontantes_lista):
                 c = confrontantes_lista[pos]
+
                 if isinstance(c, dict):
                     nome = (
-                        c.get("nome")
+                        c.get("nome_confrontante")
+                        or c.get("nome")
                         or c.get("confrontante")
                         or c.get("descricao")
-                        or c.get("identificacao")
+                        or c.get("identificacao_imovel_confrontante")
                     )
                     if nome:
                         return " ".join(str(nome).strip().split())
@@ -356,6 +422,7 @@ class MemorialService:
             return None
 
         for i, seg in enumerate(segmentos):
+
             dist = MemorialService._safe_float(seg.get("distancia"))
             az = MemorialService._safe_float(seg.get("azimute_graus"))
 
@@ -379,22 +446,40 @@ class MemorialService:
 
             confrontante_trecho = _resolver_confrontante_segmento(i + 1)
 
+            # =====================================================
+            # TEXTO DE ABERTURA (PADRÃO TÉCNICO)
+            # =====================================================
             if i == 0:
                 inicio_texto = (
-                    f"{i + 1:02d}. Inicia-se no vértice {de_vertice}"
+                    f"{i + 1:02d}. Inicia-se no vértice {de_vertice},"
                 )
             else:
                 inicio_texto = (
-                    f"{i + 1:02d}. Do vértice {de_vertice}"
+                    f"{i + 1:02d}. Do vértice {de_vertice},"
                 )
 
+            # =====================================================
+            # CONFRONTANTE
+            # =====================================================
             if confrontante_trecho:
                 trecho_confrontante = (
-                    f", confrontando neste trecho com {confrontante_trecho}"
+                    f" confrontando neste trecho com {confrontante_trecho},"
                 )
             else:
                 trecho_confrontante = ""
 
+            # =====================================================
+            # DESCRIÇÃO TÉCNICA DO SEGMENTO
+            # =====================================================
+            descricao_segmento = (
+                f" segue com azimute de {az_dms} ({az:.4f}°), "
+                f"rumo {rumo}, "
+                f"por uma distância de {dist:.3f} metros"
+            )
+
+            # =====================================================
+            # FECHAMENTO DO TRECHO
+            # =====================================================
             if i + 1 < len(segmentos):
                 fechamento_texto = f", até o vértice {ate_vertice}."
             else:
@@ -403,12 +488,14 @@ class MemorialService:
                     f"ponto inicial desta descrição perimetral."
                 )
 
+            # =====================================================
+            # LINHA FINAL
+            # =====================================================
             linhas_formatadas.append(
                 (
-                    f"{inicio_texto}{trecho_confrontante}, "
-                    f"segue com azimute de {az_dms}, "
-                    f"rumo {rumo}, "
-                    f"e distância de {dist:.3f} metros"
+                    f"{inicio_texto}"
+                    f"{trecho_confrontante}"
+                    f"{descricao_segmento}"
                     f"{fechamento_texto}"
                 )
             )
@@ -438,7 +525,7 @@ class MemorialService:
         erro_perimetro = abs(soma_distancias - perimetro_m_final)
 
         # =========================================================
-        # CABEÇALHO DESCRITIVO
+        # CABEÇALHO DESCRITIVO (PADRÃO TÉCNICO PROFISSIONAL)
         # =========================================================
         cabecalho_linhas: List[str] = [
             "MEMORIAL DESCRITIVO",
@@ -452,27 +539,30 @@ class MemorialService:
 
         cabecalho_linhas.extend(
             [
-                "Imóvel georreferenciado conforme dados fornecidos e processados pelo sistema técnico.",
+                "Descrição técnica do perímetro do imóvel georreferenciado, "
+                "elaborada a partir de dados processados por sistema técnico especializado, "
+                "com base nas informações fornecidas e analisadas.",
                 "",
                 f"Sistema de referência: {tipo}",
                 f"Sistema projetado (UTM): {epsg_utm or 'N/A'}",
                 "",
                 f"Área total: {area_hectares_final:.4f} hectares",
                 f"Perímetro total: {perimetro_m_final:.3f} metros",
-                f"Erro de fechamento: {erro_perimetro:.4f} metros",
+                f"Erro de fechamento linear: {erro_perimetro:.4f} metros",
                 "",
-                "DESCRIÇÃO DO PERÍMETRO:",
+                "DESCRIÇÃO PERIMETRAL:",
                 "",
             ]
         )
 
         # =========================================================
-        # FECHAMENTO PROFISSIONAL
+        # FECHAMENTO PROFISSIONAL (PADRÃO DOCUMENTAL)
         # =========================================================
         fechamento_final = (
-            "O perímetro acima descrito encerra a poligonal do imóvel, "
-            "fechando geometricamente de forma consistente, "
-            "sem indicação de inconsistências significativas nos dados processados."
+            "O perímetro acima descrito define a poligonal do imóvel, "
+            "encerrando-se no vértice inicial, com fechamento geométrico compatível "
+            "com os dados processados, não sendo constatadas discrepâncias relevantes "
+            "que comprometam sua integridade técnica."
         )
 
         # =========================================================
@@ -500,5 +590,5 @@ class MemorialService:
             "texto_preview": texto,
             "tipo_referencial": tipo,
             "epsg_utm": epsg_utm,
-            "message": "Memorial gerado com estrutura profissional.",
+            "message": "Memorial gerado com padrão técnico profissional.",
         }

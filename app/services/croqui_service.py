@@ -451,30 +451,16 @@ class CroquiService:
             return ""
 
         linhas = []
-        usados_por_lado: Dict[str, int] = {}
-
-        # 🔥 alinhado com normalizador
-        lado_para_segmento = {
-            "NORTE": 0,
-            "LESTE": 1,
-            "SUL": 2,
-            "OESTE": 3,
-            "NORDESTE": 0,
-            "SUDESTE": 1,
-            "SUDOESTE": 2,
-            "NOROESTE": 3,
-        }
+        usados_por_segmento: Dict[int, int] = {}
 
         total_segmentos = max(1, len(norm) - 1)
 
         for idx, c in enumerate(confrontantes, start=1):
 
-            # 🔥 prioridade correta (normalizador primeiro)
-            lado = str(
-                c.get("lado_normalizado")
-                or c.get("lado")
-                or ""
-            ).upper().strip()
+            # =========================================================
+            # 🔥 DADOS BASE
+            # =========================================================
+            ordem = c.get("ordem_segmento")
 
             nome = str(c.get("nome") or "").strip()
             descricao = str(c.get("descricao") or "").strip()
@@ -501,14 +487,15 @@ class CroquiService:
                 texto_final += " • " + " • ".join(complemento)
 
             # =========================================================
-            # POSICIONAMENTO
+            # 🔥 POSICIONAMENTO (AGORA CORRETO VIA BANCO)
             # =========================================================
-            segmento_index = lado_para_segmento.get(lado)
-
-            if segmento_index is None:
+            if ordem and isinstance(ordem, int):
+                segmento_index = ordem - 1
+            else:
+                # fallback seguro (mantido)
                 segmento_index = min(idx - 1, total_segmentos - 1)
 
-            segmento_index = min(segmento_index, total_segmentos - 1)
+            segmento_index = max(0, min(segmento_index, total_segmentos - 1))
 
             p1 = norm[segmento_index]
             p2 = norm[(segmento_index + 1) % len(norm)]
@@ -516,18 +503,25 @@ class CroquiService:
             mx, my = CroquiService._segment_midpoint(p1, p2)
 
             # =========================================================
-            # CONTROLE DE SOBREPOSIÇÃO (MELHORADO)
+            # 🔥 CONTROLE DE SOBREPOSIÇÃO (POR SEGMENTO)
             # =========================================================
-            chave_lado = lado or f"AUTO_{segmento_index}"
+            count = usados_por_segmento.get(segmento_index, 0)
+            usados_por_segmento[segmento_index] = count + 1
 
-            count = usados_por_lado.get(chave_lado, 0)
-            usados_por_lado[chave_lado] = count + 1
-
-            offset_y = 18 + (count * 16)  # 🔥 mais espaçamento
+            offset_y = 18 + (count * 16)
             anchor = "middle"
 
+            # =========================================================
+            # 🔥 DESLOCAMENTO LEVE PARA FORA DO POLÍGONO
+            # =========================================================
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+
+            px = mx + (-dy * 0.05)
+            py = my + (dx * 0.05) + offset_y
+
             linhas.append(
-                f'<text x="{mx:.2f}" y="{my + offset_y:.2f}" text-anchor="{anchor}" '
+                f'<text x="{px:.2f}" y="{py:.2f}" text-anchor="{anchor}" '
                 f'font-size="11" font-family="Arial" fill="#7C2D12" '
                 f'paint-order="stroke" stroke="#FFFFFF" stroke-width="3">'
                 f'{CroquiService._escape_xml(texto_final)}</text>'
