@@ -23,7 +23,7 @@ class DxfExportService:
     LAYER_INFO = "GEO_INFO"
 
     # =========================================================
-    # NORMALIZAÇÃO NUMÉRICA SEGURA
+    # NORMALIZAÇÃO NUMÉRICA SEGURA (ROBUSTA)
     # =========================================================
     @staticmethod
     def _safe_float(value: Any) -> float:
@@ -31,29 +31,36 @@ class DxfExportService:
             v = float(value)
 
             if v != v:  # NaN
-                raise ValueError("Valor NaN detectado")
+                return 0.0
 
             if v in (float("inf"), float("-inf")):
-                raise ValueError("Valor infinito detectado")
+                return 0.0
 
             return v
 
-        except Exception as exc:
-            raise ValueError(f"Valor numérico inválido: {value}") from exc
+        except Exception:
+            return 0.0
 
     # =========================================================
-    # PARSER DE POLÍGONO
+    # PARSER DE POLÍGONO (PADRÃO GLOBAL DO SISTEMA)
     # =========================================================
     @staticmethod
     def _parse_polygon(geojson: str) -> Polygon:
         try:
             polygon = GeometriaService._parse_polygon_geojson(geojson)
 
-            if not polygon.is_valid:
-                raise ValueError("Geometria inválida (self-intersection ou erro topológico)")
-
             if polygon.is_empty:
                 raise ValueError("Geometria vazia")
+
+            if not polygon.is_valid:
+                polygon = polygon.buffer(0)
+
+            if polygon.is_empty or not polygon.is_valid:
+                raise ValueError("Geometria inválida após correção")
+
+            coords = list(polygon.exterior.coords)
+            if len(coords) < 4:
+                raise ValueError("Polígono inválido (poucos vértices)")
 
             return polygon
 
@@ -71,66 +78,66 @@ class DxfExportService:
         linetype: str = "CONTINUOUS",
         lineweight: int = 25,
     ) -> None:
-        if name in doc.layers:
-            layer = doc.layers.get(name)
+        try:
+            if name in doc.layers:
+                layer = doc.layers.get(name)
 
-            layer.dxf.color = color
-            layer.dxf.linetype = linetype
-            layer.dxf.lineweight = lineweight
+                layer.dxf.color = color
+                layer.dxf.linetype = linetype
+                layer.dxf.lineweight = lineweight
 
-            return
+                return
 
-        doc.layers.add(
-            name=name,
-            dxfattribs={
-                "color": color,
-                "linetype": linetype,
-                "lineweight": lineweight,
-            },
-        )
+            doc.layers.add(
+                name=name,
+                dxfattribs={
+                    "color": int(color),
+                    "linetype": str(linetype),
+                    "lineweight": int(lineweight),
+                },
+            )
+
+        except Exception:
+            # não quebrar geração do DXF por erro de layer
+            pass
 
     # =========================================================
-    # SETUP COMPLETO DE LAYERS (PADRÃO CAD)
+    # SETUP COMPLETO DE LAYERS (PADRÃO CAD PROFISSIONAL)
     # =========================================================
     @staticmethod
     def _setup_layers(doc: ezdxf.document.Drawing) -> None:
-        # Perímetro principal
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_PERIMETRO,
-            color=3,  # verde
+            color=3,
             linetype="CONTINUOUS",
             lineweight=35,
         )
 
-        # Vértices (pontos)
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_VERTICES,
-            color=1,  # vermelho
+            color=1,
             linetype="CONTINUOUS",
             lineweight=25,
         )
 
-        # Texto dos vértices
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_ROTULOS_VERTICES,
-            color=2,  # amarelo
+            color=2,
             linetype="CONTINUOUS",
             lineweight=18,
         )
 
-        # Texto de segmentos
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_SEGMENTOS,
-            color=5,  # azul
+            color=5,
             linetype="CONTINUOUS",
             lineweight=18,
         )
 
-        # Norte
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_NORTE,
@@ -139,7 +146,6 @@ class DxfExportService:
             lineweight=25,
         )
 
-        # Confrontantes
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_CONFRONTANTES,
@@ -148,7 +154,6 @@ class DxfExportService:
             lineweight=18,
         )
 
-        # Informações gerais
         DxfExportService._ensure_layer(
             doc=doc,
             name=DxfExportService.LAYER_INFO,
@@ -158,7 +163,7 @@ class DxfExportService:
         )
 
     # =========================================================
-    # CÁLCULO DE ESCALA DE TEXTO (INTELIGENTE)
+    # CÁLCULO DE ESCALA DE TEXTO (ENGENHARIA REAL)
     # =========================================================
     @staticmethod
     def _calc_text_height(coords: List[Tuple[float, float]]) -> float:
@@ -177,22 +182,26 @@ class DxfExportService:
             min_y = min(ys)
             max_y = max(ys)
 
-            span_x = DxfExportService._safe_float(max_x - min_x)
-            span_y = DxfExportService._safe_float(max_y - min_y)
+            span_x = max_x - min_x
+            span_y = max_y - min_y
 
-            ref = max(span_x, span_y, 1.0)
+            ref = max(span_x, span_y)
 
-            # Escala proporcional (ajustada para leitura técnica)
-            text_height = ref * 0.012
+            if ref <= 0:
+                return 2.5
 
-            # Limites técnicos CAD
-            if text_height < 1.5:
-                return 1.5
-
-            if text_height > 50:
-                return 50.0
-
-            return text_height
+            if ref < 50:
+                return 1.8
+            elif ref < 200:
+                return 2.5
+            elif ref < 1000:
+                return 4.0
+            elif ref < 5000:
+                return 8.0
+            elif ref < 20000:
+                return 12.0
+            else:
+                return 18.0
 
         except Exception:
             return 2.5
@@ -246,8 +255,9 @@ class DxfExportService:
         coords: List[Tuple[float, float]],
         text_height: float,
     ) -> Tuple[float, float, float]:
-        if not coords:
-            raise ValueError("Coordenadas ausentes para cálculo da seta norte")
+
+        if not coords or len(coords) < 2:
+            raise ValueError("Coordenadas insuficientes para cálculo da seta norte")
 
         xs = [DxfExportService._safe_float(p[0]) for p in coords]
         ys = [DxfExportService._safe_float(p[1]) for p in coords]
@@ -257,22 +267,25 @@ class DxfExportService:
         min_y = min(ys)
         max_y = max(ys)
 
-        span_x = DxfExportService._safe_float(max_x - min_x)
-        span_y = DxfExportService._safe_float(max_y - min_y)
+        span_x = max_x - min_x
+        span_y = max_y - min_y
 
         ref = max(span_x, span_y, 1.0)
 
-        # posiciona no quadrante superior direito, fora da poligonal
-        x = min_x + (span_x * 0.90 if span_x > 0 else ref * 0.90)
-        y = max_y + (ref * 0.08)
+        # 🔥 posicionamento mais consistente (evita encostar no polígono)
+        x = min_x + (span_x * 0.92 if span_x > 0 else ref * 0.92)
+        y = max_y + (ref * 0.10)
 
         size = DxfExportService._safe_float(text_height) * 6.0
 
         if size < 5.0:
             size = 5.0
 
+        if size > ref * 0.25:
+            size = ref * 0.25
+
         return x, y, size
-    
+
     @staticmethod
     def _add_north_arrow(
         msp: ezdxf.layouts.Modelspace,
@@ -287,6 +300,9 @@ class DxfExportService:
             size = max(5.0, DxfExportService._safe_float(size))
             text_height = DxfExportService._safe_float(text_height)
 
+            # =========================================================
+            # HASTE
+            # =========================================================
             shaft_start = (x, y)
             shaft_end = (x, y + size)
 
@@ -298,6 +314,9 @@ class DxfExportService:
                 },
             )
 
+            # =========================================================
+            # CABEÇA DA SETA
+            # =========================================================
             head_left = (
                 x - (size * 0.18),
                 y + (size * 0.72),
@@ -318,6 +337,9 @@ class DxfExportService:
                 },
             )
 
+            # =========================================================
+            # TEXTO "N"
+            # =========================================================
             msp.add_text(
                 "N",
                 dxfattribs={
@@ -331,7 +353,7 @@ class DxfExportService:
             )
 
         except Exception:
-            # não quebra o DXF
+            # nunca quebrar o DXF por falha gráfica
             pass
 
     @staticmethod
@@ -443,20 +465,24 @@ class DxfExportService:
         text_height: float,
         segmentos: List[dict[str, Any]] | None = None,
     ) -> None:
-        if not coords:
+
+        if not coords or len(coords) < 2:
             return
 
         def _format_azimute_dms_local(az: float) -> str:
-            az = DxfExportService._safe_float(az) % 360
+            az = DxfExportService._safe_float(az) % 360.0
 
             graus = int(az)
-            minutos_float = (az - graus) * 60
+            minutos_float = (az - graus) * 60.0
             minutos = int(minutos_float)
-            segundos = (minutos_float - minutos) * 60
+            segundos = (minutos_float - minutos) * 60.0
 
             return f"{graus:03d}°{minutos:02d}'{segundos:05.2f}\""
 
         try:
+            # =========================================================
+            # BASE GEOMÉTRICA
+            # =========================================================
             xs = [DxfExportService._safe_float(p[0]) for p in coords]
             ys = [DxfExportService._safe_float(p[1]) for p in coords]
 
@@ -467,26 +493,45 @@ class DxfExportService:
             span_y = max_y - min_y
             ref_y = span_y if span_y > 0 else 50.0
 
-            x = min_x
-            y = min_y - (ref_y * 0.35)
+            # 🔥 deslocamento mais inteligente (evita sobreposição com polígono)
+            x_base = min_x
+            y_base = min_y - (ref_y * 0.45)
 
-            row_h = text_height * 1.35
+            row_h = text_height * 1.4
 
-            header = "VÉRTICE        X                 Y                 DISTÂNCIA         AZIMUTE"
+            # =========================================================
+            # HEADER (PADRÃO SIGEF REAL)
+            # =========================================================
+            header = (
+                "VÉRTICE        X (m)             Y (m)             "
+                "DISTÂNCIA (m)      AZIMUTE"
+            )
 
             msp.add_text(
                 header,
                 dxfattribs={
                     "layer": DxfExportService.LAYER_INFO,
                     "height": text_height,
-                    "insert": (x, y),
+                    "insert": (x_base, y_base),
                 },
             )
 
-            y_atual = y - row_h
+            # linha separadora (melhora leitura visual)
+            msp.add_line(
+                (x_base, y_base - (text_height * 0.3)),
+                (x_base + (text_height * 55), y_base - (text_height * 0.3)),
+                dxfattribs={"layer": DxfExportService.LAYER_INFO},
+            )
+
+            y_atual = y_base - row_h
+
             total_vertices = max(0, len(coords) - 1)
 
+            # =========================================================
+            # LINHAS DA TABELA
+            # =========================================================
             for i in range(total_vertices):
+
                 vx = DxfExportService._safe_float(coords[i][0])
                 vy = DxfExportService._safe_float(coords[i][1])
 
@@ -498,21 +543,27 @@ class DxfExportService:
                         distancia_val = DxfExportService._safe_float(
                             segmentos[i].get("distancia", 0)
                         )
+
                         azimute_val = DxfExportService._safe_float(
-                            segmentos[i].get("azimute_graus", 0)
+                            segmentos[i].get(
+                                "azimute_graus",
+                                segmentos[i].get("azimute", 0),
+                            )
                         )
 
                         distancia_str = f"{distancia_val:.3f}"
                         azimute_str = _format_azimute_dms_local(azimute_val)
+
                     except Exception:
                         pass
 
+                # 🔥 alinhamento fixo estilo tabela técnica
                 linha = (
                     f"V{i + 1:<3}"
-                    f"    {vx:>14.3f}"
-                    f"    {vy:>14.3f}"
-                    f"    {distancia_str:>12}"
-                    f"    {azimute_str:>16}"
+                    f"  {vx:>16.3f}"
+                    f"  {vy:>16.3f}"
+                    f"  {distancia_str:>14}"
+                    f"  {azimute_str:>18}"
                 )
 
                 msp.add_text(
@@ -520,7 +571,7 @@ class DxfExportService:
                     dxfattribs={
                         "layer": DxfExportService.LAYER_INFO,
                         "height": text_height * 0.90,
-                        "insert": (x, y_atual),
+                        "insert": (x_base, y_atual),
                     },
                 )
 
@@ -555,6 +606,7 @@ class DxfExportService:
         epsg_origem: int | None = None,
         epsg_utm: int | None = None,
     ) -> ezdxf.document.Drawing:
+
         if not coords or len(coords) < 4:
             raise ValueError("Coordenadas insuficientes para geração do DXF")
 
@@ -569,7 +621,13 @@ class DxfExportService:
         vertex_radius = DxfExportService._calc_vertex_radius(text_height)
 
         # =========================================================
-        # PERÍMETRO (POLÍGONO PRINCIPAL)
+        # GARANTIA DE FECHAMENTO
+        # =========================================================
+        if coords[0] != coords[-1]:
+            coords = coords + [coords[0]]
+
+        # =========================================================
+        # PERÍMETRO
         # =========================================================
         msp.add_lwpolyline(
             coords,
@@ -580,9 +638,10 @@ class DxfExportService:
         )
 
         # =========================================================
-        # VÉRTICES + RÓTULOS (PADRÃO SIGEF)
+        # VÉRTICES + RÓTULOS
         # =========================================================
         for index, (x, y) in enumerate(coords[:-1], start=1):
+
             x = DxfExportService._safe_float(x)
             y = DxfExportService._safe_float(y)
 
@@ -601,17 +660,15 @@ class DxfExportService:
                 dxfattribs={
                     "layer": DxfExportService.LAYER_ROTULOS_VERTICES,
                     "height": text_height,
-                    "insert": (
-                        x + offset,
-                        y + offset,
-                    ),
+                    "insert": (x + offset, y + offset),
                 },
             )
 
         # =========================================================
-        # TEXTOS DOS SEGMENTOS + CONFRONTANTES
+        # SEGMENTOS + CONFRONTANTES
         # =========================================================
         for index, seg in enumerate(segmentos):
+
             if index >= len(coords) - 1:
                 continue
 
@@ -633,18 +690,26 @@ class DxfExportService:
                 # =========================================================
                 # DIREÇÃO DO SEGMENTO
                 # =========================================================
-                dx = DxfExportService._safe_float(p2[0] - p1[0])
-                dy = DxfExportService._safe_float(p2[1] - p1[1])
+                dx = float(p2[0]) - float(p1[0])
+                dy = float(p2[1]) - float(p1[1])
 
                 angle = 0.0
                 if dx != 0 or dy != 0:
                     angle = math.degrees(math.atan2(dy, dx))
 
-                # normal perpendicular
+                # 🔥 NORMALIZAÇÃO DE LEITURA (evita texto invertido)
+                if angle > 90:
+                    angle -= 180
+                elif angle < -90:
+                    angle += 180
+
+                # =========================================================
+                # NORMAL UNITÁRIO
+                # =========================================================
                 nx = -dy
                 ny = dx
 
-                norm = (nx * nx + ny * ny) ** 0.5
+                norm = math.sqrt((nx * nx) + (ny * ny))
                 if norm != 0:
                     nx /= norm
                     ny /= norm
@@ -652,7 +717,7 @@ class DxfExportService:
                 # =========================================================
                 # TEXTO DO SEGMENTO
                 # =========================================================
-                offset_segmento = text_height * 0.35
+                offset_segmento = text_height * 0.40
 
                 insert_x_seg = mx + (nx * offset_segmento)
                 insert_y_seg = my + (ny * offset_segmento)
@@ -663,36 +728,30 @@ class DxfExportService:
                         "layer": DxfExportService.LAYER_SEGMENTOS,
                         "height": text_height * 0.85,
                         "rotation": angle,
-                        "insert": (
-                            insert_x_seg,
-                            insert_y_seg,
-                        ),
+                        "insert": (insert_x_seg, insert_y_seg),
                     },
                 )
 
                 # =========================================================
-                # 🔥 CONFRONTANTE (NOVO - INTEGRADO)
+                # 🔥 CONFRONTANTE (CORRIGIDO PROFISSIONAL)
                 # =========================================================
                 confrontante = seg.get("confrontante")
 
                 if confrontante:
+                    texto_conf = " ".join(str(confrontante).upper().split())
+
                     offset_conf = text_height * 1.2
 
                     insert_x_conf = mx + (nx * offset_conf)
                     insert_y_conf = my + (ny * offset_conf)
 
-                    texto_conf = f"CONF.: {str(confrontante).upper()}"
-
                     msp.add_text(
-                        texto_conf,
+                        f"CONF.: {texto_conf}",
                         dxfattribs={
                             "layer": DxfExportService.LAYER_CONFRONTANTES,
                             "height": text_height * 0.95,
                             "rotation": angle,
-                            "insert": (
-                                insert_x_conf,
-                                insert_y_conf,
-                            ),
+                            "insert": (insert_x_conf, insert_y_conf),
                         },
                     )
 
@@ -721,7 +780,7 @@ class DxfExportService:
             pass
 
         # =========================================================
-        # QUADRO TÉCNICO (POSIÇÃO SUPERIOR)
+        # QUADRO TÉCNICO
         # =========================================================
         try:
             DxfExportService._add_quadro_tecnico(
@@ -737,7 +796,7 @@ class DxfExportService:
             pass
 
         # =========================================================
-        # INFORMAÇÃO TÉCNICA BASE (RODAPÉ)
+        # INFO BASE
         # =========================================================
         try:
             DxfExportService._add_info_box(
@@ -749,7 +808,7 @@ class DxfExportService:
             pass
 
         # =========================================================
-        # TABELA DE COORDENADAS (ABAIXO DO POLÍGONO)
+        # TABELA DE COORDENADAS
         # =========================================================
         try:
             DxfExportService._add_tabela_coordenadas(
@@ -761,16 +820,17 @@ class DxfExportService:
         except Exception:
             pass
 
-        # =========================================================
-        # FINALIZAÇÃO
-        # =========================================================
         return doc
 
     # =========================================================
     # GERAR DXF PROFISSIONAL (VIA GEOJSON)
     # =========================================================
     @staticmethod
-    def gerar_dxf(geojson: str) -> ezdxf.document.Drawing:
+    def gerar_dxf(
+        geojson: str,
+        confrontantes: List[dict[str, Any]] | None = None,
+    ) -> ezdxf.document.Drawing:
+
         polygon = DxfExportService._parse_polygon(geojson)
 
         coords_raw: List[Tuple[float, float]] = list(polygon.exterior.coords)
@@ -786,11 +846,18 @@ class DxfExportService:
             for x, y in coords_raw
         ]
 
+        # garante fechamento
+        if coords and coords[0] != coords[-1]:
+            coords.append(coords[0])
+
         epsg_origem = 4326
         epsg_utm = None
         area_ha = 0.0
         perimetro_m = 0.0
 
+        # =========================================================
+        # CÁLCULO DE MÉTRICAS
+        # =========================================================
         try:
             epsg_utm, area_ha_calc, perimetro_m_calc = GeometriaService.calcular_area_perimetro(
                 geojson=geojson,
@@ -811,11 +878,64 @@ class DxfExportService:
             except Exception:
                 perimetro_m = 0.0
 
+        # =========================================================
+        # SEGMENTOS BASE
+        # =========================================================
         try:
             segmentos = GeometriaService.extract_segmentos(geojson)
         except Exception:
             segmentos = []
 
+        # =========================================================
+        # 🔥 INTEGRAÇÃO COM CONFRONTANTES (CORRIGIDA PROFISSIONALMENTE)
+        # =========================================================
+        if confrontantes and segmentos:
+            try:
+                total_segmentos = len(segmentos)
+
+                for idx, conf in enumerate(confrontantes, start=1):
+                    try:
+                        # -----------------------------------------
+                        # 🔥 PRIORIDADE: ORDEM VINDO DO BANCO
+                        # -----------------------------------------
+                        ordem = conf.get("ordem_segmento")
+
+                        if ordem and isinstance(ordem, int):
+                            segmento_index = ordem - 1
+                        else:
+                            # fallback seguro (mantém seu comportamento original)
+                            segmento_index = min(idx - 1, total_segmentos - 1)
+
+                        # clamp de segurança
+                        segmento_index = max(0, min(segmento_index, total_segmentos - 1))
+
+                        nome = (
+                            conf.get("nome")
+                            or conf.get("confrontante")
+                            or conf.get("descricao")
+                            or None
+                        )
+
+                        if nome:
+                            nome = " ".join(str(nome).strip().upper().split())
+                            segmentos[segmento_index]["confrontante"] = nome
+
+                    except Exception:
+                        continue
+
+            except Exception:
+                pass
+
+        # =========================================================
+        # GARANTIA DE CONSISTÊNCIA
+        # =========================================================
+        if segmentos:
+            max_segmentos = max(0, len(coords) - 1)
+            segmentos = segmentos[:max_segmentos]
+
+        # =========================================================
+        # RENDER FINAL
+        # =========================================================
         return DxfExportService._render_dxf_document(
             coords=coords,
             segmentos=segmentos,
@@ -824,7 +944,7 @@ class DxfExportService:
             epsg_origem=epsg_origem,
             epsg_utm=epsg_utm,
         )
-
+    
     # =========================================================
     # GERAR DXF PROFISSIONAL (VIA BANCO)
     # =========================================================
@@ -851,21 +971,25 @@ class DxfExportService:
         # COORDENADAS VIA BANCO (PRIORIDADE)
         # =========================================================
         if getattr(geometria, "vertices", None):
-            vertices_ordenados = sorted(
-                geometria.vertices,
-                key=lambda v: (v.indice or 0, v.id or 0)
-            )
-
-            for v in vertices_ordenados:
-                coords.append(
-                    (
-                        DxfExportService._safe_float(v.x),
-                        DxfExportService._safe_float(v.y),
-                    )
+            try:
+                vertices_ordenados = sorted(
+                    geometria.vertices,
+                    key=lambda v: (v.indice or 0, v.id or 0),
                 )
 
-            if coords and coords[0] != coords[-1]:
-                coords.append(coords[0])
+                for v in vertices_ordenados:
+                    coords.append(
+                        (
+                            DxfExportService._safe_float(v.x),
+                            DxfExportService._safe_float(v.y),
+                        )
+                    )
+
+                if coords and coords[0] != coords[-1]:
+                    coords.append(coords[0])
+
+            except Exception:
+                coords = []
 
         # =========================================================
         # FALLBACK: GEOJSON
@@ -885,6 +1009,9 @@ class DxfExportService:
                 for x, y in coords_raw
             ]
 
+            if coords and coords[0] != coords[-1]:
+                coords.append(coords[0])
+
         # =========================================================
         # SEGMENTOS VIA BANCO (PRIORIDADE)
         # =========================================================
@@ -897,52 +1024,57 @@ class DxfExportService:
 
                 for seg in segmentos_ordenados:
                     try:
+                        indice = getattr(seg, "indice", None)
                         distancia = DxfExportService._safe_float(
                             getattr(seg, "distancia", 0)
                         )
-
                         azimute = DxfExportService._safe_float(
                             getattr(seg, "azimute", 0)
                         )
 
-                        # =========================================================
-                        # 🔥 CONFRONTANTE (FONTE REAL + FALLBACK CONTROLADO)
-                        # =========================================================
                         confrontante_nome = None
 
                         try:
-                            # 1. RELACIONAMENTO DIRETO (PRIORIDADE MÁXIMA)
+                            # 1. Relacionamento direto, se existir
                             if getattr(seg, "confrontante", None):
-                                confrontante_nome = getattr(
-                                    seg.confrontante,
-                                    "nome",
-                                    None,
+                                confrontante_nome = (
+                                    getattr(seg.confrontante, "nome_confrontante", None)
+                                    or getattr(seg.confrontante, "nome", None)
+                                    or getattr(seg.confrontante, "descricao", None)
                                 )
 
-                            # 2. CAMPOS DIRETOS DO SEGMENTO
+                            # 2. Campos diretos do próprio segmento, se existirem
                             if not confrontante_nome:
                                 confrontante_nome = (
                                     getattr(seg, "confrontante_nome", None)
                                     or getattr(seg, "nome_confrontante", None)
+                                    or getattr(seg, "descricao_confrontante", None)
                                 )
 
-                            # 3. NORMALIZAÇÃO FINAL
+                            # 3. Normalização final
                             if confrontante_nome:
-                                confrontante_nome = str(confrontante_nome).strip().upper()
+                                confrontante_nome = " ".join(
+                                    str(confrontante_nome).strip().upper().split()
+                                )
 
-                            # 4. 🔥 FALLBACK POR LADO (EVITA DXF "MUDO")
+                            # 4. Fallback por lado
                             if not confrontante_nome:
-                                lado = getattr(seg, "lado", None)
+                                lado = (
+                                    getattr(seg, "lado", None)
+                                    or getattr(seg, "lado_label", None)
+                                )
 
                                 if lado:
-                                    confrontante_nome = f"LADO {str(lado).upper()}"
+                                    confrontante_nome = " ".join(
+                                        f"LADO {str(lado).upper()}".split()
+                                    )
 
                         except Exception:
                             confrontante_nome = None
 
                         segmentos_render.append(
                             {
-                                "indice": getattr(seg, "indice", None),
+                                "indice": indice,
                                 "distancia": distancia,
                                 "azimute_graus": azimute,
                                 "confrontante": confrontante_nome,
@@ -953,7 +1085,7 @@ class DxfExportService:
                         continue
 
             except Exception:
-                pass
+                segmentos_render = []
 
         # =========================================================
         # FALLBACK: EXTRAÇÃO VIA GEOJSON
@@ -975,7 +1107,6 @@ class DxfExportService:
                                 "azimute_graus": DxfExportService._safe_float(
                                     seg.get("azimute_graus", 0)
                                 ),
-                                # fallback NÃO terá confrontante
                                 "confrontante": (
                                     seg.get("confrontante")
                                     or seg.get("confrontante_nome")
@@ -988,6 +1119,13 @@ class DxfExportService:
 
             except Exception:
                 segmentos_render = []
+
+        # =========================================================
+        # GARANTIA DE CONSISTÊNCIA ENTRE COORDENADAS E SEGMENTOS
+        # =========================================================
+        if coords and segmentos_render:
+            total_segmentos_validos = max(0, len(coords) - 1)
+            segmentos_render = segmentos_render[:total_segmentos_validos]
 
         # =========================================================
         # MÉTRICAS

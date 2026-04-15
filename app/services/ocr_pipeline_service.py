@@ -138,6 +138,9 @@ class OcrPipelineService:
     ) -> dict[str, Any]:
         print(f"🔎 Iniciando pipeline de matrícula para documento {document_id}")
 
+        # 🔥 CORREÇÃO CRÍTICA — GARANTE QUE NUNCA QUEBRE O PIPELINE
+        confrontantes_db: list = []
+
         result: dict[str, Any] = {
             "success": False,
             "document_id": document_id,

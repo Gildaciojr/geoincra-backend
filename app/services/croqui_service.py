@@ -223,7 +223,7 @@ class CroquiService:
         while x <= right:
             lines.append(
                 f'<line x1="{x:.2f}" y1="{top:.2f}" x2="{x:.2f}" y2="{bottom:.2f}" '
-                f'stroke="#E5E7EB" stroke-width="1"/>'
+                f'stroke="#E5E7EB" stroke-opacity="0.35" stroke-width="1"/>'
             )
             x += step
 
@@ -232,7 +232,7 @@ class CroquiService:
         while y <= bottom:
             lines.append(
                 f'<line x1="{left:.2f}" y1="{y:.2f}" x2="{right:.2f}" y2="{y:.2f}" '
-                f'stroke="#E5E7EB" stroke-width="1"/>'
+                f'stroke="#E5E7EB" stroke-opacity="0.35" stroke-width="1"/>'
             )
             y += step
 
@@ -342,7 +342,7 @@ class CroquiService:
             <line x1="12" y1="62" x2="30" y2="62" stroke="#0F172A" stroke-width="3"/>
             <text x="36" y="66" font-size="11" font-family="Arial" fill="#111827">Perímetro do imóvel</text>
 
-            <line x1="12" y1="84" x2="30" y2="84" stroke="#E5E7EB" stroke-width="2"/>
+            <line x1="12" y1="84" x2="30" y2="84" stroke="#E5E7EB" stroke-opacity="0.35" stroke-width="2"/>
             <text x="36" y="88" font-size="11" font-family="Arial" fill="#111827">Malha de referência</text>
 
             <text x="12" y="106" font-size="11" font-family="Arial" fill="#111827">N = Norte</text>
@@ -411,13 +411,55 @@ class CroquiService:
             dist = float(seg.get("distancia") or 0)
             az = float(seg.get("azimute_graus") or 0)
 
-            texto = f"{CroquiService._format_num(dist, 2)} m | {az:.1f}°"
+            # =========================================================
+            # TEXTO FORMATADO
+            # =========================================================
+            texto_dist = f"{CroquiService._format_num(dist, 2)} m"
+            texto_az = f"{az:.1f}°"
 
+            # =========================================================
+            # LABEL VISUAL PROFISSIONAL
+            # =========================================================
             labels.append(
-                f'<text x="{mx:.2f}" y="{my - 10:.2f}" text-anchor="middle" '
-                f'font-size="10" font-family="Arial" fill="#1E293B" '
-                f'paint-order="stroke" stroke="#FFFFFF" stroke-width="3.5">'
-                f'{texto}</text>'
+                f'''
+            <g>
+                <rect
+                    x="{mx - 38:.2f}"
+                    y="{my - 26:.2f}"
+                    width="76"
+                    height="30"
+                    rx="5"
+                    ry="5"
+                    fill="#FFFFFF"
+                    stroke="#CBD5E1"
+                    stroke-width="0.8"
+                    opacity="0.92"
+                />
+
+                <text
+                    x="{mx:.2f}"
+                    y="{my - 11:.2f}"
+                    text-anchor="middle"
+                    font-size="10.5"
+                    font-family="Arial"
+                    font-weight="bold"
+                    fill="#0F172A"
+                >
+                    {texto_dist}
+                </text>
+
+                <text
+                    x="{mx:.2f}"
+                    y="{my + 3:.2f}"
+                    text-anchor="middle"
+                    font-size="9"
+                    font-family="Arial"
+                    fill="#475569"
+                >
+                    {texto_az}
+                </text>
+            </g>
+                '''
             )
 
         return "\n".join(labels)
@@ -433,11 +475,42 @@ class CroquiService:
             y = CroquiService._safe_float(y)
 
             labels.append(
-                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="4.2" fill="#111827" stroke="#FFFFFF" stroke-width="1.5"/>'
-            )
-            labels.append(
-                f'<text x="{x + 8:.2f}" y="{y - 8:.2f}" font-size="12" font-family="Arial" font-weight="bold" '
-                f'fill="#0F172A" paint-order="stroke" stroke="#FFFFFF" stroke-width="3">V{i}</text>'
+                f'''
+            <g>
+                <circle
+                    cx="{x:.2f}"
+                    cy="{y:.2f}"
+                    r="5.2"
+                    fill="#0F172A"
+                    stroke="#FFFFFF"
+                    stroke-width="2"
+                />
+
+                <circle
+                    cx="{x:.2f}"
+                    cy="{y:.2f}"
+                    r="8"
+                    fill="none"
+                    stroke="#0F172A"
+                    stroke-opacity="0.20"
+                    stroke-width="2"
+                />
+
+                <text
+                    x="{x + 10:.2f}"
+                    y="{y - 10:.2f}"
+                    font-size="12"
+                    font-family="Arial"
+                    font-weight="bold"
+                    fill="#0F172A"
+                    paint-order="stroke"
+                    stroke="#FFFFFF"
+                    stroke-width="3"
+                >
+                    V{i}
+                </text>
+            </g>
+                '''
             )
 
         return "\n".join(labels)
@@ -458,7 +531,7 @@ class CroquiService:
         for idx, c in enumerate(confrontantes, start=1):
 
             # =========================================================
-            # 🔥 DADOS BASE
+            # DADOS BASE
             # =========================================================
             ordem = c.get("ordem_segmento")
 
@@ -487,12 +560,11 @@ class CroquiService:
                 texto_final += " • " + " • ".join(complemento)
 
             # =========================================================
-            # 🔥 POSICIONAMENTO (AGORA CORRETO VIA BANCO)
+            # POSICIONAMENTO (PRIORIDADE VIA BANCO)
             # =========================================================
             if ordem and isinstance(ordem, int):
                 segmento_index = ordem - 1
             else:
-                # fallback seguro (mantido)
                 segmento_index = min(idx - 1, total_segmentos - 1)
 
             segmento_index = max(0, min(segmento_index, total_segmentos - 1))
@@ -503,28 +575,67 @@ class CroquiService:
             mx, my = CroquiService._segment_midpoint(p1, p2)
 
             # =========================================================
-            # 🔥 CONTROLE DE SOBREPOSIÇÃO (POR SEGMENTO)
+            # NORMAL DO SEGMENTO (DESLOCAMENTO PARA FORA)
+            # =========================================================
+            dx = float(p2[0]) - float(p1[0])
+            dy = float(p2[1]) - float(p1[1])
+
+            norm_len = math.sqrt((dx * dx) + (dy * dy))
+            if norm_len > 0:
+                nx = -dy / norm_len
+                ny = dx / norm_len
+            else:
+                nx = 0.0
+                ny = 0.0
+
+            # =========================================================
+            # CONTROLE DE SOBREPOSIÇÃO (POR SEGMENTO)
             # =========================================================
             count = usados_por_segmento.get(segmento_index, 0)
             usados_por_segmento[segmento_index] = count + 1
 
-            offset_y = 18 + (count * 16)
-            anchor = "middle"
+            deslocamento_base = 22.0
+            deslocamento_extra = count * 18.0
+            deslocamento_total = deslocamento_base + deslocamento_extra
 
-            # =========================================================
-            # 🔥 DESLOCAMENTO LEVE PARA FORA DO POLÍGONO
-            # =========================================================
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
+            px = mx + (nx * deslocamento_total)
+            py = my + (ny * deslocamento_total)
 
-            px = mx + (-dy * 0.05)
-            py = my + (dx * 0.05) + offset_y
+            largura_box = max(92, min(220, len(texto_final) * 6.8))
+            altura_box = 24
 
             linhas.append(
-                f'<text x="{px:.2f}" y="{py:.2f}" text-anchor="{anchor}" '
-                f'font-size="11" font-family="Arial" fill="#7C2D12" '
-                f'paint-order="stroke" stroke="#FFFFFF" stroke-width="3">'
-                f'{CroquiService._escape_xml(texto_final)}</text>'
+                f'''
+            <g>
+                <rect
+                    x="{px - (largura_box / 2):.2f}"
+                    y="{py - 16:.2f}"
+                    width="{largura_box:.2f}"
+                    height="{altura_box}"
+                    rx="6"
+                    ry="6"
+                    fill="#FFF7ED"
+                    stroke="#FDBA74"
+                    stroke-width="1"
+                    opacity="0.95"
+                />
+
+                <text
+                    x="{px:.2f}"
+                    y="{py:.2f}"
+                    text-anchor="middle"
+                    font-size="10.5"
+                    font-family="Arial"
+                    font-weight="bold"
+                    fill="#7C2D12"
+                    paint-order="stroke"
+                    stroke="#FFFFFF"
+                    stroke-width="2.5"
+                >
+                    {CroquiService._escape_xml(texto_final)}
+                </text>
+            </g>
+                '''
             )
 
         return "\n".join(linhas)
@@ -564,7 +675,7 @@ class CroquiService:
         poly_points = " ".join([f"{x:.2f},{y:.2f}" for x, y in norm])
 
         # =========================================================
-        # MÉTRICAS TÉCNICAS (ALINHADAS COM GEOMETRIAS)
+        # MÉTRICAS TÉCNICAS
         # =========================================================
         area_m2 = CroquiService._polygon_area(original_coords)
         area_ha = area_m2 / 10000.0 if area_m2 > 0 else 0.0
@@ -591,6 +702,9 @@ class CroquiService:
         total_vertices = max(0, len(norm) - 1)
         escala_aprox = (1 / scale) * 1000 if scale > 0 else 1
 
+        # =========================================================
+        # COMPONENTES VISUAIS
+        # =========================================================
         titulo = CroquiService._render_header(size)
         grid = CroquiService._render_grid(size)
         footer = CroquiService._render_footer(size)
@@ -606,9 +720,9 @@ class CroquiService:
             escala_aprox=escala_aprox,
         )
 
+        segmentos_svg = CroquiService._render_segment_labels(norm, geojson_normalizado)
         vertices_svg = CroquiService._render_vertices(norm)
         confrontantes_svg = CroquiService._render_confrontantes(confrontantes or [], norm)
-        segmentos_svg = CroquiService._render_segment_labels(norm, geojson_normalizado)
 
         draw_bounds = CroquiService._drawing_bounds(size)
 
@@ -633,12 +747,22 @@ class CroquiService:
     ry="8"
   />
 
-  <polygon points="{poly_points}" fill="rgba(15, 23, 42, 0.04)" stroke="#0F172A" stroke-width="4.5"/>
+  <!-- POLÍGONO PRINCIPAL (REFINADO) -->
+  <polygon
+    points="{poly_points}"
+    fill="rgba(15, 23, 42, 0.035)"
+    stroke="#0F172A"
+    stroke-width="3.2"
+    stroke-linejoin="round"
+  />
 
+  <!-- SEGMENTOS -->
   {segmentos_svg}
 
+  <!-- VÉRTICES -->
   {vertices_svg}
 
+  <!-- CONFRONTANTES -->
   {confrontantes_svg}
 
   {north}

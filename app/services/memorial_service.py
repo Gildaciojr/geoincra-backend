@@ -447,45 +447,46 @@ class MemorialService:
             confrontante_trecho = _resolver_confrontante_segmento(i + 1)
 
             # =====================================================
-            # TEXTO DE ABERTURA (PADRÃO TÉCNICO)
+            # ABERTURA PADRÃO TÉCNICO PROFISSIONAL
             # =====================================================
             if i == 0:
                 inicio_texto = (
-                    f"{i + 1:02d}. Inicia-se no vértice {de_vertice},"
+                    f"{i + 1:02d}. Inicia-se no vértice {de_vertice}, "
                 )
             else:
                 inicio_texto = (
-                    f"{i + 1:02d}. Do vértice {de_vertice},"
+                    f"{i + 1:02d}. Do vértice {de_vertice}, "
                 )
 
             # =====================================================
-            # CONFRONTANTE
+            # CONFRONTANTE (PADRÃO DOCUMENTAL)
             # =====================================================
             if confrontante_trecho:
                 trecho_confrontante = (
-                    f" confrontando neste trecho com {confrontante_trecho},"
+                    f"confrontando neste segmento com {confrontante_trecho}, "
                 )
             else:
                 trecho_confrontante = ""
 
             # =====================================================
-            # DESCRIÇÃO TÉCNICA DO SEGMENTO
+            # DESCRIÇÃO TÉCNICA (REFINADA)
             # =====================================================
             descricao_segmento = (
-                f" segue com azimute de {az_dms} ({az:.4f}°), "
-                f"rumo {rumo}, "
-                f"por uma distância de {dist:.3f} metros"
+                f"segue com azimute de {az_dms} ({az:.4f}°), "
+                f"equivalente ao rumo {rumo}, "
+                f"percorrendo uma distância de {dist:.3f} metros"
             )
 
             # =====================================================
-            # FECHAMENTO DO TRECHO
+            # FECHAMENTO DO TRECHO (PADRÃO PROFISSIONAL)
             # =====================================================
             if i + 1 < len(segmentos):
                 fechamento_texto = f", até o vértice {ate_vertice}."
             else:
                 fechamento_texto = (
                     f", até o vértice {ate_vertice}, "
-                    f"ponto inicial desta descrição perimetral."
+                    f"ponto inicial desta descrição, "
+                    f"fechando assim o perímetro da área."
                 )
 
             # =====================================================
@@ -528,29 +529,42 @@ class MemorialService:
         # CABEÇALHO DESCRITIVO (PADRÃO TÉCNICO PROFISSIONAL)
         # =========================================================
         cabecalho_linhas: List[str] = [
-            "MEMORIAL DESCRITIVO",
+            "==========================================================",
+            "MEMORIAL DESCRITIVO GEORREFERENCIADO",
+            "==========================================================",
             "",
         ]
 
         if nome_imovel:
             cabecalho_linhas.append(
-                f"Imóvel: {' '.join(str(nome_imovel).strip().split())}"
+                f"IMÓVEL: {' '.join(str(nome_imovel).strip().upper().split())}"
             )
 
         cabecalho_linhas.extend(
             [
+                "",
+                "----------------------------------------------------------",
+                "IDENTIFICAÇÃO E REFERÊNCIA TÉCNICA",
+                "----------------------------------------------------------",
+                "",
                 "Descrição técnica do perímetro do imóvel georreferenciado, "
                 "elaborada a partir de dados processados por sistema técnico especializado, "
                 "com base nas informações fornecidas e analisadas.",
                 "",
-                f"Sistema de referência: {tipo}",
-                f"Sistema projetado (UTM): {epsg_utm or 'N/A'}",
+                f"Sistema de Referência: {tipo}",
+                f"Sistema Projetado (UTM): {epsg_utm or 'N/A'}",
                 "",
-                f"Área total: {area_hectares_final:.4f} hectares",
-                f"Perímetro total: {perimetro_m_final:.3f} metros",
-                f"Erro de fechamento linear: {erro_perimetro:.4f} metros",
+                "----------------------------------------------------------",
+                "DADOS TÉCNICOS",
+                "----------------------------------------------------------",
                 "",
-                "DESCRIÇÃO PERIMETRAL:",
+                f"Área Total:            {area_hectares_final:.4f} ha",
+                f"Perímetro Total:       {perimetro_m_final:.3f} m",
+                f"Erro de Fechamento:    {erro_perimetro:.4f} m",
+                "",
+                "----------------------------------------------------------",
+                "DESCRIÇÃO PERIMETRAL",
+                "----------------------------------------------------------",
                 "",
             ]
         )
@@ -559,10 +573,16 @@ class MemorialService:
         # FECHAMENTO PROFISSIONAL (PADRÃO DOCUMENTAL)
         # =========================================================
         fechamento_final = (
+            "----------------------------------------------------------\n"
+            "CONCLUSÃO TÉCNICA\n"
+            "----------------------------------------------------------\n\n"
             "O perímetro acima descrito define a poligonal do imóvel, "
             "encerrando-se no vértice inicial, com fechamento geométrico compatível "
-            "com os dados processados, não sendo constatadas discrepâncias relevantes "
-            "que comprometam sua integridade técnica."
+            "com os dados processados. Não foram constatadas discrepâncias relevantes "
+            "que comprometam sua integridade técnica.\n\n"
+            "O presente memorial descritivo foi elaborado conforme critérios técnicos "
+            "de georreferenciamento, estando apto para fins de registro, certificação "
+            "ou demais finalidades legais aplicáveis."
         )
 
         # =========================================================

@@ -16,11 +16,11 @@ class CadExportService:
     # CONFIGURAÇÕES TÉCNICAS
     # =========================================================
 
-    VERTEX_TEXT_HEIGHT = 2.0
-    CONFRONTANTE_TEXT_HEIGHT = 2.2
+    VERTEX_TEXT_HEIGHT = 1.6
+    CONFRONTANTE_TEXT_HEIGHT = 1.8
     CONFRONTANTE_OFFSET_BASE = 2.5
     CONFRONTANTE_OFFSET_STEP = 1.5
-    SEGMENT_LABEL_TEXT_HEIGHT = 2.0
+    SEGMENT_LABEL_TEXT_HEIGHT = 1.5
 
     # =========================================================
     # HELPERS
@@ -224,13 +224,13 @@ class CadExportService:
             p1 = coords[i]
             p2 = coords[i + 1]
 
-            dx = float(p2[0]) - float(p1[0])
-            dy = float(p2[1]) - float(p1[1])
-
             distancia = CadExportService._distancia(p1, p2)
 
             if distancia <= 0:
                 continue
+
+            dx = float(p2[0]) - float(p1[0])
+            dy = float(p2[1]) - float(p1[1])
 
             azimute = math.degrees(math.atan2(dx, dy))
             if azimute < 0:
@@ -241,19 +241,18 @@ class CadExportService:
             mx, my = CadExportService._segment_midpoint(p1, p2)
             nx, ny = CadExportService._vetor_normal_unitario(p1, p2)
 
-            # deslocamento técnico mais sutil para labels dos segmentos
-            offset = 1.2
+            # 🔥 OFFSET MAIS SUAVE (MENOS POLUIÇÃO)
+            offset = 0.9
 
             px = mx + (nx * offset)
             py = my + (ny * offset)
 
             angulo = CadExportService._calcular_angulo_segmento(p1, p2)
 
-            texto = (
-                f"D={distancia:.2f}m | "
-                f"Az={azimute:.2f}° | "
-                f"{rumo}"
-            )
+            # =========================================================
+            # 🔥 TEXTO PROFISSIONAL (REDUZIDO E LIMPO)
+            # =========================================================
+            texto = f"{distancia:.2f} m"
 
             comandos.append("._TEXT")
             comandos.append(f"{px:.6f},{py:.6f}")
@@ -300,7 +299,7 @@ class CadExportService:
         texto_final = texto_principal
 
         if complemento:
-            texto_final += " - " + " - ".join(complemento)
+            texto_final += " | " + " | ".join(complemento)
 
         return CadExportService._escape_scr_text(texto_final)
 

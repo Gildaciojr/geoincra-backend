@@ -53,17 +53,66 @@ class CsvExportService:
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
+        # =========================================================
+        # CABEÇALHO PROFISSIONAL
+        # =========================================================
+        agora = datetime.utcnow()
+
+        header = [
+            "############################################################",
+            "# RELATÓRIO DE COORDENADAS - GEOINCRA",
+            f"# GERADO EM: {agora.strftime('%d/%m/%Y %H:%M:%S')} UTC",
+            f"# TOTAL DE VÉRTICES: {len(coords) - 1}",
+            "# FORMATO: VERTICE, ORDEM, X, Y",
+            "############################################################",
+            "",
+        ]
+
+        # =========================================================
+        # TABELA CSV (MANTIDA PARA COMPATIBILIDADE)
+        # =========================================================
         lines = ["VERTICE,ORDEM,X,Y"]
 
         for i, (x, y) in enumerate(coords[:-1], start=1):
             lines.append(f"V{i},{i},{x:.6f},{y:.6f}")
 
-        # linha de fechamento explícita
+        # fechamento explícito
         x0, y0 = coords[0]
         lines.append(f"V1_FECHAMENTO,{len(coords)},{x0:.6f},{y0:.6f}")
 
-        return "\n".join(lines)
+        # =========================================================
+        # TABELA VISUAL (LEITURA HUMANA)
+        # =========================================================
+        tabela_visual = [
+            "",
+            "------------------------------------------------------------",
+            "TABELA DE COORDENADAS (FORMATO LEGÍVEL)",
+            "------------------------------------------------------------",
+            "",
+            f"{'VERTICE':<10} {'ORDEM':<8} {'X (m)':<15} {'Y (m)':<15}",
+            "------------------------------------------------------------",
+        ]
 
+        for i, (x, y) in enumerate(coords[:-1], start=1):
+            tabela_visual.append(
+                f"{f'V{i}':<10} {i:<8} {x:<15.6f} {y:<15.6f}"
+            )
+
+        tabela_visual.append(
+            f"{'V1 (FECH)':<10} {len(coords):<8} {x0:<15.6f} {y0:<15.6f}"
+        )
+
+        # =========================================================
+        # TEXTO FINAL
+        # =========================================================
+        return "\n".join(
+            [
+                *header,
+                *lines,
+                *tabela_visual,
+            ]
+        )
+    
     @staticmethod
     def salvar_csv(
         imovel_id: int,

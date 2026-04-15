@@ -30,6 +30,7 @@ odfpy
 
 # CAD
  ezdxf
+ cairosvg
 
 # SHP / GIS
  fiona
