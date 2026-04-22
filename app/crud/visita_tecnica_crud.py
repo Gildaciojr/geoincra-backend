@@ -41,7 +41,7 @@ def criar_visita(
             and_(
                 VisitaTecnica.profissional_id == profissional_id,
                 VisitaTecnica.data_agendada == data.data_agendada,
-                VisitaTecnica.status != "CANCELADA",
+                VisitaTecnica.status != "Concluído",
             )
         )
         .first()
@@ -56,7 +56,7 @@ def criar_visita(
         profissional_id=profissional_id,
         data_agendada=data.data_agendada,
         observacoes=data.observacoes,
-        status="PENDENTE",
+        status="Pendente",
     )
 
     db.add(visita)
@@ -135,7 +135,7 @@ def atualizar_visita(
                     VisitaTecnica.profissional_id == visita.profissional_id,
                     VisitaTecnica.data_agendada == payload["data_agendada"],
                     VisitaTecnica.id != visita.id,
-                    VisitaTecnica.status != "CANCELADA",
+                    VisitaTecnica.status != "Concluído",
                 )
             )
             .first()

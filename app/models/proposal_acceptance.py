@@ -44,7 +44,7 @@ class ProposalAcceptanceService:
             valor=proposal.total,
             total=proposal.total,
             tipo="ENTRADA",
-            status="PENDENTE",
+            status="Pendente",
             modelo="100",  # Checkout Pro
             data_vencimento=datetime.utcnow() + timedelta(days=2),
             bloqueia_fluxo=True,

@@ -22,7 +22,7 @@ def criar_pagamento_para_proposta(
         valor=float(proposal.total),
         total=float(proposal.total),
         tipo="ENTRADA",
-        status="PENDENTE",
+        status="Pendente",
         modelo="100",  # compatível com PagamentoService.MODELOS_PADRAO
         data_vencimento=datetime.utcnow() + timedelta(days=7),
         bloqueia_fluxo=True,

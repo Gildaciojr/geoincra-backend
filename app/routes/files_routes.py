@@ -43,14 +43,16 @@ def download_document(
 
 
 # =========================================================
-# DOWNLOAD DE PDF DE PROPOSTAS / CONTRATOS (PÚBLICO + SEGURO)
+# DOWNLOAD DE PDF (ORÇAMENTOS / PROPOSTAS / CONTRATOS)
 # =========================================================
 @router.get("/pdf")
 def download_pdf(
     path: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    # 🔒 Normaliza e protege contra path traversal
+    # =========================================================
+    # 🔒 NORMALIZA CAMINHO (ANTI PATH TRAVERSAL)
+    # =========================================================
     file_path = (BASE_UPLOAD_PATH / path).resolve()
 
     if not str(file_path).startswith(str(BASE_UPLOAD_PATH)):
@@ -59,22 +61,52 @@ def download_pdf(
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
-    # 🔒 Exige estrutura: propostas/project_{id}/arquivo.pdf
+    # =========================================================
+    # 🔒 VALIDAÇÃO DE ESTRUTURA
+    # =========================================================
     parts = Path(path).parts
-    if len(parts) < 3 or parts[0] != "propostas" or not parts[1].startswith("project_"):
+
+    if len(parts) < 3:
         raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
 
-    project_id_str = parts[1].replace("project_", "")
+    # 🔥 PERMITE MÚLTIPLOS TIPOS CONTROLADOS
+    tipo_pasta = parts[0]
+
+    if tipo_pasta not in [
+        "propostas",
+        "orcamentos",
+        # pronto para expansão futura:
+        # "contratos",
+        # "relatorios",
+    ]:
+        raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
+
+    # =========================================================
+    # 🔒 VALIDA project_id
+    # =========================================================
+    project_folder = parts[1]
+
+    if not project_folder.startswith("project_"):
+        raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
+
+    project_id_str = project_folder.replace("project_", "")
+
     if not project_id_str.isdigit():
         raise HTTPException(status_code=403, detail="Acesso inválido ao arquivo")
 
     project_id = int(project_id_str)
 
-    # 🔒 Garante que o projeto existe
+    # =========================================================
+    # 🔒 GARANTE EXISTÊNCIA DO PROJETO
+    # =========================================================
     project = db.query(Project).filter(Project.id == project_id).first()
+
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
+    # =========================================================
+    # 📄 RETORNO DO ARQUIVO
+    # =========================================================
     return FileResponse(
         path=str(file_path),
         media_type="application/pdf",
