@@ -72,7 +72,7 @@ def criar_visita(
             f"Profissional ID {profissional_id} agendado "
             f"para {data.data_agendada.strftime('%d/%m/%Y %H:%M')}"
         ),
-        status="visita_agendada",
+        status="Pendente",
     )
 
     return visita
@@ -164,7 +164,7 @@ def atualizar_visita(
                 project_id=visita.project_id,
                 titulo="Visita técnica realizada",
                 descricao=f"Visita ID {visita.id} concluída com sucesso.",
-                status="visita_realizada",
+                status="Concluído",
             )
 
         elif payload["status"] == "CANCELADA":
@@ -173,7 +173,7 @@ def atualizar_visita(
                 project_id=visita.project_id,
                 titulo="Visita técnica cancelada",
                 descricao=f"Visita ID {visita.id} foi cancelada.",
-                status="visita_cancelada",
+                status="Concluído",
             )
 
         elif payload["status"] == "CONFIRMADA":
@@ -182,7 +182,7 @@ def atualizar_visita(
                 project_id=visita.project_id,
                 titulo="Visita técnica confirmada",
                 descricao=f"Visita ID {visita.id} confirmada.",
-                status="visita_confirmada",
+                status="Em Andamento",
             )
 
     return visita
