@@ -12,7 +12,16 @@ class TimelineBase(BaseModel):
 
 
 class TimelineCreate(TimelineBase):
-    project_id: int
+    """
+    ⚠️ IMPORTANTE:
+    NÃO contém project_id.
+
+    O project_id vem exclusivamente pela rota:
+    /projects/{project_id}/timeline
+
+    Isso evita inconsistência e conflitos de dados.
+    """
+    pass
 
 
 class TimelineResponse(TimelineBase):

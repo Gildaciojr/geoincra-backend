@@ -22,6 +22,8 @@ class Confrontante(Base):
         Index("ix_confrontantes_geometria_id", "geometria_id"),
         Index("ix_confrontantes_direcao_normalizada", "direcao_normalizada"),
         Index("ix_confrontantes_ordem_segmento", "ordem_segmento"),
+        # 🔥 novo índice para vínculo futuro
+        Index("ix_confrontantes_matricula_id", "matricula_id"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -29,7 +31,6 @@ class Confrontante(Base):
     # =========================================================
     # RELACIONAMENTOS PRINCIPAIS
     # =========================================================
-    # Imóvel ao qual o confrontante pertence
     imovel_id = Column(
         Integer,
         ForeignKey("imoveis.id", ondelete="CASCADE"),
@@ -37,7 +38,6 @@ class Confrontante(Base):
         index=True,
     )
 
-    # Geometria usada para associar o confrontante ao perímetro analisado
     geometria_id = Column(
         Integer,
         ForeignKey("geometrias.id", ondelete="SET NULL"),
@@ -45,34 +45,34 @@ class Confrontante(Base):
         index=True,
     )
 
+    # 🔥 NOVO — vínculo estruturado com matrícula real
+    matricula_id = Column(
+        Integer,
+        ForeignKey("matriculas.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # =========================================================
-    # DADOS DE POSICIONAMENTO / VÍNCULO TÉCNICO
+    # POSICIONAMENTO TÉCNICO
     # =========================================================
-    # Direção original vinda do OCR / usuário
-    # Ex.: NORTE, SUL, LESTE, OESTE, NE, NO, SE, SO
     direcao = Column(
         String(20),
         nullable=False,
     )
 
-    # Direção normalizada técnica
-    # Ex.: N, S, E, W, NE, NW, SE, SW
     direcao_normalizada = Column(
         String(10),
         nullable=True,
         index=True,
     )
 
-    # Ordem do segmento/lado dentro do polígono
-    # Ex.: 1, 2, 3, 4...
     ordem_segmento = Column(
         Integer,
         nullable=True,
         index=True,
     )
 
-    # Rótulo visual/técnico do lado
-    # Ex.: LADO_01, LADO_02...
     lado_label = Column(
         String(30),
         nullable=True,
@@ -86,33 +86,45 @@ class Confrontante(Base):
         nullable=True,
     )
 
-    # Matrícula do imóvel confrontante, quando existir
+    # 🔥 MANTIDO (legado)
     matricula_confrontante = Column(
         String(100),
         nullable=True,
     )
 
-    # Identificação textual do imóvel confrontante
     identificacao_imovel_confrontante = Column(
         String(512),
         nullable=True,
     )
 
-    # Descrição livre
-    # Ex.: estrada vicinal, rio, área pública, reserva legal
     descricao = Column(
         Text,
         nullable=True,
     )
 
-    # Observação técnica complementar
     observacoes = Column(
         Text,
         nullable=True,
     )
 
+    # 🔥 NOVOS CAMPOS (sem quebrar nada)
+    tipo = Column(
+        String(100),
+        nullable=True,
+    )
+
+    lote = Column(
+        String(100),
+        nullable=True,
+    )
+
+    gleba = Column(
+        String(100),
+        nullable=True,
+    )
+
     # =========================================================
-    # METADADOS TEMPORAIS
+    # METADADOS
     # =========================================================
     created_at = Column(
         DateTime(timezone=True),
@@ -141,11 +153,18 @@ class Confrontante(Base):
         lazy="joined",
     )
 
+    # 🔥 novo relacionamento
+    matricula = relationship(
+        "Matricula",
+        lazy="joined",
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Confrontante id={self.id} "
             f"imovel_id={self.imovel_id} "
             f"geometria_id={self.geometria_id} "
+            f"matricula_id={self.matricula_id} "
             f"direcao={self.direcao} "
             f"direcao_normalizada={self.direcao_normalizada} "
             f"ordem_segmento={self.ordem_segmento}>"

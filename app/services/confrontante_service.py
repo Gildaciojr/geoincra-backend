@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any, Optional
 
-from shapely.geometry import Polygon, shape
+from shapely.geometry import Polygon
 from sqlalchemy.orm import Session
 
 from app.models.confrontante import Confrontante
 from app.models.geometria import Geometria
-from app.services.geometria_service import GeometriaService
 from app.models.imovel import Imovel
+from app.services.geometria_service import GeometriaService
 
 
 class ConfrontanteService:
@@ -25,6 +26,20 @@ class ConfrontanteService:
         "SW",
     }
 
+    TERMOS_INSTITUCIONAIS_INVALIDOS = {
+        "CARTORIO",
+        "CARTÓRIO",
+        "REGISTRO DE IMOVEIS",
+        "REGISTRO DE IMÓVEIS",
+        "OFICIO",
+        "OFÍCIO",
+        "COMARCA",
+        "LIVRO",
+        "FOLHA",
+        "MATRICULA",
+        "MATRÍCULA",
+    }
+
     @staticmethod
     def _normalizar_texto(valor: Any) -> Optional[str]:
         if valor is None:
@@ -36,13 +51,106 @@ class ConfrontanteService:
 
         texto = " ".join(texto.split())
 
-        # 🔥 limpeza leve para OCR real
+        # limpeza leve para OCR real
         texto = (
             texto.replace(" ,", ",")
             .replace(" .", ".")
             .replace(" ;", ";")
             .replace(" :", ":")
         )
+
+        return texto or None
+
+    @staticmethod
+    def _normalizar_texto_upper_sem_acentos(valor: Any) -> Optional[str]:
+        texto = ConfrontanteService._normalizar_texto(valor)
+        if not texto:
+            return None
+
+        return (
+            texto.upper()
+            .replace("-", " ")
+            .replace("_", " ")
+            .replace("Ç", "C")
+            .replace("Ã", "A")
+            .replace("Á", "A")
+            .replace("À", "A")
+            .replace("Â", "A")
+            .replace("Ä", "A")
+            .replace("É", "E")
+            .replace("È", "E")
+            .replace("Ê", "E")
+            .replace("Ë", "E")
+            .replace("Í", "I")
+            .replace("Ì", "I")
+            .replace("Î", "I")
+            .replace("Ï", "I")
+            .replace("Ó", "O")
+            .replace("Ò", "O")
+            .replace("Ô", "O")
+            .replace("Õ", "O")
+            .replace("Ö", "O")
+            .replace("Ú", "U")
+            .replace("Ù", "U")
+            .replace("Û", "U")
+            .replace("Ü", "U")
+        )
+
+    @staticmethod
+    def _somente_digitos(valor: Any) -> str:
+        return re.sub(r"\D", "", str(valor or ""))
+
+    @staticmethod
+    def _normalizar_matricula(valor: Any) -> Optional[str]:
+        texto = ConfrontanteService._normalizar_texto(valor)
+        if not texto:
+            return None
+
+        texto = re.sub(r"(?i)\bmatr[íi]cula\b[:\s\-#]*", "", texto)
+        texto = re.sub(r"(?i)\bn[ºo°]?\b[:\s\-]*", "", texto)
+        texto = texto.strip()
+        texto = re.sub(r"[^\d./\-]", "", texto)
+
+        return texto or None
+
+    @staticmethod
+    def _is_texto_institucional(valor: Any) -> bool:
+        texto = ConfrontanteService._normalizar_texto_upper_sem_acentos(valor)
+        if not texto:
+            return False
+
+        return any(
+            termo in texto
+            for termo in ConfrontanteService.TERMOS_INSTITUCIONAIS_INVALIDOS
+        )
+
+    @staticmethod
+    def _normalizar_nome_confrontante(valor: Any) -> Optional[str]:
+        texto = ConfrontanteService._normalizar_texto(valor)
+        if not texto:
+            return None
+
+        if ConfrontanteService._is_texto_institucional(texto):
+            return None
+
+        return texto.upper()
+
+    @staticmethod
+    def _normalizar_identificacao_imovel(valor: Any) -> Optional[str]:
+        texto = ConfrontanteService._normalizar_texto(valor)
+        if not texto:
+            return None
+
+        return texto
+
+    @staticmethod
+    def _normalizar_descricao_confrontante(valor: Any) -> Optional[str]:
+        texto = ConfrontanteService._normalizar_texto(valor)
+        if not texto:
+            return None
+
+        if ConfrontanteService._is_texto_institucional(texto):
+            return None
 
         return texto
 
@@ -99,7 +207,7 @@ class ConfrontanteService:
         )
 
     # =========================================================
-    # 🔥 PARSER ROBUSTO DE GEOJSON
+    # PARSER ROBUSTO DE GEOJSON
     # =========================================================
     @staticmethod
     def _parse_polygon_geojson(geojson: Any) -> Polygon:
@@ -112,6 +220,8 @@ class ConfrontanteService:
 
                 if tipo == "FeatureCollection":
                     features = geojson.get("features") or []
+                    if not features:
+                        raise ValueError("FeatureCollection sem features.")
                     geojson = features[0]["geometry"]
 
                 elif tipo == "Feature":
@@ -123,7 +233,7 @@ class ConfrontanteService:
             raise ValueError("GeoJSON inválido para confrontantes.") from exc
 
     # =========================================================
-    # 🔥 DIREÇÃO DO SEGMENTO (GEOMÉTRICO)
+    # DIREÇÃO DO SEGMENTO (GEOMÉTRICO)
     # =========================================================
     @staticmethod
     def _segmento_direcao(
@@ -159,7 +269,6 @@ class ConfrontanteService:
 
         return "N" if dy >= 0 else "S"
 
-    # 🔥 distância euclidiana
     @staticmethod
     def _distancia(
         p1: tuple[float, float],
@@ -168,24 +277,18 @@ class ConfrontanteService:
         dx = float(p2[0]) - float(p1[0])
         dy = float(p2[1]) - float(p1[1])
         return math.sqrt((dx * dx) + (dy * dy))
-
+    
     @staticmethod
     def _extrair_segmentos_geometria(geometria: Geometria) -> list[dict[str, Any]]:
 
         if not geometria or not geometria.geojson:
             return []
 
-        # =========================================================
-        # 🔥 FONTE ÚNICA DE VERDADE → GeometriaService
-        # =========================================================
         segmentos_base = GeometriaService.extract_segmentos(geometria.geojson)
 
         if not segmentos_base:
             return []
 
-        # =========================================================
-        # 🔥 CENTROIDE PARA DIREÇÃO
-        # =========================================================
         try:
             geom = ConfrontanteService._parse_polygon_geojson(geometria.geojson)
             center = geom.centroid
@@ -197,9 +300,6 @@ class ConfrontanteService:
 
         segmentos: list[dict[str, Any]] = []
 
-        # =========================================================
-        # 🔥 ENRIQUECIMENTO DOS SEGMENTOS
-        # =========================================================
         for seg in segmentos_base:
 
             try:
@@ -207,15 +307,13 @@ class ConfrontanteService:
                 y1 = float(seg["ponto_inicial"]["y"])
                 x2 = float(seg["ponto_final"]["x"])
                 y2 = float(seg["ponto_final"]["y"])
+                indice = int(seg.get("indice"))
             except Exception:
                 continue
 
             midx = (x1 + x2) / 2.0
             midy = (y1 + y2) / 2.0
 
-            # =====================================================
-            # DIREÇÃO GEOMÉTRICA
-            # =====================================================
             direcao = ConfrontanteService._segmento_direcao(
                 midx=midx,
                 midy=midy,
@@ -230,8 +328,8 @@ class ConfrontanteService:
 
             segmentos.append(
                 {
-                    "ordem_segmento": int(seg.get("indice")),
-                    "lado_label": f"LADO_{int(seg.get('indice')):02d}",
+                    "ordem_segmento": indice,
+                    "lado_label": f"LADO_{indice:02d}",
                     "direcao_normalizada": direcao,
                     "p1": (x1, y1),
                     "p2": (x2, y2),
@@ -240,6 +338,9 @@ class ConfrontanteService:
                 }
             )
 
+        # 🔥 garantir ordem consistente
+        segmentos.sort(key=lambda s: s["ordem_segmento"])
+
         return segmentos
 
     @staticmethod
@@ -247,6 +348,9 @@ class ConfrontanteService:
         if not isinstance(item, dict):
             return None
 
+        # =========================================================
+        # DIREÇÃO
+        # =========================================================
         direcao_original = (
             item.get("direcao")
             or item.get("lado")
@@ -254,39 +358,65 @@ class ConfrontanteService:
 
         direcao_normalizada = ConfrontanteService._normalizar_direcao(direcao_original)
 
-        nome = ConfrontanteService._normalizar_texto(item.get("nome"))
-        descricao = ConfrontanteService._normalizar_texto(item.get("descricao"))
+        # =========================================================
+        # CAMPOS BRUTOS
+        # =========================================================
+        nome_raw = item.get("nome")
+        descricao_raw = item.get("descricao")
 
-        matricula = ConfrontanteService._normalizar_texto(
+        matricula_raw = (
             item.get("matricula")
             or item.get("numero_matricula")
         )
 
-        identificacao = ConfrontanteService._normalizar_texto(
+        identificacao_raw = (
             item.get("identificacao")
             or item.get("identificacao_imovel")
             or item.get("imovel")
         )
 
-        # 🔥 NOVO — preservar dados enriquecidos
+        # =========================================================
+        # NORMALIZAÇÃO FORTE
+        # =========================================================
+        nome = ConfrontanteService._normalizar_nome_confrontante(nome_raw)
+        descricao = ConfrontanteService._normalizar_descricao_confrontante(descricao_raw)
+        matricula = ConfrontanteService._normalizar_matricula(matricula_raw)
+        identificacao = ConfrontanteService._normalizar_identificacao_imovel(identificacao_raw)
+
+        # =========================================================
+        # DADOS COMPLEMENTARES
+        # =========================================================
         tipo = ConfrontanteService._normalizar_texto(item.get("tipo"))
         lote = ConfrontanteService._normalizar_texto(item.get("lote"))
         gleba = ConfrontanteService._normalizar_texto(item.get("gleba"))
 
-        # 🔥 validação mínima
-        if not nome and not descricao and not matricula and not identificacao:
+        # =========================================================
+        # VALIDAÇÃO SEMÂNTICA REAL
+        # =========================================================
+        if not any([nome, descricao, matricula, identificacao]):
             return None
 
-        # 🔥 NORMALIZAÇÃO FORTE (PADRÃO GLOBAL DO SISTEMA)
+        # =========================================================
+        # PROTEÇÃO CONTRA LIXO OCR
+        # =========================================================
+        if nome and ConfrontanteService._is_texto_institucional(nome):
+            nome = None
+
+        if descricao and ConfrontanteService._is_texto_institucional(descricao):
+            descricao = None
+
+        # revalida após limpeza
+        if not any([nome, descricao, matricula, identificacao]):
+            return None
+
+        # =========================================================
+        # PADRONIZAÇÃO FINAL
+        # =========================================================
         if nome:
             nome = nome.strip().upper()
 
         if descricao:
             descricao = descricao.strip()
-
-        # 🔥 GARANTIR DIREÇÃO
-        if not direcao_normalizada:
-            direcao_normalizada = None  # será resolvido depois via geometria
 
         return {
             "direcao": ConfrontanteService._normalizar_texto(direcao_original) or "NAO_INFORMADO",
@@ -307,27 +437,42 @@ class ConfrontanteService:
         usados: set[int],
     ) -> Optional[dict[str, Any]]:
 
+        if not segmentos_disponiveis:
+            return None
+
         # =========================================================
-        # 🔥 PRIORIDADE 1 — MATCH EXATO DE DIREÇÃO
+        # PRIORIDADE 1 — MATCH EXATO DE DIREÇÃO
         # =========================================================
         if direcao_normalizada:
-            candidatos = [
-                seg for seg in segmentos_disponiveis
-                if seg["ordem_segmento"] not in usados
-                and seg["direcao_normalizada"] == direcao_normalizada
-            ]
+            candidatos = []
+
+            for seg in segmentos_disponiveis:
+                try:
+                    if (
+                        seg.get("ordem_segmento") not in usados
+                        and seg.get("direcao_normalizada") == direcao_normalizada
+                    ):
+                        candidatos.append(seg)
+                except Exception:
+                    continue
 
             if candidatos:
-                # 🔥 escolhe o maior segmento (mais representativo)
-                candidatos.sort(key=lambda s: s.get("comprimento", 0), reverse=True)
+                # maior segmento = mais representativo
+                candidatos.sort(
+                    key=lambda s: s.get("comprimento") or 0,
+                    reverse=True
+                )
                 return candidatos[0]
 
         # =========================================================
-        # 🔥 PRIORIDADE 2 — PRIMEIRO DISPONÍVEL
+        # PRIORIDADE 2 — MATCH POR PROXIMIDADE (fallback inteligente)
         # =========================================================
         for seg in segmentos_disponiveis:
-            if seg["ordem_segmento"] not in usados:
-                return seg
+            try:
+                if seg.get("ordem_segmento") not in usados:
+                    return seg
+            except Exception:
+                continue
 
         return None
 
@@ -338,8 +483,12 @@ class ConfrontanteService:
         if not texto:
             return []
 
+        texto = str(texto)
         texto_upper = texto.upper()
 
+        # =========================================================
+        # REGEX BASE (direções)
+        # =========================================================
         padrao = re.findall(
             r"(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE)\s*[:\-]\s*(.*?)(?=(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE|$))",
             texto_upper,
@@ -349,14 +498,60 @@ class ConfrontanteService:
         confrontantes = []
 
         for direcao, conteudo, _ in padrao:
+
             descricao = conteudo.strip()
 
             if not descricao:
                 continue
 
+            # =====================================================
+            # LIMPEZA BÁSICA
+            # =====================================================
+            descricao = " ".join(descricao.split())
+
+            # remove múltiplos separadores
+            descricao = re.sub(r"\s{2,}", " ", descricao)
+
+            # =====================================================
+            # EXTRAÇÃO DE MATRÍCULA (se existir)
+            # =====================================================
+            matricula_match = re.search(
+                r"\b\d{1,6}[/\.-]?\d{0,4}\b",
+                descricao
+            )
+
+            matricula = None
+
+            if matricula_match:
+                matricula = matricula_match.group(0)
+
+            # =====================================================
+            # REMOÇÃO DE TERMOS INSTITUCIONAIS
+            # =====================================================
+            termos_ruins = [
+                "CARTORIO",
+                "CARTÓRIO",
+                "REGISTRO DE IMOVEIS",
+                "REGISTRO DE IMÓVEIS",
+                "OFICIO",
+                "OFÍCIO",
+                "COMARCA",
+            ]
+
+            descricao_limpa = descricao
+
+            for termo in termos_ruins:
+                descricao_limpa = descricao_limpa.replace(termo, "")
+
+            descricao_limpa = descricao_limpa.strip(" -,:;")
+
+            if not descricao_limpa and not matricula:
+                continue
+
             confrontantes.append({
                 "direcao": direcao,
-                "descricao": descricao,
+                "descricao": descricao_limpa or descricao,
+                "matricula": matricula,
             })
 
         return confrontantes
@@ -378,7 +573,9 @@ class ConfrontanteService:
                 texto_base = None
 
             if texto_base:
-                confrontantes_ocr = ConfrontanteService.extrair_confrontantes_do_texto(texto_base)
+                confrontantes_ocr = ConfrontanteService.extrair_confrontantes_do_texto(
+                    texto_base
+                )
 
         if not confrontantes_ocr:
             return []
@@ -388,17 +585,140 @@ class ConfrontanteService:
 
         segmentos = ConfrontanteService._extrair_segmentos_geometria(geometria)
 
+        # =========================================================
+        # NORMALIZAÇÃO + DEDUPLICAÇÃO DO LOTE OCR
+        # =========================================================
         itens_normalizados: list[dict[str, Any]] = []
+        chaves_lote: set[tuple[str, str, str, str, str]] = set()
+
         for item in confrontantes_ocr:
             normalizado = ConfrontanteService._normalizar_item_confrontante(item)
-            if normalizado:
-                itens_normalizados.append(normalizado)
+            if not normalizado:
+                continue
+
+            chave_lote = (
+                str(normalizado.get("direcao") or "").strip().upper(),
+                str(normalizado.get("direcao_normalizada") or "").strip().upper(),
+                str(normalizado.get("nome_confrontante") or "").strip().upper(),
+                str(normalizado.get("matricula_confrontante") or "").strip().upper(),
+                str(normalizado.get("identificacao_imovel_confrontante") or "").strip().upper(),
+            )
+
+            if chave_lote in chaves_lote:
+                continue
+
+            chaves_lote.add(chave_lote)
+            itens_normalizados.append(normalizado)
 
         if not itens_normalizados:
             return []
 
         usados: set[int] = set()
         persistidos: list[Confrontante] = []
+
+        # =========================================================
+        # BASE ATUAL DO BANCO PARA O IMÓVEL
+        # =========================================================
+        confrontantes_existentes = (
+            db.query(Confrontante)
+            .filter(Confrontante.imovel_id == imovel.id)
+            .all()
+        )
+
+        def _safe_upper(valor: Any) -> str:
+            if valor is None:
+                return ""
+            return str(valor).strip().upper()
+
+        def _enriquecer_observacoes(item: dict[str, Any]) -> str:
+            observacoes_partes = ["Atualizado automaticamente via OCR/geometria"]
+
+            if item.get("tipo"):
+                observacoes_partes.append(f"TIPO={item.get('tipo')}")
+            if item.get("lote"):
+                observacoes_partes.append(f"LOTE={item.get('lote')}")
+            if item.get("gleba"):
+                observacoes_partes.append(f"GLEBA={item.get('gleba')}")
+
+            return " | ".join(observacoes_partes)
+
+        def _merge_texto(atual: Optional[str], novo: Optional[str]) -> Optional[str]:
+            atual_limpo = ConfrontanteService._normalizar_texto(atual)
+            novo_limpo = ConfrontanteService._normalizar_texto(novo)
+
+            if atual_limpo and novo_limpo:
+                # mantém o mais informativo
+                return novo_limpo if len(novo_limpo) > len(atual_limpo) else atual_limpo
+
+            return novo_limpo or atual_limpo
+
+        def _localizar_existente(
+            item: dict[str, Any],
+            ordem_segmento: Optional[int],
+            direcao_normalizada: Optional[str],
+            nome_confrontante: Optional[str],
+        ) -> Optional[Confrontante]:
+            # =====================================================
+            # 1. match por ordem_segmento (fonte mais forte)
+            # =====================================================
+            if ordem_segmento is not None:
+                for existente in confrontantes_existentes:
+                    if (
+                        existente.imovel_id == imovel.id
+                        and existente.ordem_segmento == ordem_segmento
+                    ):
+                        return existente
+
+            # =====================================================
+            # 2. match por geometria + direção normalizada
+            # =====================================================
+            if direcao_normalizada:
+                for existente in confrontantes_existentes:
+                    if (
+                        existente.imovel_id == imovel.id
+                        and existente.geometria_id == geometria.id
+                        and _safe_upper(existente.direcao_normalizada) == _safe_upper(direcao_normalizada)
+                    ):
+                        return existente
+
+            # =====================================================
+            # 3. match por matrícula confrontante
+            # =====================================================
+            if item.get("matricula_confrontante"):
+                for existente in confrontantes_existentes:
+                    if (
+                        existente.imovel_id == imovel.id
+                        and _safe_upper(existente.matricula_confrontante)
+                        == _safe_upper(item.get("matricula_confrontante"))
+                    ):
+                        return existente
+
+            # =====================================================
+            # 4. match por nome + identificação
+            # =====================================================
+            if nome_confrontante or item.get("identificacao_imovel_confrontante"):
+                for existente in confrontantes_existentes:
+                    if (
+                        existente.imovel_id == imovel.id
+                        and _safe_upper(existente.nome_confrontante) == _safe_upper(nome_confrontante)
+                        and _safe_upper(existente.identificacao_imovel_confrontante)
+                        == _safe_upper(item.get("identificacao_imovel_confrontante"))
+                    ):
+                        return existente
+
+            # =====================================================
+            # 5. match por nome + descrição
+            # =====================================================
+            if nome_confrontante or item.get("descricao"):
+                for existente in confrontantes_existentes:
+                    if (
+                        existente.imovel_id == imovel.id
+                        and _safe_upper(existente.nome_confrontante) == _safe_upper(nome_confrontante)
+                        and _safe_upper(existente.descricao) == _safe_upper(item.get("descricao"))
+                    ):
+                        return existente
+
+            return None
 
         for item in itens_normalizados:
 
@@ -421,62 +741,21 @@ class ConfrontanteService:
 
                 usados.add(segmento["ordem_segmento"])
 
-            # 🔥 fallback de segurança
             if not direcao_normalizada:
                 direcao_normalizada = "N"
 
-            if ordem_segmento is None and segmento:
-                ordem_segmento = segmento["ordem_segmento"]
-
-            # 🔥 normalização forte do nome
             nome_confrontante = item.get("nome_confrontante")
             if nome_confrontante:
                 nome_confrontante = nome_confrontante.strip().upper()
 
-            existente = None
+            observacoes_texto = _enriquecer_observacoes(item)
 
-            if ordem_segmento is not None:
-                existente = (
-                    db.query(Confrontante)
-                    .filter(
-                        Confrontante.imovel_id == imovel.id,
-                        Confrontante.ordem_segmento == ordem_segmento,
-                    )
-                    .first()
-                )
-
-            if not existente and direcao_normalizada:
-                existente = (
-                    db.query(Confrontante)
-                    .filter(
-                        Confrontante.imovel_id == imovel.id,
-                        Confrontante.geometria_id == geometria.id,
-                        Confrontante.direcao_normalizada == direcao_normalizada,
-                    )
-                    .first()
-                )
-
-            if not existente and (nome_confrontante or item.get("descricao")):
-                existente = (
-                    db.query(Confrontante)
-                    .filter(
-                        Confrontante.imovel_id == imovel.id,
-                        Confrontante.nome_confrontante == nome_confrontante,
-                        Confrontante.descricao == item.get("descricao"),
-                    )
-                    .first()
-                )
-
-            observacoes_partes = ["Atualizado automaticamente via OCR/geometria"]
-
-            if item.get("tipo"):
-                observacoes_partes.append(f"TIPO={item.get('tipo')}")
-            if item.get("lote"):
-                observacoes_partes.append(f"LOTE={item.get('lote')}")
-            if item.get("gleba"):
-                observacoes_partes.append(f"GLEBA={item.get('gleba')}")
-
-            observacoes_texto = " | ".join(observacoes_partes)
+            existente = _localizar_existente(
+                item=item,
+                ordem_segmento=ordem_segmento,
+                direcao_normalizada=direcao_normalizada,
+                nome_confrontante=nome_confrontante,
+            )
 
             if existente:
                 existente.geometria_id = geometria.id
@@ -484,11 +763,29 @@ class ConfrontanteService:
                 existente.direcao_normalizada = direcao_normalizada
                 existente.ordem_segmento = ordem_segmento
                 existente.lado_label = lado_label
-                existente.nome_confrontante = nome_confrontante
-                existente.matricula_confrontante = item.get("matricula_confrontante")
-                existente.identificacao_imovel_confrontante = item.get("identificacao_imovel_confrontante")
-                existente.descricao = item.get("descricao")
+
+                existente.nome_confrontante = _merge_texto(
+                    existente.nome_confrontante,
+                    nome_confrontante,
+                )
+
+                existente.matricula_confrontante = _merge_texto(
+                    existente.matricula_confrontante,
+                    item.get("matricula_confrontante"),
+                )
+
+                existente.identificacao_imovel_confrontante = _merge_texto(
+                    existente.identificacao_imovel_confrontante,
+                    item.get("identificacao_imovel_confrontante"),
+                )
+
+                existente.descricao = _merge_texto(
+                    existente.descricao,
+                    item.get("descricao"),
+                )
+
                 existente.observacoes = observacoes_texto
+
                 persistidos.append(existente)
                 continue
 
@@ -507,6 +804,9 @@ class ConfrontanteService:
             )
 
             db.add(novo)
+            db.flush()
+
+            confrontantes_existentes.append(novo)
             persistidos.append(novo)
 
         db.commit()
@@ -514,4 +814,16 @@ class ConfrontanteService:
         for item in persistidos:
             db.refresh(item)
 
-        return persistidos
+        # =========================================================
+        # GARANTIA FINAL — remove duplicados no retorno
+        # =========================================================
+        retorno_unico: list[Confrontante] = []
+        ids_vistos: set[int] = set()
+
+        for item in persistidos:
+            if item.id in ids_vistos:
+                continue
+            ids_vistos.add(item.id)
+            retorno_unico.append(item)
+
+        return retorno_unico

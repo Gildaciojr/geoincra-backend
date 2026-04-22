@@ -8,6 +8,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -22,11 +23,15 @@ class Matricula(Base):
             "numero_matricula",
             name="uq_imovel_numero_matricula",
         ),
+        # 🔥 novo índice para busca rápida global
+        Index("ix_matricula_numero_global", "numero_matricula"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # 🔗 Relações principais
+    # =========================================================
+    # RELAÇÕES PRINCIPAIS
+    # =========================================================
     imovel_id = Column(
         Integer,
         ForeignKey("imoveis.id", ondelete="CASCADE"),
@@ -41,10 +46,9 @@ class Matricula(Base):
         index=True,
     )
 
-    # ================================
+    # =========================================================
     # DADOS DA MATRÍCULA
-    # ================================
-
+    # =========================================================
     numero_matricula = Column(String(100), nullable=False, index=True)
     livro = Column(String(50), nullable=True)
     folha = Column(String(50), nullable=True)
@@ -55,21 +59,42 @@ class Matricula(Base):
     data_abertura = Column(Date, nullable=True)
     data_ultima_atualizacao = Column(Date, nullable=True)
 
-    # Inteiro teor / descrição registral
     inteiro_teor = Column(Text, nullable=True)
-
-    # Caminho do arquivo da matrícula (PDF / imagem)
     arquivo_path = Column(String(512), nullable=True)
 
-    # Situação registral
     status = Column(
         String(50),
         nullable=False,
-        default="ATIVA",  # ATIVA | CANCELADA | DESMEMBRADA | UNIFICADA
+        default="ATIVA",
     )
 
     observacoes = Column(Text, nullable=True)
 
+    # =========================================================
+    # 🔥 CAMPOS NOVOS (SEM QUEBRAR)
+    # =========================================================
+
+    # origem da matrícula (OCR / MANUAL / IMPORTADA)
+    origem = Column(
+        String(50),
+        nullable=True,
+    )
+
+    # área registrada oficial
+    area_registrada = Column(
+        String(100),
+        nullable=True,
+    )
+
+    # unidade da área registrada
+    unidade_area = Column(
+        String(20),
+        nullable=True,
+    )
+
+    # =========================================================
+    # METADADOS
+    # =========================================================
     created_at = Column(
         DateTime(timezone=True),
         default=datetime.utcnow,
@@ -83,10 +108,9 @@ class Matricula(Base):
         nullable=False,
     )
 
-    # ================================
+    # =========================================================
     # RELACIONAMENTOS
-    # ================================
-
+    # =========================================================
     imovel = relationship(
         "Imovel",
         back_populates="matriculas",
@@ -103,6 +127,13 @@ class Matricula(Base):
         "Document",
         back_populates="matricula",
         cascade="all, delete-orphan",
+    )
+
+    # 🔥 NOVO — ligação reversa com confrontantes
+    confrontantes = relationship(
+        "Confrontante",
+        back_populates="matricula",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:

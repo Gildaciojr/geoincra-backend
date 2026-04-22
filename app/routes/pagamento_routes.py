@@ -30,13 +30,16 @@ def _check_project_owner(db: Session, project_id: int, user_id: int):
         Project.id == project_id,
         Project.owner_id == user_id,
     ).first()
+
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
     return project
 
 
 def _check_pagamento_owner(db: Session, pagamento_id: int, user_id: int):
     pagamento = get_pagamento(db, pagamento_id)
+
     if not pagamento:
         raise HTTPException(status_code=404, detail="Pagamento não encontrado")
 
@@ -58,7 +61,18 @@ def create_pagamento_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_project_owner(db, project_id, current_user.id)
-    return create_pagamento(db, project_id, payload)
+
+    try:
+        return create_pagamento(db, project_id, payload)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao criar pagamento: {str(e)}"
+        )
 
 
 # =========================================================
@@ -74,6 +88,7 @@ def list_pagamentos_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_project_owner(db, project_id, current_user.id)
+
     return list_pagamentos_by_project(db, project_id)
 
 
@@ -106,8 +121,23 @@ def update_pagamento_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_pagamento_owner(db, pagamento_id, current_user.id)
-    pagamento = update_pagamento(db, pagamento_id, payload)
-    return pagamento
+
+    try:
+        pagamento = update_pagamento(db, pagamento_id, payload)
+
+        if not pagamento:
+            raise HTTPException(status_code=404, detail="Pagamento não encontrado")
+
+        return pagamento
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao atualizar pagamento: {str(e)}"
+        )
 
 
 # =========================================================
@@ -120,8 +150,20 @@ def cancelar_pagamento_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_pagamento_owner(db, pagamento_id, current_user.id)
-    cancelar_pagamento(db, pagamento_id)
-    return {"cancelado": True}
+
+    try:
+        sucesso = cancelar_pagamento(db, pagamento_id)
+
+        if not sucesso:
+            raise HTTPException(status_code=404, detail="Pagamento não encontrado")
+
+        return {"cancelado": True}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao cancelar pagamento: {str(e)}"
+        )
 
 
 # =========================================================
@@ -137,7 +179,18 @@ def gerar_parcelas_route(
     current_user: User = Depends(get_current_user),
 ):
     pagamento = _check_pagamento_owner(db, pagamento_id, current_user.id)
-    return PagamentoService.gerar_parcelas_padrao(db, pagamento)
+
+    try:
+        return PagamentoService.gerar_parcelas_padrao(db, pagamento)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao gerar parcelas: {str(e)}"
+        )
 
 
 # =========================================================
@@ -153,6 +206,7 @@ def listar_parcelas_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_pagamento_owner(db, pagamento_id, current_user.id)
+
     return listar_parcelas(db, pagamento_id)
 
 
@@ -169,6 +223,7 @@ def listar_eventos_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_pagamento_owner(db, pagamento_id, current_user.id)
+
     return listar_eventos(db, pagamento_id)
 
 
@@ -182,4 +237,5 @@ def liberacao_route(
     current_user: User = Depends(get_current_user),
 ):
     _check_pagamento_owner(db, pagamento_id, current_user.id)
+
     return PagamentoService.liberar_condicional(db, pagamento_id)
