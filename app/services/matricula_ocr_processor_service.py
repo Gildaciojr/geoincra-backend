@@ -96,6 +96,14 @@ class MatriculaOcrProcessorService:
         dados: Dict[str, Any],
         numero_matricula: str,
     ) -> Matricula:
+        # =========================================================
+        # 🔥 RESOLVE CARTÓRIO (OCR → DB)
+        # =========================================================
+        cartorio_id = MatriculaOcrProcessorService._resolver_cartorio(
+            db,
+            dados,
+        )
+
         matricula = (
             db.query(Matricula)
             .filter(
@@ -105,6 +113,9 @@ class MatriculaOcrProcessorService:
             .first()
         )
 
+        # =========================================================
+        # CREATE
+        # =========================================================
         if not matricula:
             matricula = Matricula(
                 imovel_id=imovel.id,
@@ -113,6 +124,10 @@ class MatriculaOcrProcessorService:
                 folha=dados.get("folha"),
                 comarca=dados.get("comarca"),
                 codigo_cartorio=dados.get("codigo_cartorio"),
+
+                # 🔥 NOVO (INTEGRAÇÃO DIRETA)
+                cartorio_id=cartorio_id if cartorio_id else None,
+
                 inteiro_teor=ocr.texto_extraido,
                 arquivo_path=document.file_path,
                 observacoes="Criado automaticamente via OCR",
@@ -122,24 +137,33 @@ class MatriculaOcrProcessorService:
             db.flush()
             return matricula
 
-        matricula.livro = dados.get("livro") or matricula.livro
-        matricula.folha = dados.get("folha") or matricula.folha
-        matricula.comarca = dados.get("comarca") or matricula.comarca
-        matricula.codigo_cartorio = (
-            dados.get("codigo_cartorio")
-            or matricula.codigo_cartorio
-        )
+        # =========================================================
+        # UPDATE (MERGE INTELIGENTE)
+        # =========================================================
+        if dados.get("livro"):
+            matricula.livro = dados.get("livro")
 
-        matricula.inteiro_teor = (
-            ocr.texto_extraido
-            or matricula.inteiro_teor
-        )
+        if dados.get("folha"):
+            matricula.folha = dados.get("folha")
+
+        if dados.get("comarca"):
+            matricula.comarca = dados.get("comarca")
+
+        if dados.get("codigo_cartorio"):
+            matricula.codigo_cartorio = dados.get("codigo_cartorio")
+
+        # 🔥 NOVO — atualiza cartório apenas se ainda não existir
+        if not matricula.cartorio_id and cartorio_id:
+            matricula.cartorio_id = cartorio_id
+
+        if ocr.texto_extraido:
+            matricula.inteiro_teor = ocr.texto_extraido
 
         if document.file_path:
             matricula.arquivo_path = document.file_path
 
         return matricula
-
+    
     @staticmethod
     def _normalizar_proprietarios_ocr(
         proprietarios: Any,
@@ -187,116 +211,154 @@ class MatriculaOcrProcessorService:
 
         return proprietarios_validos
 
-@staticmethod
-def _persistir_proprietarios(
-    db: Session,
-    *,
-    imovel: Imovel,
-    matricula: Matricula,
-    proprietarios: List[Dict[str, Any]],
-) -> None:
-    if not proprietarios:
-        return
+    @staticmethod
+    def _resolver_cartorio(
+        db: Session,
+        dados: Dict[str, Any]
+    ) -> Optional[int]:
+        from app.models.cartorio import Cartorio
 
-    def _somente_digitos(v: Any) -> str:
-        return re.sub(r"\D", "", str(v or ""))
-
-    for p in proprietarios:
-        nome = MatriculaOcrProcessorService._normalizar_nome(p.get("nome"))
-
-        cpf_cnpj = MatriculaOcrProcessorService._normalizar_cpf_cnpj(
-            p.get("cpf_cnpj")
+        nome = (
+            (dados.get("matricula") or {}).get("cartorio")
+            or dados.get("cartorio")
         )
 
-        tipo = MatriculaOcrProcessorService._normalizar_tipo_pessoa(
-            p.get("tipo"),
-            cpf_cnpj=cpf_cnpj,
-        )
+        comarca = dados.get("comarca")
 
         if not nome:
-            continue
+            return None
 
-        cpf = None
-        cnpj = None
+        nome = str(nome).strip().upper()
 
-        numeros = _somente_digitos(cpf_cnpj)
-
-        if len(numeros) == 11:
-            cpf = cpf_cnpj
-        elif len(numeros) == 14:
-            cnpj = cpf_cnpj
-
-        # =========================================================
-        # ESTRATÉGIA DE MATCH PROFISSIONAL
-        # =========================================================
-        existente = None
-
-        # 1. CPF (mais forte)
-        if cpf:
-            existente = (
-                db.query(Proprietario)
-                .filter(Proprietario.cpf == cpf)
-                .first()
-            )
-
-        # 2. CNPJ
-        if not existente and cnpj:
-            existente = (
-                db.query(Proprietario)
-                .filter(Proprietario.cnpj == cnpj)
-                .first()
-            )
-
-        # 3. Nome + imóvel (fallback)
-        if not existente:
-            existente = (
-                db.query(Proprietario)
-                .filter(
-                    Proprietario.imovel_id == imovel.id,
-                    Proprietario.nome_completo == nome,
-                )
-                .first()
-            )
-
-        # =========================================================
-        # UPDATE (MERGE INTELIGENTE)
-        # =========================================================
-        if existente:
-            # vínculo correto com matrícula
-            if not existente.matricula_id:
-                existente.matricula_id = matricula.id
-
-            if cpf and not existente.cpf:
-                existente.cpf = cpf
-
-            if cnpj and not existente.cnpj:
-                existente.cnpj = cnpj
-
-            existente.tipo_pessoa = tipo or existente.tipo_pessoa
-
-            if not existente.origem:
-                existente.origem = "OCR"
-
-            if not existente.observacoes:
-                existente.observacoes = "Atualizado automaticamente via OCR da matrícula"
-
-            continue
-
-        # =========================================================
-        # INSERT COMPLETO
-        # =========================================================
-        db.add(
-            Proprietario(
-                imovel_id=imovel.id,
-                matricula_id=matricula.id,
-                nome_completo=nome,
-                tipo_pessoa=tipo,
-                cpf=cpf,
-                cnpj=cnpj,
-                origem="OCR",
-                observacoes="Criado automaticamente via OCR da matrícula",
-            )
+        existente = (
+            db.query(Cartorio)
+            .filter(Cartorio.nome.ilike(f"%{nome}%"))
+            .first()
         )
+
+        if existente:
+            return existente.id
+
+        novo = Cartorio(
+            nome=nome,
+            comarca=comarca,
+            origem="OCR",
+        )
+
+        db.add(novo)
+        db.flush()
+
+        return novo.id
+
+    @staticmethod
+    def _persistir_proprietarios(
+        db: Session,
+        *,
+        imovel: Imovel,
+        matricula: Matricula,
+        proprietarios: List[Dict[str, Any]],
+    ) -> None:
+        if not proprietarios:
+            return
+
+        def _somente_digitos(v: Any) -> str:
+            return re.sub(r"\D", "", str(v or ""))
+
+        for p in proprietarios:
+            nome = MatriculaOcrProcessorService._normalizar_nome(p.get("nome"))
+
+            cpf_cnpj = MatriculaOcrProcessorService._normalizar_cpf_cnpj(
+                p.get("cpf_cnpj")
+            )
+
+            tipo = MatriculaOcrProcessorService._normalizar_tipo_pessoa(
+                p.get("tipo"),
+                cpf_cnpj=cpf_cnpj,
+            )
+
+            if not nome:
+                continue
+
+            cpf = None
+            cnpj = None
+
+            numeros = _somente_digitos(cpf_cnpj)
+
+            if len(numeros) == 11:
+                cpf = cpf_cnpj
+            elif len(numeros) == 14:
+                cnpj = cpf_cnpj
+
+            # =========================================================
+            # ESTRATÉGIA DE MATCH PROFISSIONAL
+            # =========================================================
+            existente = None
+
+            # 1. CPF (mais forte)
+            if cpf:
+                existente = (
+                    db.query(Proprietario)
+                    .filter(Proprietario.cpf == cpf)
+                    .first()
+                )
+
+            # 2. CNPJ
+            if not existente and cnpj:
+                existente = (
+                    db.query(Proprietario)
+                    .filter(Proprietario.cnpj == cnpj)
+                    .first()
+                )
+
+            # 3. Nome + imóvel (fallback)
+            if not existente:
+                existente = (
+                    db.query(Proprietario)
+                    .filter(
+                        Proprietario.imovel_id == imovel.id,
+                        Proprietario.nome_completo == nome,
+                    )
+                    .first()
+                )
+
+            # =========================================================
+            # UPDATE (MERGE INTELIGENTE)
+            # =========================================================
+            if existente:
+                if not existente.matricula_id:
+                    existente.matricula_id = matricula.id
+
+                if cpf and not existente.cpf:
+                    existente.cpf = cpf
+
+                if cnpj and not existente.cnpj:
+                    existente.cnpj = cnpj
+
+                existente.tipo_pessoa = tipo or existente.tipo_pessoa
+
+                if not existente.origem:
+                    existente.origem = "OCR"
+
+                if not existente.observacoes:
+                    existente.observacoes = "Atualizado automaticamente via OCR da matrícula"
+
+                continue
+
+            # =========================================================
+            # INSERT COMPLETO
+            # =========================================================
+            db.add(
+                Proprietario(
+                    imovel_id=imovel.id,
+                    matricula_id=matricula.id,
+                    nome_completo=nome,
+                    tipo_pessoa=tipo,
+                    cpf=cpf,
+                    cnpj=cnpj,
+                    origem="OCR",
+                    observacoes="Criado automaticamente via OCR da matrícula",
+                )
+            )
 
     
     @staticmethod
@@ -701,12 +763,13 @@ def _persistir_proprietarios(
                     direcao_normalizada=direcao_normalizada,
                     nome_confrontante=nome,
                     matricula_confrontante=matricula_cft,
+                    matricula_id=matricula.id,
                     identificacao_imovel_confrontante=identificacao,
                     descricao=descricao,
                     observacoes=f"{observacoes_texto} | matricula_ref={matricula.numero_matricula}",
                 )
             )
-            
+
     @staticmethod
     def _parse_json(raw: Any) -> Dict[str, Any]:
 

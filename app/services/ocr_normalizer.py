@@ -528,21 +528,19 @@ def _resolver_bloco_imovel(dados: Dict[str, Any], warnings: List[str]) -> Dict[s
         imovel_dict.get("descricao_imovel") if imovel_dict else None,
     )
 
+    area_dict = _first_dict(imovel_dict.get("area") if imovel_dict else None)
+
     area_raw = _coalesce(
         dados.get("area_total"),
         imovel_dict.get("area_total") if imovel_dict else None,
         imovel_dict.get("area") if imovel_dict else None,
-        _first_dict(imovel_dict.get("area") if imovel_dict else None).get("valor")
-        if isinstance(imovel_dict.get("area") if imovel_dict else None, dict)
-        else None,
+        area_dict.get("valor") if area_dict else None,
     )
 
     unidade_raw = _coalesce(
         dados.get("unidade_area"),
         imovel_dict.get("unidade_area") if imovel_dict else None,
-        _first_dict(imovel_dict.get("area") if imovel_dict else None).get("unidade_original")
-        if isinstance(imovel_dict.get("area") if imovel_dict else None, dict)
-        else None,
+        area_dict.get("unidade_original") if area_dict else None,
     )
 
     area_valor = _to_float(area_raw)
@@ -554,6 +552,7 @@ def _resolver_bloco_imovel(dados: Dict[str, Any], warnings: List[str]) -> Dict[s
 
     if area_valor is not None and unidade is None:
         warnings.append("Unidade de área não identificada")
+
     elif area_valor is not None and hectares is None and unidade not in [None, "ha", "m2", "km2"]:
         warnings.append(f"Unidade de área sem conversão automática: {unidade}")
 
@@ -942,8 +941,13 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
     confrontantes: List[Dict[str, Optional[str]]] = []
 
     for i, c in enumerate(confrontantes_raw, start=1):
+
+        # =========================================================
+        # 🔤 CASO STRING (OCR MAIS SUJO)
+        # =========================================================
         if isinstance(c, str):
             descricao = _normalizar_texto(c)
+
             if not descricao:
                 warnings.append(f"Confrontante {i} ignorado (string vazia)")
                 continue
@@ -960,8 +964,9 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                     "direcao": lado_normalizado or lado_original,
                     "nome": None,
                     "descricao": descricao,
-                    "matricula": None,
+                    "matricula": _normalizar_matricula(descricao),
                     "identificacao": descricao,
+                    "cpf_cnpj": _normalizar_cpf_cnpj(descricao),
                     "tipo": _inferir_tipo_confrontante(None, descricao, descricao),
                     "lote": extraidos["lote"],
                     "gleba": extraidos["gleba"],
@@ -969,10 +974,16 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
             continue
 
+        # =========================================================
+        # 🔴 INVALIDO
+        # =========================================================
         if not isinstance(c, dict):
             warnings.append(f"Confrontante {i} ignorado (estrutura inválida)")
             continue
 
+        # =========================================================
+        # 🔹 CAMPOS BASE
+        # =========================================================
         lado_bruto = _coalesce(
             c.get("direcao"),
             c.get("lado"),
@@ -995,13 +1006,34 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
+        # =========================================================
+        # 🔥 NOVO — MATRÍCULA MAIS INTELIGENTE
+        # =========================================================
         matricula_confrontante = _normalizar_matricula(
             _coalesce(
                 c.get("matricula"),
                 c.get("numero_matricula"),
+                descricao,
+                nome,
             )
         )
 
+        # =========================================================
+        # 🔥 NOVO — CPF/CNPJ
+        # =========================================================
+        cpf_cnpj = _normalizar_cpf_cnpj(
+            _coalesce(
+                c.get("cpf_cnpj"),
+                c.get("cpf"),
+                c.get("cnpj"),
+                descricao,
+                nome,
+            )
+        )
+
+        # =========================================================
+        # 🔥 IDENTIFICAÇÃO FORTE
+        # =========================================================
         identificacao = _normalizar_identificacao_generica(
             _coalesce(
                 c.get("identificacao"),
@@ -1013,6 +1045,9 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
+        # =========================================================
+        # 🔥 LOTE / GLEBA
+        # =========================================================
         lote = _normalizar_texto(
             _coalesce(
                 c.get("lote"),
@@ -1031,6 +1066,9 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
+        # =========================================================
+        # 🔥 TIPO (AGORA MAIS FORTE)
+        # =========================================================
         tipo = _normalizar_texto_upper_sem_acentos(
             _coalesce(
                 c.get("tipo"),
@@ -1038,18 +1076,35 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
+        # =========================================================
+        # 🔹 DIREÇÃO
+        # =========================================================
         lado_original = _normalizar_lado_original(lado_bruto)
         lado_normalizado = _normalizar_direcao(lado_bruto)
 
-        # 🔥 fallback inteligente (quando OCR não traz lado)
+        # fallback inteligente
         if not lado_normalizado and descricao:
             lado_normalizado = _normalizar_direcao(descricao)
             lado_original = _normalizar_lado_original(descricao)
 
+        # =========================================================
+        # 🔥 DESCRIÇÃO INTELIGENTE (NOVA)
+        # =========================================================
+        if not descricao:
+            descricao = " / ".join(
+                x for x in [nome, identificacao, matricula_confrontante] if x
+            ) or None
+
+        # =========================================================
+        # 🔴 FILTRO
+        # =========================================================
         if not nome and not descricao and not matricula_confrontante and not identificacao:
             warnings.append(f"Confrontante {i} ignorado (sem conteúdo útil)")
             continue
 
+        # =========================================================
+        # ✅ OUTPUT FINAL
+        # =========================================================
         confrontantes.append(
             {
                 "lado": lado_original,
@@ -1059,6 +1114,7 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                 "descricao": descricao,
                 "matricula": matricula_confrontante,
                 "identificacao": identificacao,
+                "cpf_cnpj": cpf_cnpj,
                 "tipo": tipo,
                 "lote": lote,
                 "gleba": gleba,
@@ -1157,6 +1213,10 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
 
     if not matricula["numero"]:
         warnings.append("Matrícula não identificada")
+        erros.append("Matrícula ausente")
+    else:
+        if len(str(matricula["numero"])) < 3:
+            warnings.append("Matrícula com formato suspeito")
 
     # =========================================================
     # IMÓVEL
@@ -1199,6 +1259,12 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     confrontantes = _resolver_confrontantes(dados, warnings)
     resultado["confrontantes"] = confrontantes
 
+    if not confrontantes:
+        warnings.append("Sem confrontantes identificados")
+
+    elif len(confrontantes) < 2:
+         warnings.append("Poucos confrontantes identificados")
+
     # =========================================================
     # QUALIDADE
     # =========================================================
@@ -1209,6 +1275,25 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         geometria=geometria,
         confrontantes=confrontantes,
     )
+
+    # 🔥 penalização adicional por dados críticos
+    if not resultado.get("area_hectares"):
+        score -= 10
+
+    if not confrontantes:
+        score -= 15
+
+    if (
+        not geometria.get("segmentos")
+        and not geometria.get("memorial_texto")
+        and not geometria.get("geojson")
+    ):
+        score -= 20
+    # 🔥 novo ajuste fino
+    if any(not c.get("direcao") for c in confrontantes):
+        score -= 5
+
+    score = max(score, 0)
 
     warnings = _deduplicar_warnings(warnings)
 
@@ -1228,6 +1313,10 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     fonte_geometrica = geometria.get("fonte")
     if erros and not fonte_geometrica:
         raise ValueError(f"OCR inválido: {erros}")
+    
+    # 🔥 NOVO — FAIL HARD POR BAIXA QUALIDADE
+    if score < 40:
+        raise ValueError(f"OCR inválido: qualidade muito baixa ({score})")
 
     # OCRStructured exige proprietários não vazios; manter isso explícito
     if not proprietarios:
