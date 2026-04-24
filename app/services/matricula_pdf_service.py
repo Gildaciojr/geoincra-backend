@@ -477,8 +477,7 @@ class MatriculaPdfService:
             c.setFont("Helvetica", 7.5)
             c.setFillColor(colors.HexColor("#475569"))
 
-            # 🔥 controle real de largura (sem cortar palavra no meio)
-            max_width = largura_util - 60 * mm  # espaço reservado para data à direita
+            max_width = largura_util - 60 * mm
 
             texto_final = texto_esquerda
             while stringWidth(texto_final, "Helvetica", 7.5) > max_width and len(texto_final) > 10:
@@ -502,30 +501,65 @@ class MatriculaPdfService:
         # =========================================================
         # NORMALIZAÇÃO DOS DADOS DE ENTRADA (UPGRADE COMPLETO)
         # =========================================================
+
+        matricula_obj = dados.get("matricula") if isinstance(dados.get("matricula"), dict) else {}
+
         numero_matricula = _safe_text(
             dados.get("numero_matricula")
+            or matricula_obj.get("numero")
             or dados.get("matricula")
             or dados.get("numero")
         )
 
-        comarca = _safe_text(dados.get("comarca"))
-        livro = _safe_text(dados.get("livro"))
-        folha = _safe_text(dados.get("folha"))
-        codigo_cartorio = _safe_text(dados.get("codigo_cartorio"))
-        status = _safe_text(dados.get("status"))
+        comarca = _safe_text(
+            dados.get("comarca")
+            or matricula_obj.get("comarca")
+        )
 
-        # 🔥 NOVO — IMÓVEL
-        descricao_imovel = _safe_text(dados.get("descricao_imovel"))
+        livro = _safe_text(dados.get("livro") or matricula_obj.get("livro"))
+        folha = _safe_text(dados.get("folha") or matricula_obj.get("folha"))
+
+        codigo_cartorio = _safe_text(dados.get("codigo_cartorio"))
+
+        status = _safe_text(dados.get("status") or "ATIVA")
+
+        # =========================================================
+        # 🔥 IMÓVEL (UPGRADE)
+        # =========================================================
+
+        descricao_imovel = _safe_text(
+            dados.get("descricao_imovel")
+            or (dados.get("imovel") or {}).get("descricao")
+        )
+
         area_total = dados.get("area_total")
         unidade_area = _safe_text(dados.get("unidade_area"))
         area_hectares = dados.get("area_hectares")
 
-        # 🔥 NOVO — MEMORIAL / GEOMETRIA
+        # 🔥 montagem profissional da área
+        area_formatada = None
+
+        if area_hectares:
+            try:
+                area_formatada = f"{float(area_hectares):,.4f} ha".replace(",", "X").replace(".", ",").replace("X", ".")
+            except Exception:
+                area_formatada = f"{area_hectares} ha"
+
+        elif area_total and unidade_area:
+            area_formatada = f"{area_total} {unidade_area}"
+
+        # =========================================================
+        # 🔥 MEMORIAL / GEOMETRIA
+        # =========================================================
+
         memorial_texto = _safe_text(dados.get("memorial_texto"))
         possui_memorial = bool(memorial_texto)
 
-        # 🔥 NOVO — CROQUI (preparação)
         possui_geo = bool(dados.get("geojson"))
+
+        # =========================================================
+        # 🔥 LISTAS NORMALIZADAS
+        # =========================================================
 
         confrontantes = dados.get("confrontantes") or []
         proprietarios = dados.get("proprietarios") or []
@@ -539,12 +573,14 @@ class MatriculaPdfService:
         # =========================================================
         # PÁGINA
         # =========================================================
+
         _draw_page_frame()
         _draw_header_principal()
 
         # =========================================================
         # SEÇÃO — IDENTIFICAÇÃO DA MATRÍCULA
         # =========================================================
+
         _draw_section_title("1. IDENTIFICAÇÃO DA MATRÍCULA")
 
         info_linhas = [
@@ -564,7 +600,13 @@ class MatriculaPdfService:
                 Paragraph("<b>Código do Cartório</b>", style_bloco_bold),
                 Paragraph(codigo_cartorio or "NÃO INFORMADO", style_bloco),
                 Paragraph("<b>Status</b>", style_bloco_bold),
-                Paragraph(status or "NÃO INFORMADO", style_bloco),
+                Paragraph(status, style_bloco),
+            ],
+            [
+                Paragraph("<b>Área do Imóvel</b>", style_bloco_bold),
+                Paragraph(area_formatada or "NÃO INFORMADO", style_bloco),
+                Paragraph("", style_bloco_bold),
+                Paragraph("", style_bloco),
             ],
         ]
 
@@ -588,22 +630,24 @@ class MatriculaPdfService:
         if descricao_imovel:
             textos_imovel.append(f"<b>Descrição:</b> {descricao_imovel}")
 
+        # 🔥 ÁREA PADRONIZADA
         if area_total:
             try:
                 textos_imovel.append(
-                    f"<b>Área:</b> {area_total} {unidade_area or ''}".strip()
+                    f"<b>Área original:</b> {area_total} {unidade_area or ''}".strip()
                 )
             except Exception:
-                textos_imovel.append("<b>Área:</b> NÃO INFORMADO")
+                textos_imovel.append("<b>Área original:</b> NÃO INFORMADO")
 
         if area_hectares:
             try:
                 area_hectares_float = float(area_hectares)
+                area_formatada = f"{area_hectares_float:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 textos_imovel.append(
-                    f"<b>Área equivalente:</b> {area_hectares_float:.4f} hectares"
+                    f"<b>Área oficial:</b> {area_formatada} hectares"
                 )
             except Exception:
-                textos_imovel.append("<b>Área equivalente:</b> NÃO INFORMADO")
+                textos_imovel.append("<b>Área oficial:</b> NÃO INFORMADO")
 
         if textos_imovel:
             _draw_text_box(textos_imovel)
@@ -627,7 +671,16 @@ class MatriculaPdfService:
 
                 nome = _safe_text(p.get("nome"))
                 cpf_cnpj = _safe_text(p.get("cpf_cnpj"))
-                tipo = _safe_text(p.get("tipo"))
+
+                tipo_raw = str(p.get("tipo") or "").upper().strip()
+
+                # 🔥 NORMALIZAÇÃO PROFISSIONAL DO TIPO
+                if tipo_raw in ["PF", "FISICA"]:
+                    tipo = "Pessoa Física"
+                elif tipo_raw in ["PJ", "JURIDICA"]:
+                    tipo = "Pessoa Jurídica"
+                else:
+                    tipo = "NÃO INFORMADO"
 
                 if not nome and not cpf_cnpj:
                     continue
@@ -637,7 +690,7 @@ class MatriculaPdfService:
                         str(idx),
                         nome or "NÃO INFORMADO",
                         cpf_cnpj or "NÃO INFORMADO",
-                        tipo or "NÃO INFORMADO",
+                        tipo,
                     ]
                 )
 
@@ -673,11 +726,14 @@ class MatriculaPdfService:
                     continue
 
                 try:
-                    direcao = _safe_text(
+                    direcao_raw = (
                         cft.get("lado_normalizado")
                         or cft.get("direcao")
                         or cft.get("lado")
                     )
+
+                    direcao = _safe_upper(direcao_raw)
+
                 except Exception:
                     direcao = ""
 
@@ -701,13 +757,25 @@ class MatriculaPdfService:
                 except Exception:
                     descricao = ""
 
-                # 🔥 filtro contra lixo OCR
+                # 🔥 NOVOS CAMPOS (OCR V2)
+                try:
+                    tipo = _safe_text(cft.get("tipo"))
+                except Exception:
+                    tipo = ""
+
+                try:
+                    lote = _safe_text(cft.get("lote"))
+                except Exception:
+                    lote = ""
+
+                try:
+                    gleba = _safe_text(cft.get("gleba"))
+                except Exception:
+                    gleba = ""
+
                 if not any([nome, matricula_cft, identificacao, descricao]):
                     continue
 
-                # =========================================================
-                # COMPOSIÇÃO TÉCNICA
-                # =========================================================
                 descricao_composta_partes: List[str] = []
 
                 if identificacao:
@@ -715,6 +783,15 @@ class MatriculaPdfService:
 
                 if matricula_cft:
                     descricao_composta_partes.append(f"Matrícula: {matricula_cft}")
+
+                if lote:
+                    descricao_composta_partes.append(f"Lote: {lote}")
+
+                if gleba:
+                    descricao_composta_partes.append(f"Gleba: {gleba}")
+
+                if tipo:
+                    descricao_composta_partes.append(f"Tipo: {tipo}")
 
                 if descricao:
                     descricao_composta_partes.append(descricao)
@@ -749,10 +826,107 @@ class MatriculaPdfService:
             )
 
         # =========================================================
-        # 🔥 NOVO — MEMORIAL DESCRITIVO (CRÍTICO)
+        # 🔥 NOVO — ANÁLISE JURÍDICA (PRIORIDADE 02)
+        # =========================================================
+        try:
+            from app.services.matricula_analysis_service import MatriculaAnalysisService
+
+            # 🔥 TEXTO BASE ROBUSTO (ORDEM INTELIGENTE)
+            texto_base = (
+                dados.get("inteiro_teor")
+                or dados.get("memorial_texto")
+                or dados.get("descricao_imovel")
+                or ""
+            )
+
+            analise = MatriculaAnalysisService.analisar(
+                texto=texto_base,
+            )
+
+            _draw_section_title("5. ANÁLISE JURÍDICA E HISTÓRICO REGISTRAL")
+
+            blocos_analise: List[str] = []
+
+            classificacao = analise.get("classificacao") or {}
+
+            status = str(classificacao.get("status") or "NÃO DEFINIDO").upper()
+            score = int(analise.get("score_juridico") or 0)
+
+            blocos_analise.append(
+                f"<b>Status jurídico:</b> {status}"
+            )
+
+            blocos_analise.append(
+                f"<b>Score jurídico:</b> {score} / 100"
+            )
+
+            # =========================================================
+            # 🔥 REGISTROS E AVERBAÇÕES (SUBSTITUI HISTÓRICO)
+            # =========================================================
+            registros = analise.get("registros") or []
+            averbacoes = analise.get("averbacoes") or []
+
+            if registros or averbacoes:
+                blocos_analise.append("<b>Atos registrais identificados:</b>")
+
+                for r in registros[:10]:
+                    blocos_analise.append(f"- Registro: {r}")
+
+                for a in averbacoes[:10]:
+                    blocos_analise.append(f"- Averbação: {a}")
+
+            # =========================================================
+            # ÔNUS
+            # =========================================================
+            onus = analise.get("onus") or []
+
+            if onus:
+                blocos_analise.append("<b>Ônus identificados:</b>")
+                for o in onus:
+                    blocos_analise.append(f"- {o}")
+
+            # =========================================================
+            # RISCOS
+            # =========================================================
+            riscos = analise.get("riscos") or []
+
+            if riscos:
+                blocos_analise.append("<b>Riscos jurídicos:</b>")
+                for r in riscos:
+                    blocos_analise.append(f"- {r}")
+
+            # =========================================================
+            # 🔥 ENRIQUECIMENTO VIA OCR (INTEGRAÇÃO REAL)
+            # =========================================================
+            proprietarios_ocr = dados.get("proprietarios") or []
+            confrontantes_ocr = dados.get("confrontantes") or []
+
+            if proprietarios_ocr:
+                blocos_analise.append("<b>Proprietários identificados via OCR:</b>")
+                blocos_analise.append(f"- Total: {len(proprietarios_ocr)}")
+
+            if confrontantes_ocr:
+                blocos_analise.append("<b>Confrontantes identificados:</b>")
+                blocos_analise.append(f"- Total: {len(confrontantes_ocr)}")
+
+            # =========================================================
+            # FALLBACK
+            # =========================================================
+            if not blocos_analise:
+                blocos_analise.append("Nenhuma informação jurídica relevante identificada.")
+
+            _draw_text_box(blocos_analise)
+
+        except Exception as exc:
+            _draw_text_box(
+                [f"Erro ao gerar análise jurídica: {str(exc)}"]
+            )
+
+        # =========================================================
+        # 🔥 MEMORIAL DESCRITIVO (AJUSTADO PARA SEÇÃO 6)
         # =========================================================
         if possui_memorial:
-            _draw_section_title("5. MEMORIAL DESCRITIVO")
+            _draw_section_title("6. MEMORIAL DESCRITIVO")
 
             memorial_final = memorial_texto or ""
 
@@ -762,7 +936,12 @@ class MatriculaPdfService:
             try:
                 from app.services.txt_lisp_service import TxtLispService
 
-                geojson = dados.get("geojson") if isinstance(dados, dict) else None
+                geojson = (
+                    dados.get("geojson")
+                    or (dados.get("geometria") or {}).get("geojson")
+                    if isinstance(dados, dict)
+                    else None
+                )
 
                 if geojson:
                     txt_vertices = TxtLispService.gerar_txt(geojson)
@@ -786,16 +965,26 @@ class MatriculaPdfService:
                             "------------------------------------------------------------"
                         )
 
-            except Exception as exc:
+            except Exception:
                 memorial_final += (
                     "\n\n[AVISO TÉCNICO] Não foi possível gerar o bloco de coordenadas."
                 )
 
             # =========================================================
-            # RENDER FINAL
+            # 🔥 CONTROLE DE TAMANHO (EVITA QUEBRAR PDF)
             # =========================================================
             try:
-                _draw_text_box([memorial_final])
+                if len(memorial_final) > 12000:
+                    partes = [
+                        memorial_final[i:i+4000]
+                        for i in range(0, len(memorial_final), 4000)
+                    ]
+
+                    for parte in partes:
+                        _draw_text_box([parte])
+                else:
+                    _draw_text_box([memorial_final])
+
             except Exception:
                 _draw_text_box([
                     "Erro ao renderizar memorial descritivo.",
@@ -805,7 +994,7 @@ class MatriculaPdfService:
         # =========================================================
         # SEÇÃO — OBSERVAÇÃO TÉCNICA
         # =========================================================
-        _draw_section_title("6. OBSERVAÇÃO TÉCNICA")
+        _draw_section_title("7. OBSERVAÇÃO TÉCNICA")
 
         observacoes_bloco: List[str] = [
             (
@@ -829,9 +1018,6 @@ class MatriculaPdfService:
                 f"Matrícula de referência: {numero_matricula}.",
             )
 
-        # =========================================================
-        # RENDER OBSERVAÇÕES
-        # =========================================================
         _draw_text_box(observacoes_bloco)
 
         # =========================================================
@@ -848,7 +1034,7 @@ class MatriculaPdfService:
 
             if croqui_path and os.path.exists(croqui_path):
 
-                _draw_section_title("7. CROQUI DO IMÓVEL")
+                _draw_section_title("8. CROQUI DO IMÓVEL")
 
                 largura_img = largura_util
                 altura_img = largura_img * 0.75
@@ -875,9 +1061,12 @@ class MatriculaPdfService:
 
             else:
                 _draw_text_box(
-                    ["Croqui não disponível para este imóvel."]
+                    [
+                        "Croqui não disponível para este imóvel.",
+                        "Verifique se a geometria foi corretamente gerada no pipeline."
+                    ]
                 )
-
+                
         # =========================================================
         # RODAPÉ
         # =========================================================

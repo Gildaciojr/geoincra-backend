@@ -342,8 +342,92 @@ class MemorialService:
             if not confrontantes_lista:
                 return None
 
+            def _safe_text(valor: Any) -> str | None:
+                if valor is None:
+                    return None
+
+                texto = " ".join(str(valor).strip().split())
+                return texto or None
+
+            def _formatar_confrontante(c: dict[str, Any]) -> str | None:
+                if not isinstance(c, dict):
+                    return None
+
+                nome = _safe_text(
+                    c.get("nome_confrontante")
+                    or c.get("nome")
+                    or c.get("confrontante")
+                )
+
+                descricao = _safe_text(c.get("descricao"))
+
+                identificacao = _safe_text(
+                    c.get("identificacao_imovel_confrontante")
+                    or c.get("identificacao")
+                    or c.get("identificacao_imovel")
+                    or c.get("imovel")
+                )
+
+                matricula = _safe_text(
+                    c.get("matricula_confrontante")
+                    or c.get("matricula")
+                    or c.get("numero_matricula")
+                )
+
+                lote = _safe_text(c.get("lote"))
+                gleba = _safe_text(c.get("gleba"))
+                tipo = _safe_text(c.get("tipo"))
+
+                partes: List[str] = []
+
+                # =====================================================
+                # PRIORIDADE AGRÁRIA — LOTE / GLEBA
+                # =====================================================
+                if lote or gleba:
+                    texto_imovel = "imóvel rural"
+
+                    if lote:
+                        texto_imovel += f" Lote {lote}"
+
+                    if gleba:
+                        texto_imovel += f" da Gleba {gleba}"
+
+                    partes.append(texto_imovel)
+
+                # =====================================================
+                # IDENTIFICAÇÃO PRINCIPAL
+                # =====================================================
+                if identificacao:
+                    partes.append(identificacao)
+
+                elif nome:
+                    partes.append(nome)
+
+                elif descricao:
+                    partes.append(descricao)
+
+                # =====================================================
+                # MATRÍCULA DO CONFRONTANTE
+                # =====================================================
+                if matricula:
+                    partes.append(f"matrícula {matricula}")
+
+                # =====================================================
+                # TIPO DO CONFRONTANTE
+                # =====================================================
+                if tipo and tipo.upper() not in {"IMOVEL_RURAL", "IMÓVEL_RURAL"}:
+                    partes.append(f"tipo {tipo}")
+
+                if not partes:
+                    return None
+
+                texto_final = " ".join(partes)
+                texto_final = texto_final.replace("  ", " ").strip()
+
+                return texto_final or None
+
             # =====================================================
-            # 1. PRIORIDADE ABSOLUTA → ORDEM DO BANCO (ordem_segmento)
+            # 1. PRIORIDADE ABSOLUTA → ORDEM DO BANCO
             # =====================================================
             for c in confrontantes_lista:
                 if not isinstance(c, dict):
@@ -353,50 +437,31 @@ class MemorialService:
 
                 try:
                     if ordem is not None and int(ordem) == indice_segmento:
-                        nome = (
-                            c.get("nome_confrontante")
-                            or c.get("nome")
-                            or c.get("confrontante")
-                            or c.get("descricao")
-                            or c.get("identificacao_imovel_confrontante")
-                        )
-                        if nome:
-                            return " ".join(str(nome).strip().split())
+                        texto = _formatar_confrontante(c)
+
+                        if texto:
+                            return texto
                 except Exception:
                     continue
 
             # =====================================================
-            # 2. PRIORIDADE SECUNDÁRIA → DIREÇÃO NORMALIZADA
+            # 2. PRIORIDADE SECUNDÁRIA → LADO LABEL / SEGMENTO
             # =====================================================
             for c in confrontantes_lista:
                 if not isinstance(c, dict):
                     continue
 
-                lado = (
-                    c.get("direcao_normalizada")
-                    or c.get("direcao")
-                    or c.get("lado_normalizado")
-                    or c.get("lado")
-                )
+                lado_label = _safe_text(c.get("lado_label") or c.get("lado"))
 
-                if not lado:
+                if not lado_label:
                     continue
 
-                lado_norm = str(lado).strip().upper()
-
-                # fallback inteligente: tenta casar com sequência geométrica
                 try:
-                    ordem = c.get("ordem_segmento")
-                    if ordem is not None and int(ordem) == indice_segmento:
-                        nome = (
-                            c.get("nome_confrontante")
-                            or c.get("nome")
-                            or c.get("confrontante")
-                            or c.get("descricao")
-                            or c.get("identificacao_imovel_confrontante")
-                        )
-                        if nome:
-                            return " ".join(str(nome).strip().split())
+                    if str(indice_segmento).zfill(2) in lado_label:
+                        texto = _formatar_confrontante(c)
+
+                        if texto:
+                            return texto
                 except Exception:
                     continue
 
@@ -409,15 +474,10 @@ class MemorialService:
                 c = confrontantes_lista[pos]
 
                 if isinstance(c, dict):
-                    nome = (
-                        c.get("nome_confrontante")
-                        or c.get("nome")
-                        or c.get("confrontante")
-                        or c.get("descricao")
-                        or c.get("identificacao_imovel_confrontante")
-                    )
-                    if nome:
-                        return " ".join(str(nome).strip().split())
+                    texto = _formatar_confrontante(c)
+
+                    if texto:
+                        return texto
 
             return None
 

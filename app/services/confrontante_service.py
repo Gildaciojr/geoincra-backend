@@ -386,7 +386,14 @@ class ConfrontanteService:
         # =========================================================
         # DADOS COMPLEMENTARES
         # =========================================================
-        tipo = ConfrontanteService._normalizar_texto(item.get("tipo"))
+        tipo = (
+            ConfrontanteService._normalizar_texto(item.get("tipo"))
+            or (
+                "IMOVEL_RURAL"
+                if item.get("gleba") or item.get("lote")
+                else None
+            )
+        )
         lote = ConfrontanteService._normalizar_texto(item.get("lote"))
         gleba = ConfrontanteService._normalizar_texto(item.get("gleba"))
 

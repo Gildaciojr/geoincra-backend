@@ -330,8 +330,12 @@ class OcrPipelineService:
                     pass
 
                 analise = MatriculaAnalysisService.analisar(
-                    texto=matricula.inteiro_teor
+                    texto=matricula.inteiro_teor,
+                    dados_ocr=dados,
+
                 )
+                
+
 
                 # 🔥 ENRIQUECIMENTO
                 if isinstance(analise, dict):

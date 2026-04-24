@@ -46,28 +46,53 @@ class MatriculaAnalysisService:
     # ENTRYPOINT
     # =========================================================
     @staticmethod
-    def analisar(texto: Optional[str]) -> Dict[str, Any]:
+    def analisar(
+        texto: Optional[str],
+        dados_ocr: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+
         if not texto or not isinstance(texto, str):
             return MatriculaAnalysisService._retorno_vazio("Texto da matrícula ausente")
 
         texto_normalizado = MatriculaAnalysisService._normalizar_texto(texto)
 
+        # =========================================================
+        # EXTRAÇÕES BASE (LEGADO)
+        # =========================================================
         proprietarios = MatriculaAnalysisService._extrair_proprietarios(texto_normalizado)
         averbacoes = MatriculaAnalysisService._extrair_averbacoes(texto_normalizado)
         registros = MatriculaAnalysisService._extrair_registros(texto_normalizado)
         onus = MatriculaAnalysisService._extrair_onus(texto_normalizado)
         riscos = MatriculaAnalysisService._extrair_riscos(texto_normalizado)
 
+        # =========================================================
+        # 🔥 NOVO — HISTÓRICO OCR
+        # =========================================================
+        historico = MatriculaAnalysisService._extrair_historico_ocr(dados_ocr)
+
+        # =========================================================
+        # 🔥 NOVO — CADEIA REGISTRAL
+        # =========================================================
+        cadeia = MatriculaAnalysisService._avaliar_cadeia_registral(historico)
+
+        # =========================================================
+        # CLASSIFICAÇÃO
+        # =========================================================
         classificacao = MatriculaAnalysisService._classificar_matricula(
             proprietarios=proprietarios,
             onus=onus,
             riscos=riscos,
+            cadeia=cadeia,
         )
 
+        # =========================================================
+        # SCORE
+        # =========================================================
         score = MatriculaAnalysisService._calcular_score(
             proprietarios=proprietarios,
             onus=onus,
             riscos=riscos,
+            cadeia=cadeia,
         )
 
         return {
@@ -77,6 +102,11 @@ class MatriculaAnalysisService:
             "registros": registros,
             "onus": onus,
             "riscos": riscos,
+
+            # 🔥 NOVO
+            "historico": historico,
+            "cadeia_registral": cadeia,
+
             "classificacao": classificacao,
             "score_juridico": score,
         }
@@ -121,14 +151,34 @@ class MatriculaAnalysisService:
     # =========================================================
     @staticmethod
     def _extrair_averbacoes(texto: str) -> List[str]:
-        return re.findall(MatriculaAnalysisService.REGEX_AVERBACAO, texto)
+        encontrados = re.findall(MatriculaAnalysisService.REGEX_AVERBACAO, texto)
+
+        # 🔥 normalização (remove duplicados mantendo ordem)
+        vistos = set()
+        resultado = []
+        for item in encontrados:
+            if item not in vistos:
+                vistos.add(item)
+                resultado.append(item)
+
+        return resultado
 
     # =========================================================
     # REGISTROS
     # =========================================================
     @staticmethod
     def _extrair_registros(texto: str) -> List[str]:
-        return re.findall(MatriculaAnalysisService.REGEX_REGISTRO, texto)
+        encontrados = re.findall(MatriculaAnalysisService.REGEX_REGISTRO, texto)
+
+        # 🔥 normalização (remove duplicados mantendo ordem)
+        vistos = set()
+        resultado = []
+        for item in encontrados:
+            if item not in vistos:
+                vistos.add(item)
+                resultado.append(item)
+
+        return resultado
 
     # =========================================================
     # ÔNUS
@@ -157,18 +207,27 @@ class MatriculaAnalysisService:
         return encontrados
 
     # =========================================================
-    # CLASSIFICAÇÃO
+    # CLASSIFICAÇÃO (EVOLUÍDA)
     # =========================================================
     @staticmethod
     def _classificar_matricula(
         proprietarios: List[Any],
         onus: List[str],
         riscos: List[str],
+        cadeia: Dict[str, Any],
     ) -> Dict[str, Any]:
+
         status = "regular"
+
+        # =========================================================
+        # PRIORIDADE DE CLASSIFICAÇÃO (ordem importa)
+        # =========================================================
 
         if not proprietarios:
             status = "irregular"
+
+        if cadeia and not cadeia.get("cadeia_valida"):
+            status = "cadeia_irregular"
 
         if riscos:
             status = "risco"
@@ -176,33 +235,69 @@ class MatriculaAnalysisService:
         if onus:
             status = "com_onus"
 
+        # =========================================================
+        # FLAGS COMPLEMENTARES
+        # =========================================================
         return {
             "status": status,
             "tem_onus": bool(onus),
             "tem_risco": bool(riscos),
+            "cadeia_valida": cadeia.get("cadeia_valida") if cadeia else None,
+            "total_atos": cadeia.get("total_atos") if cadeia else 0,
             "proprietarios_identificados": bool(proprietarios),
         }
 
     # =========================================================
-    # SCORE
+    # SCORE (EVOLUÍDO)
     # =========================================================
     @staticmethod
     def _calcular_score(
         proprietarios: List[Any],
         onus: List[str],
         riscos: List[str],
+        cadeia: Dict[str, Any],
     ) -> int:
+
         score = 100
 
+        # =========================================================
+        # PROPRIETÁRIOS (CRÍTICO)
+        # =========================================================
         if not proprietarios:
             score -= 30
+        elif len(proprietarios) == 1:
+            score -= 5  # baixa diversidade pode indicar incompleto
 
+        # =========================================================
+        # ÔNUS
+        # =========================================================
         if onus:
             score -= 20
 
+        # =========================================================
+        # RISCOS
+        # =========================================================
         if riscos:
             score -= 30
 
+        # =========================================================
+        # 🔥 CADEIA REGISTRAL (NOVO - CRÍTICO)
+        # =========================================================
+        if not cadeia.get("cadeia_valida"):
+            score -= 15
+
+        total_atos = cadeia.get("total_atos", 0)
+
+        if total_atos == 0:
+            score -= 15
+        elif total_atos < 2:
+            score -= 10
+        elif total_atos < 4:
+            score -= 5
+
+        # =========================================================
+        # NORMALIZA
+        # =========================================================
         return max(score, 0)
 
     # =========================================================
@@ -218,6 +313,8 @@ class MatriculaAnalysisService:
             "registros": [],
             "onus": [],
             "riscos": [],
+            "historico": [],
+            "cadeia_registral": {},
             "classificacao": {},
             "score_juridico": 0,
         }

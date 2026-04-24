@@ -11,7 +11,6 @@ class SegmentoOCR(BaseModel):
     azimute_raw: Optional[str] = None
     distancia: float = Field(..., gt=0)
 
-    # 🔥 NOVO — pré-processamento inteligente
     @field_validator("azimute_raw", mode="before")
     @classmethod
     def resolver_azimute(cls, v, info):
@@ -28,7 +27,6 @@ class SegmentoOCR(BaseModel):
             or data.get("azimute_decimal")
         )
 
-    # 🔥 VALIDAÇÃO FINAL (mantém rigor)
     @field_validator("azimute_raw")
     @classmethod
     def validar_azimute(cls, v: Optional[str]) -> str:
@@ -61,6 +59,33 @@ class MatriculaOCR(BaseModel):
     numero: Optional[str]
     comarca: Optional[str]
     cartorio: Optional[str]
+
+
+# =========================================================
+# 🔥 NOVO — ATO REGISTRAL (CRÍTICO)
+# =========================================================
+class AtoRegistralOCR(BaseModel):
+    tipo: Optional[str]  # R, AV, etc
+    numero: Optional[str]  # ex: 4 (R-4)
+    codigo: Optional[str]  # ex: R-4, AV-3
+
+    descricao: Optional[str]
+
+    data: Optional[str]
+    protocolo: Optional[str]
+
+    valor: Optional[float]
+
+    envolvidos: List[Dict[str, Optional[str]]] = []
+
+    texto_original: Optional[str]
+
+
+# =========================================================
+# 🔥 NOVO — HISTÓRICO COMPLETO
+# =========================================================
+class HistoricoMatriculaOCR(BaseModel):
+    atos: List[AtoRegistralOCR] = []
 
 
 # =========================================================
@@ -98,7 +123,12 @@ class OCRStructured(BaseModel):
     imovel: ImovelOCR
     proprietarios: List[ProprietarioOCR]
     geometria: GeometriaOCR
+
     confrontantes: List[Dict[str, Optional[str]]] = []
+
+    # 🔥 NOVO (NÃO OBRIGATÓRIO → NÃO QUEBRA PIPELINE)
+    historico: Optional[HistoricoMatriculaOCR] = None
+
     qualidade: QualidadeOCR
 
     @field_validator("proprietarios")

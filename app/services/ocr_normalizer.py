@@ -1128,6 +1128,101 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
 
     return confrontantes
 
+def _resolver_historico(
+    dados: Dict[str, Any],
+    warnings: List[str],
+) -> Dict[str, Any]:
+
+    historico_raw = dados.get("historico") or {}
+
+    atos_raw = (
+        historico_raw.get("atos")
+        if isinstance(historico_raw, dict)
+        else None
+    ) or []
+
+    atos_normalizados: List[Dict[str, Any]] = []
+
+    for i, ato in enumerate(atos_raw, start=1):
+
+        if not isinstance(ato, dict):
+            warnings.append(f"Ato {i} ignorado (estrutura inválida)")
+            continue
+
+        codigo = _normalizar_texto(ato.get("codigo"))
+        tipo = _normalizar_texto_upper_sem_acentos(ato.get("tipo"))
+        numero = _normalizar_texto(ato.get("numero"))
+
+        descricao = _normalizar_texto(
+            _coalesce(
+                ato.get("descricao"),
+                ato.get("texto_original"),
+            )
+        )
+
+        data = _normalizar_texto(ato.get("data"))
+        protocolo = _normalizar_texto(ato.get("protocolo"))
+
+        valor = _to_float(ato.get("valor"))
+
+        envolvidos_raw = ato.get("envolvidos") or []
+        envolvidos: List[Dict[str, Optional[str]]] = []
+
+        if isinstance(envolvidos_raw, list):
+            for p in envolvidos_raw:
+
+                if not isinstance(p, dict):
+                    continue
+
+                nome = _normalizar_texto(p.get("nome"))
+                cpf_cnpj = _normalizar_cpf_cnpj(p.get("cpf_cnpj"))
+
+                if not nome:
+                    continue
+
+                envolvidos.append(
+                    {
+                        "nome": nome,
+                        "cpf_cnpj": cpf_cnpj,
+                    }
+                )
+
+        texto_original = _normalizar_texto(ato.get("texto_original"))
+
+        # 🔒 filtro mínimo
+        if not codigo and not descricao:
+            warnings.append(f"Ato {i} ignorado (sem conteúdo útil)")
+            continue
+
+        atos_normalizados.append(
+            {
+                "tipo": tipo,
+                "numero": numero,
+                "codigo": codigo,
+                "descricao": descricao,
+                "data": data,
+                "protocolo": protocolo,
+                "valor": valor,
+                "envolvidos": envolvidos,
+                "texto_original": texto_original,
+            }
+        )
+
+    # 🔒 ordenação opcional (se tiver número)
+    try:
+        atos_normalizados.sort(
+            key=lambda x: int(re.sub(r"\D", "", x.get("numero") or "0"))
+        )
+    except Exception:
+        pass
+
+    if not atos_normalizados:
+        warnings.append("Nenhum histórico registral identificado")
+
+    return {
+        "atos": atos_normalizados
+    }
+
 
 def _calcular_score_qualidade(
     matricula: Dict[str, Any],
@@ -1266,33 +1361,63 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
          warnings.append("Poucos confrontantes identificados")
 
     # =========================================================
+    # HISTÓRICO REGISTRAL (NOVO)
+    # =========================================================
+    historico = _resolver_historico(dados, warnings)
+    resultado["historico"] = historico
+
+    # =========================================================
     # QUALIDADE
     # =========================================================
     score = _calcular_score_qualidade(
-        matricula=matricula,
-        imovel=imovel,
-        proprietarios=proprietarios,
-        geometria=geometria,
-        confrontantes=confrontantes,
+     matricula=matricula,
+     imovel=imovel,
+     proprietarios=proprietarios,
+     geometria=geometria,
+     confrontantes=confrontantes,
     )
 
-    # 🔥 penalização adicional por dados críticos
+    # =========================================================
+    # 🔥 AJUSTES AVANÇADOS DE QUALIDADE
+    # =========================================================
+
+    # área crítica
     if not resultado.get("area_hectares"):
-        score -= 10
+      score -= 10
 
+    # confrontantes críticos
     if not confrontantes:
-        score -= 15
+      score -= 15
 
+    # geometria crítica
     if (
-        not geometria.get("segmentos")
-        and not geometria.get("memorial_texto")
-        and not geometria.get("geojson")
+     not geometria.get("segmentos")
+     and not geometria.get("memorial_texto")
+     and not geometria.get("geojson")
     ):
-        score -= 20
-    # 🔥 novo ajuste fino
-    if any(not c.get("direcao") for c in confrontantes):
-        score -= 5
+     score -= 20
 
+    # direções incompletas
+    if any(not c.get("direcao") for c in confrontantes):
+     score -= 5
+
+    # =========================================================
+    # 🔥 NOVO — HISTÓRICO REGISTRAL (CRÍTICO)
+    # =========================================================
+    historico_atos = historico.get("atos") if isinstance(historico, dict) else []
+
+    if not historico_atos:
+     score -= 10
+     warnings.append("Histórico registral não identificado")
+
+    elif len(historico_atos) < 2:
+      score -= 5
+
+    warnings.append("Histórico registral muito raso")
+
+    # =========================================================
+    # NORMALIZA SCORE
+    # =========================================================
     score = max(score, 0)
 
     warnings = _deduplicar_warnings(warnings)
