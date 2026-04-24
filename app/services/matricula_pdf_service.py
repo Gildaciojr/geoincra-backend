@@ -713,11 +713,32 @@ class MatriculaPdfService:
             )
 
         # =========================================================
-        # SEÇÃO — CONFRONTANTES
+        # SEÇÃO — CONFRONTANTES (CORRIGIDO PROFISSIONAL)
         # =========================================================
         _draw_section_title("4. CONFRONTANTES")
 
-        confrontantes_rows: List[List[str]] = []
+        # 🔥 STYLE ESPECÍFICO PARA QUEBRA DE TEXTO
+        style_confrontante = ParagraphStyle(
+            name="Confrontante",
+            fontName="Helvetica",
+            fontSize=8,
+            leading=10,
+            wordWrap="CJK",
+        )
+
+        # 🔥 TRUNCAMENTO INTELIGENTE (EVITA EXPLOSÃO DE LAYOUT)
+        def _truncate_text(texto: str, limite: int = 180) -> str:
+            if not texto:
+                return "NÃO INFORMADO"
+
+            texto = " ".join(str(texto).split())
+
+            if len(texto) > limite:
+                return texto[:limite].rstrip() + "..."
+
+            return texto
+
+        confrontantes_rows: List[List[Any]] = []
 
         if confrontantes:
             for idx, cft in enumerate(confrontantes, start=1):
@@ -725,18 +746,22 @@ class MatriculaPdfService:
                 if not isinstance(cft, dict):
                     continue
 
+                # =========================================================
+                # DIREÇÃO
+                # =========================================================
                 try:
                     direcao_raw = (
                         cft.get("lado_normalizado")
                         or cft.get("direcao")
                         or cft.get("lado")
                     )
-
                     direcao = _safe_upper(direcao_raw)
-
                 except Exception:
                     direcao = ""
 
+                # =========================================================
+                # DADOS BASE
+                # =========================================================
                 try:
                     nome = _safe_text(cft.get("nome"))
                 except Exception:
@@ -757,7 +782,9 @@ class MatriculaPdfService:
                 except Exception:
                     descricao = ""
 
-                # 🔥 NOVOS CAMPOS (OCR V2)
+                # =========================================================
+                # CAMPOS OCR V2
+                # =========================================================
                 try:
                     tipo = _safe_text(cft.get("tipo"))
                 except Exception:
@@ -776,6 +803,9 @@ class MatriculaPdfService:
                 if not any([nome, matricula_cft, identificacao, descricao]):
                     continue
 
+                # =========================================================
+                # DESCRIÇÃO COMPOSTA (CONTROLADA)
+                # =========================================================
                 descricao_composta_partes: List[str] = []
 
                 if identificacao:
@@ -796,26 +826,35 @@ class MatriculaPdfService:
                 if descricao:
                     descricao_composta_partes.append(descricao)
 
-                descricao_composta = " | ".join(descricao_composta_partes)
+                descricao_composta = _truncate_text(
+                    " | ".join(descricao_composta_partes),
+                    limite=180,
+                )
 
+                # =========================================================
+                # LINHA FINAL (COM PARAGRAPH PARA QUEBRA REAL)
+                # =========================================================
                 confrontantes_rows.append(
                     [
-                        str(idx),
-                        direcao or "NÃO INFORMADO",
-                        nome or "NÃO INFORMADO",
-                        descricao_composta or "NÃO INFORMADO",
+                        Paragraph(str(idx), style_confrontante),
+                        Paragraph(direcao or "NÃO INFORMADO", style_confrontante),
+                        Paragraph(_truncate_text(nome or "NÃO INFORMADO", 80), style_confrontante),
+                        Paragraph(descricao_composta, style_confrontante),
                     ]
                 )
 
+        # =========================================================
+        # RENDERIZAÇÃO DA TABELA
+        # =========================================================
         if confrontantes_rows:
             _draw_table_with_header(
                 headers=["#", "Direção", "Confrontante", "Detalhamento Técnico"],
                 rows=confrontantes_rows,
                 col_widths=[
                     10 * mm,
-                    24 * mm,
-                    46 * mm,
-                    largura_util - (10 * mm + 24 * mm + 46 * mm),
+                    20 * mm,
+                    45 * mm,
+                    largura_util - (10 * mm + 20 * mm + 45 * mm),
                 ],
             )
         else:
@@ -1066,7 +1105,7 @@ class MatriculaPdfService:
                         "Verifique se a geometria foi corretamente gerada no pipeline."
                     ]
                 )
-                
+
         # =========================================================
         # RODAPÉ
         # =========================================================

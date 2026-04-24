@@ -523,6 +523,81 @@ class CroquiService:
         if not confrontantes:
             return ""
 
+        def _safe_text(valor: Any) -> str:
+            texto = str(valor or "").strip()
+            texto = " ".join(texto.split())
+            return texto
+
+        def _quebrar_linhas(texto: str, limite: int = 24, max_linhas: int = 3) -> List[str]:
+            texto = _safe_text(texto)
+
+            if not texto:
+                return []
+
+            palavras = texto.split()
+            linhas_texto: List[str] = []
+            atual = ""
+
+            for palavra in palavras:
+                candidato = f"{atual} {palavra}".strip()
+
+                if len(candidato) <= limite:
+                    atual = candidato
+                    continue
+
+                if atual:
+                    linhas_texto.append(atual)
+
+                atual = palavra
+
+                if len(linhas_texto) >= max_linhas:
+                    break
+
+            if atual and len(linhas_texto) < max_linhas:
+                linhas_texto.append(atual)
+
+            if len(linhas_texto) > max_linhas:
+                linhas_texto = linhas_texto[:max_linhas]
+
+            if len(" ".join(palavras)) > len(" ".join(linhas_texto)):
+                if linhas_texto:
+                    linhas_texto[-1] = linhas_texto[-1].rstrip(".") + "..."
+
+            return linhas_texto
+
+        def _montar_texto_confrontante(c: Dict[str, Optional[str]]) -> str:
+            nome = _safe_text(c.get("nome"))
+            descricao = _safe_text(c.get("descricao"))
+            identificacao = _safe_text(c.get("identificacao"))
+            matricula = _safe_text(c.get("matricula"))
+            lote = _safe_text(c.get("lote"))
+            gleba = _safe_text(c.get("gleba"))
+
+            partes: List[str] = []
+
+            if nome:
+                partes.append(nome)
+            elif identificacao:
+                partes.append(identificacao)
+            elif descricao:
+                partes.append(descricao)
+
+            complementos: List[str] = []
+
+            if matricula:
+                complementos.append(f"Mat. {matricula}")
+
+            if lote:
+                complementos.append(f"Lote {lote}")
+
+            if gleba:
+                complementos.append(f"Gleba {gleba}")
+
+            if complementos:
+                partes.append(" • ".join(complementos))
+
+            return " • ".join(partes)
+
         linhas = []
         usados_por_segmento: Dict[int, int] = {}
 
@@ -530,41 +605,25 @@ class CroquiService:
 
         for idx, c in enumerate(confrontantes, start=1):
 
-            # =========================================================
-            # DADOS BASE
-            # =========================================================
-            ordem = c.get("ordem_segmento")
-
-            nome = str(c.get("nome") or "").strip()
-            descricao = str(c.get("descricao") or "").strip()
-            lote = str(c.get("lote") or "").strip()
-            gleba = str(c.get("gleba") or "").strip()
-
-            texto_principal = nome or descricao
-            if not texto_principal:
+            if not isinstance(c, dict):
                 continue
 
-            # =========================================================
-            # COMPLEMENTO
-            # =========================================================
-            complemento = []
+            ordem = c.get("ordem_segmento")
 
-            if lote:
-                complemento.append(f"Lote {lote}")
+            texto_final = _montar_texto_confrontante(c)
 
-            if gleba:
-                complemento.append(f"Gleba {gleba}")
-
-            texto_final = texto_principal
-            if complemento:
-                texto_final += " • " + " • ".join(complemento)
+            if not texto_final:
+                continue
 
             # =========================================================
             # POSICIONAMENTO (PRIORIDADE VIA BANCO)
             # =========================================================
-            if ordem and isinstance(ordem, int):
-                segmento_index = ordem - 1
-            else:
+            try:
+                if ordem is not None:
+                    segmento_index = int(ordem) - 1
+                else:
+                    segmento_index = min(idx - 1, total_segmentos - 1)
+            except Exception:
                 segmento_index = min(idx - 1, total_segmentos - 1)
 
             segmento_index = max(0, min(segmento_index, total_segmentos - 1))
@@ -581,58 +640,109 @@ class CroquiService:
             dy = float(p2[1]) - float(p1[1])
 
             norm_len = math.sqrt((dx * dx) + (dy * dy))
+
             if norm_len > 0:
                 nx = -dy / norm_len
                 ny = dx / norm_len
             else:
                 nx = 0.0
-                ny = 0.0
+                ny = -1.0
 
             # =========================================================
-            # CONTROLE DE SOBREPOSIÇÃO (POR SEGMENTO)
+            # CONTROLE DE SOBREPOSIÇÃO
             # =========================================================
             count = usados_por_segmento.get(segmento_index, 0)
             usados_por_segmento[segmento_index] = count + 1
 
-            deslocamento_base = 22.0
-            deslocamento_extra = count * 18.0
+            deslocamento_base = 36.0
+            deslocamento_extra = count * 34.0
             deslocamento_total = deslocamento_base + deslocamento_extra
 
             px = mx + (nx * deslocamento_total)
             py = my + (ny * deslocamento_total)
 
-            largura_box = max(92, min(220, len(texto_final) * 6.8))
-            altura_box = 24
+            # alterna levemente para reduzir empilhamento visual
+            if count % 2 == 1:
+                px += 22.0
+            elif count > 0:
+                px -= 22.0
+
+            linhas_texto = _quebrar_linhas(
+                texto_final,
+                limite=28,
+                max_linhas=3,
+            )
+
+            if not linhas_texto:
+                continue
+
+            largura_box = 190.0
+            altura_linha = 13.0
+            altura_box = max(28.0, 14.0 + (len(linhas_texto) * altura_linha))
+
+            # =========================================================
+            # GARANTE QUE LABEL NÃO SAIA DO CANVAS ÚTIL
+            # =========================================================
+            min_x = CroquiService.DRAW_PAD + 8
+            max_x = CroquiService.SVG_SIZE - CroquiService.RIGHT_INFO_W - 38
+            min_y = CroquiService.HEADER_H + 32
+            max_y = CroquiService.SVG_SIZE - CroquiService.FOOTER_H - 30
+
+            px = max(min_x + largura_box / 2, min(px, max_x - largura_box / 2))
+            py = max(min_y + altura_box / 2, min(py, max_y - altura_box / 2))
+
+            tspans = []
+
+            y_inicio = py - ((len(linhas_texto) - 1) * altura_linha / 2)
+
+            for line_index, linha_texto in enumerate(linhas_texto):
+                tspans.append(
+                    f'''
+                    <tspan
+                        x="{px:.2f}"
+                        y="{(y_inicio + (line_index * altura_linha)):.2f}"
+                    >{CroquiService._escape_xml(linha_texto)}</tspan>
+                    '''
+                )
 
             linhas.append(
                 f'''
             <g>
+                <line
+                    x1="{mx:.2f}"
+                    y1="{my:.2f}"
+                    x2="{px:.2f}"
+                    y2="{py:.2f}"
+                    stroke="#FDBA74"
+                    stroke-width="0.8"
+                    stroke-dasharray="3 3"
+                    opacity="0.70"
+                />
+
                 <rect
                     x="{px - (largura_box / 2):.2f}"
-                    y="{py - 16:.2f}"
+                    y="{py - (altura_box / 2):.2f}"
                     width="{largura_box:.2f}"
-                    height="{altura_box}"
+                    height="{altura_box:.2f}"
                     rx="6"
                     ry="6"
                     fill="#FFF7ED"
                     stroke="#FDBA74"
                     stroke-width="1"
-                    opacity="0.95"
+                    opacity="0.96"
                 />
 
                 <text
-                    x="{px:.2f}"
-                    y="{py:.2f}"
                     text-anchor="middle"
-                    font-size="10.5"
+                    font-size="10"
                     font-family="Arial"
                     font-weight="bold"
                     fill="#7C2D12"
                     paint-order="stroke"
                     stroke="#FFFFFF"
-                    stroke-width="2.5"
+                    stroke-width="2.2"
                 >
-                    {CroquiService._escape_xml(texto_final)}
+                    {"".join(tspans)}
                 </text>
             </g>
                 '''
