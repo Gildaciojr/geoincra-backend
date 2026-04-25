@@ -400,6 +400,7 @@ class CroquiService:
         labels = []
 
         for i, seg in enumerate(segmentos):
+
             if i >= len(norm) - 1:
                 continue
 
@@ -408,37 +409,96 @@ class CroquiService:
 
             mx, my = CroquiService._segment_midpoint((x1, y1), (x2, y2))
 
+            dx = float(x2) - float(x1)
+            dy = float(y2) - float(y1)
+
+            comprimento = math.sqrt((dx * dx) + (dy * dy))
+
+            if comprimento > 0:
+                nx = -dy / comprimento
+                ny = dx / comprimento
+            else:
+                nx = 0.0
+                ny = -1.0
+
+            # =========================================================
+            # 🔥 DESLOCAMENTO INTELIGENTE (CRÍTICO)
+            # =========================================================
+            offset_base = 28.0
+
+            # evita sobreposição com confrontantes (alternância)
+            if i % 2 == 0:
+                offset = offset_base
+            else:
+                offset = offset_base + 16.0
+
+            px = mx + (nx * offset)
+            py = my + (ny * offset)
+
+            # =========================================================
+            # 🔥 TEXTO
+            # =========================================================
             dist = float(seg.get("distancia") or 0)
             az = float(seg.get("azimute_graus") or 0)
 
-            # =========================================================
-            # TEXTO FORMATADO
-            # =========================================================
             texto_dist = f"{CroquiService._format_num(dist, 2)} m"
             texto_az = f"{az:.1f}°"
 
             # =========================================================
-            # LABEL VISUAL PROFISSIONAL
+            # 🔥 TAMANHO DINÂMICO DO BOX
             # =========================================================
+            largura = 92
+            altura = 34
+
+            # =========================================================
+            # 🔥 AJUSTE DE BORDAS DO CANVAS
+            # =========================================================
+            min_x = CroquiService.DRAW_PAD + 8
+            max_x = CroquiService.SVG_SIZE - CroquiService.RIGHT_INFO_W - 28
+
+            min_y = CroquiService.HEADER_H + 24
+            max_y = CroquiService.SVG_SIZE - CroquiService.FOOTER_H - 24
+
+            px = max(min_x + largura / 2, min(px, max_x - largura / 2))
+            py = max(min_y + altura / 2, min(py, max_y - altura / 2))
+
+            # =========================================================
+            # 🔥 LINHA GUIA (ESTILO PROFISSIONAL)
+            # =========================================================
+            linha_guia = f'''
+                <line
+                    x1="{mx:.2f}"
+                    y1="{my:.2f}"
+                    x2="{px:.2f}"
+                    y2="{py:.2f}"
+                    stroke="#94A3B8"
+                    stroke-width="0.8"
+                    stroke-dasharray="3 3"
+                    opacity="0.7"
+                />
+            '''
+
             labels.append(
                 f'''
             <g>
+                {linha_guia}
+
                 <rect
-                    x="{mx - 38:.2f}"
-                    y="{my - 26:.2f}"
-                    width="76"
-                    height="30"
-                    rx="5"
-                    ry="5"
+                    x="{px - (largura / 2):.2f}"
+                    y="{py - (altura / 2):.2f}"
+                    width="{largura}"
+                    height="{altura}"
+                    rx="6"
+                    ry="6"
                     fill="#FFFFFF"
                     stroke="#CBD5E1"
-                    stroke-width="0.8"
-                    opacity="0.92"
+                    stroke-width="1"
+                    opacity="0.96"
                 />
 
                 <text
-                    x="{mx:.2f}"
-                    y="{my - 11:.2f}"
+                    x="{px:.2f}"
+                    y="{py - 4:.2f}"
                     text-anchor="middle"
                     font-size="10.5"
                     font-family="Arial"
@@ -449,8 +509,8 @@ class CroquiService:
                 </text>
 
                 <text
-                    x="{mx:.2f}"
-                    y="{my + 3:.2f}"
+                    x="{px:.2f}"
+                    y="{py + 10:.2f}"
                     text-anchor="middle"
                     font-size="9"
                     font-family="Arial"
@@ -470,9 +530,56 @@ class CroquiService:
     def _render_vertices(norm: List[Tuple[float, float]]) -> str:
         labels = []
 
+        total = len(norm)
+
         for i, (x, y) in enumerate(norm[:-1], start=1):
+
             x = CroquiService._safe_float(x)
             y = CroquiService._safe_float(y)
+
+            # =========================================================
+            # 🔥 DIREÇÃO DO VÉRTICE (BASEADO NO SEGMENTO)
+            # =========================================================
+            try:
+                x2, y2 = norm[i]
+                dx = float(x2) - float(x)
+                dy = float(y2) - float(y)
+            except Exception:
+                dx, dy = 1.0, 0.0
+
+            comprimento = math.sqrt((dx * dx) + (dy * dy))
+
+            if comprimento > 0:
+                nx = -dy / comprimento
+                ny = dx / comprimento
+            else:
+                nx = 1.0
+                ny = -1.0
+
+            # =========================================================
+            # 🔥 POSIÇÃO DO LABEL
+            # =========================================================
+            offset = 16.0
+
+            px = x + (nx * offset)
+            py = y + (ny * offset)
+
+            # alternância leve para evitar colisão
+            if i % 2 == 0:
+                px += 6
+                py -= 6
+
+            # =========================================================
+            # 🔥 LIMITES DO CANVAS
+            # =========================================================
+            min_x = CroquiService.DRAW_PAD + 6
+            max_x = CroquiService.SVG_SIZE - CroquiService.RIGHT_INFO_W - 18
+
+            min_y = CroquiService.HEADER_H + 18
+            max_y = CroquiService.SVG_SIZE - CroquiService.FOOTER_H - 12
+
+            px = max(min_x, min(px, max_x))
+            py = max(min_y, min(py, max_y))
 
             labels.append(
                 f'''
@@ -497,12 +604,13 @@ class CroquiService:
                 />
 
                 <text
-                    x="{x + 10:.2f}"
-                    y="{y - 10:.2f}"
-                    font-size="12"
+                    x="{px:.2f}"
+                    y="{py:.2f}"
+                    font-size="11.5"
                     font-family="Arial"
                     font-weight="bold"
                     fill="#0F172A"
+                    text-anchor="middle"
                     paint-order="stroke"
                     stroke="#FFFFFF"
                     stroke-width="3"
@@ -756,6 +864,60 @@ class CroquiService:
         confrontantes: Optional[List[Dict[str, Optional[str]]]] = None
     ) -> str:
 
+        def _aplicar_enfase_visual_geometria(
+            pontos: List[Tuple[float, float]],
+            size: int,
+        ) -> Tuple[List[Tuple[float, float]], bool]:
+            if not pontos:
+                return pontos, False
+
+            xs = [float(p[0]) for p in pontos]
+            ys = [float(p[1]) for p in pontos]
+
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+
+            largura_atual = max_x - min_x
+            altura_atual = max_y - min_y
+
+            if largura_atual <= 0:
+                return pontos, False
+
+            proporcao = altura_atual / largura_atual
+
+            # =========================================================
+            # CROQUI QUASE LINEAR
+            # =========================================================
+            if proporcao >= 0.18:
+                return pontos, False
+
+            draw = CroquiService._drawing_bounds(size)
+
+            altura_minima_visual = draw["height"] * 0.28
+
+            centro_y = (min_y + max_y) / 2.0
+
+            altura_base = altura_atual if altura_atual > 0 else 1.0
+            fator = altura_minima_visual / altura_base
+
+            fator = max(1.0, min(fator, 18.0))
+
+            pontos_enfatizados: List[Tuple[float, float]] = []
+
+            for index, (x, y) in enumerate(pontos):
+                y_base = float(y)
+
+                if altura_atual <= 3:
+                    alternancia = -1 if index % 2 == 0 else 1
+                    deslocamento = alternancia * (altura_minima_visual / 2.0)
+                    novo_y = centro_y + deslocamento
+                else:
+                    novo_y = centro_y + ((y_base - centro_y) * fator)
+
+                pontos_enfatizados.append((float(x), novo_y))
+
+            return pontos_enfatizados, True
+
         geojson_normalizado = CroquiService._normalizar_geojson(geojson)
         geom = CroquiService._parse_polygon(geojson_normalizado)
 
@@ -782,10 +944,18 @@ class CroquiService:
 
         size = CroquiService.SVG_SIZE
 
-        poly_points = " ".join([f"{x:.2f},{y:.2f}" for x, y in norm])
+        # =========================================================
+        # 🔥 ENFASE VISUAL CONTROLADA
+        # =========================================================
+        norm_visual, geometria_enfatizada = _aplicar_enfase_visual_geometria(
+            norm,
+            size,
+        )
+
+        poly_points = " ".join([f"{x:.2f},{y:.2f}" for x, y in norm_visual])
 
         # =========================================================
-        # MÉTRICAS TÉCNICAS
+        # MÉTRICAS TÉCNICAS — SEM ALTERAR PELA ÊNFASE VISUAL
         # =========================================================
         area_m2 = CroquiService._polygon_area(original_coords)
         area_ha = area_m2 / 10000.0 if area_m2 > 0 else 0.0
@@ -809,7 +979,7 @@ class CroquiService:
             area_ha = CroquiService._safe_float(area_ha)
             perimetro_m = CroquiService._safe_float(perimetro_m)
 
-        total_vertices = max(0, len(norm) - 1)
+        total_vertices = max(0, len(norm_visual) - 1)
         escala_aprox = (1 / scale) * 1000 if scale > 0 else 1
 
         # =========================================================
@@ -830,11 +1000,48 @@ class CroquiService:
             escala_aprox=escala_aprox,
         )
 
-        segmentos_svg = CroquiService._render_segment_labels(norm, geojson_normalizado)
-        vertices_svg = CroquiService._render_vertices(norm)
-        confrontantes_svg = CroquiService._render_confrontantes(confrontantes or [], norm)
+        segmentos_svg = CroquiService._render_segment_labels(
+            norm_visual,
+            geojson_normalizado,
+        )
+
+        vertices_svg = CroquiService._render_vertices(norm_visual)
+
+        confrontantes_svg = CroquiService._render_confrontantes(
+            confrontantes or [],
+            norm_visual,
+        )
 
         draw_bounds = CroquiService._drawing_bounds(size)
+
+        aviso_visual = ""
+        if geometria_enfatizada:
+            aviso_visual = f"""
+  <g>
+    <rect
+      x="{draw_bounds['left'] + 14:.2f}"
+      y="{draw_bounds['top'] + 14:.2f}"
+      width="360"
+      height="34"
+      rx="6"
+      ry="6"
+      fill="#FEF3C7"
+      stroke="#F59E0B"
+      stroke-width="1"
+      opacity="0.96"
+    />
+    <text
+      x="{draw_bounds['left'] + 28:.2f}"
+      y="{draw_bounds['top'] + 36:.2f}"
+      font-size="11"
+      font-family="Arial"
+      font-weight="bold"
+      fill="#92400E"
+    >
+      Geometria visualmente expandida para leitura do croqui.
+    </text>
+  </g>
+"""
 
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
@@ -857,10 +1064,13 @@ class CroquiService:
     ry="8"
   />
 
-  <!-- POLÍGONO PRINCIPAL (REFINADO) -->
+  {aviso_visual}
+
+  <!-- POLÍGONO PRINCIPAL -->
   <polygon
     points="{poly_points}"
-    fill="rgba(15, 23, 42, 0.035)"
+    fill="#EEF2FF"
+    fill-opacity="0.35"
     stroke="#0F172A"
     stroke-width="3.2"
     stroke-linejoin="round"
