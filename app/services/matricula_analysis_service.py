@@ -251,151 +251,54 @@ class MatriculaAnalysisService:
                 return "AV"
 
         return texto.upper() if texto else None
-
+    
+    # =========================================================
+    # PROPRIETÁRIOS
+    # =========================================================
     @staticmethod
-    def _extrair_numero_ato(valor: Any, codigo: Optional[str] = None) -> Optional[str]:
-        texto = MatriculaAnalysisService._safe_text(valor)
+    def _extrair_proprietarios(texto: str) -> List[Dict[str, Any]]:
+        proprietarios: List[Dict[str, Any]] = []
 
-        if texto:
-            numeros = re.sub(r"\D", "", texto)
-            if numeros:
-                return numeros
+        if not texto or not isinstance(texto, str):
+            return proprietarios
 
-        if codigo:
-            numeros = re.sub(r"\D", "", codigo)
-            if numeros:
-                return numeros
+        linhas = texto.split(".")
 
-        return None
+        for linha in linhas:
+            if "propriet" not in linha.lower():
+                continue
 
-    @staticmethod
-    def _classificar_tipo_juridico(descricao: Optional[str]) -> Optional[str]:
-        if not descricao:
-            return None
+            linha_limpa = MatriculaAnalysisService._safe_text(linha)
 
-        texto = MatriculaAnalysisService._normalizar_texto(descricao)
+            if not linha_limpa:
+                continue
 
-        for tipo, palavras in MatriculaAnalysisService.TIPOS_ATO_KEYWORDS.items():
-            for palavra in palavras:
-                if palavra in texto:
-                    return tipo
+            cpf_match = re.search(MatriculaAnalysisService.REGEX_CPF, linha)
+            cnpj_match = re.search(MatriculaAnalysisService.REGEX_CNPJ, linha)
 
-        return None
+            cpf = cpf_match.group(0) if cpf_match else None
+            cnpj = cnpj_match.group(0) if cnpj_match else None
 
-# =========================================================
-# PROPRIETÁRIOS
-# =========================================================
-@staticmethod
-def _extrair_proprietarios(texto: str) -> List[Dict[str, Any]]:
-    proprietarios: List[Dict[str, Any]] = []
+            cpf_cnpj = cpf if cpf else cnpj
 
-    if not texto or not isinstance(texto, str):
-        return proprietarios
+            # =========================================================
+            # 🔥 LIMPEZA DO NOME (REMOVE DOCUMENTOS)
+            # =========================================================
+            nome = linha_limpa
 
-    linhas = texto.split(".")
+            if cpf:
+                nome = nome.replace(cpf, "")
+            if cnpj:
+                nome = nome.replace(cnpj, "")
 
-    for linha in linhas:
-        if "propriet" not in linha.lower():
-            continue
+            nome = nome.strip(" -,:;")
 
-        linha_limpa = MatriculaAnalysisService._safe_text(linha)
+            if not nome:
+                continue
 
-        if not linha_limpa:
-            continue
-
-        cpf_match = re.search(MatriculaAnalysisService.REGEX_CPF, linha)
-        cnpj_match = re.search(MatriculaAnalysisService.REGEX_CNPJ, linha)
-
-        cpf = cpf_match.group(0) if cpf_match else None
-        cnpj = cnpj_match.group(0) if cnpj_match else None
-
-        cpf_cnpj = cpf if cpf else cnpj
-
-        # =========================================================
-        # 🔥 LIMPEZA DO NOME (REMOVE DOCUMENTOS)
-        # =========================================================
-        nome = linha_limpa
-
-        if cpf:
-            nome = nome.replace(cpf, "")
-        if cnpj:
-            nome = nome.replace(cnpj, "")
-
-        nome = nome.strip(" -,:;")
-
-        if not nome:
-            continue
-
-        # =========================================================
-        # 🔥 DEFINIÇÃO SEGURA DO TIPO
-        # =========================================================
-        if cpf:
-            tipo = "pf"
-        elif cnpj:
-            tipo = "pj"
-        else:
-            tipo = "indefinido"
-
-        proprietarios.append(
-            {
-                "nome": nome[:150],
-                "cpf": cpf,
-                "cnpj": cnpj,
-                "cpf_cnpj": cpf_cnpj,
-                "tipo": tipo,
-                "origem": "texto",
-            }
-        )
-
-    return proprietarios
-
-
-@staticmethod
-def _extrair_proprietarios_ocr(
-    dados_ocr: Optional[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-
-    if not dados_ocr or not isinstance(dados_ocr, dict):
-        return []
-
-    proprietarios_raw = dados_ocr.get("proprietarios") or []
-
-    if not isinstance(proprietarios_raw, list):
-        return []
-
-    proprietarios: List[Dict[str, Any]] = []
-
-    for item in proprietarios_raw:
-        if not isinstance(item, dict):
-            continue
-
-        nome = MatriculaAnalysisService._safe_text(item.get("nome"))
-        cpf_cnpj_raw = MatriculaAnalysisService._safe_text(item.get("cpf_cnpj"))
-
-        if not nome:
-            continue
-
-        # =========================================================
-        # 🔥 NORMALIZAÇÃO DE DOCUMENTO
-        # =========================================================
-        somente_digitos = re.sub(r"\D", "", str(cpf_cnpj_raw or ""))
-
-        cpf = None
-        cnpj = None
-
-        if len(somente_digitos) == 11:
-            cpf = cpf_cnpj_raw
-        elif len(somente_digitos) == 14:
-            cnpj = cpf_cnpj_raw
-
-        cpf_cnpj = cpf if cpf else cnpj
-
-        # =========================================================
-        # 🔥 DEFINIÇÃO SEGURA DO TIPO
-        # =========================================================
-        tipo = item.get("tipo")
-
-        if not tipo:
+            # =========================================================
+            # 🔥 DEFINIÇÃO SEGURA DO TIPO
+            # =========================================================
             if cpf:
                 tipo = "pf"
             elif cnpj:
@@ -403,18 +306,86 @@ def _extrair_proprietarios_ocr(
             else:
                 tipo = "indefinido"
 
-        proprietarios.append(
-            {
-                "nome": nome,
-                "cpf": cpf,
-                "cnpj": cnpj,
-                "cpf_cnpj": cpf_cnpj,
-                "tipo": str(tipo).lower(),
-                "origem": "ocr",
-            }
-        )
+            proprietarios.append(
+                {
+                    "nome": nome[:150],
+                    "cpf": cpf,
+                    "cnpj": cnpj,
+                    "cpf_cnpj": cpf_cnpj,
+                    "tipo": tipo,
+                    "origem": "texto",
+                }
+            )
 
-    return proprietarios
+        return proprietarios
+
+
+    @staticmethod
+    def _extrair_proprietarios_ocr(
+        dados_ocr: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+
+        if not dados_ocr or not isinstance(dados_ocr, dict):
+            return []
+
+        proprietarios_raw = dados_ocr.get("proprietarios") or []
+
+        if not isinstance(proprietarios_raw, list):
+            return []
+
+        proprietarios: List[Dict[str, Any]] = []
+
+        for item in proprietarios_raw:
+            if not isinstance(item, dict):
+                continue
+
+            nome = MatriculaAnalysisService._safe_text(item.get("nome"))
+            cpf_cnpj_raw = MatriculaAnalysisService._safe_text(item.get("cpf_cnpj"))
+
+            if not nome:
+                continue
+
+            # =========================================================
+            # 🔥 NORMALIZAÇÃO DE DOCUMENTO
+            # =========================================================
+            somente_digitos = re.sub(r"\D", "", str(cpf_cnpj_raw or ""))
+
+            cpf = None
+            cnpj = None
+
+            if len(somente_digitos) == 11:
+                cpf = cpf_cnpj_raw
+            elif len(somente_digitos) == 14:
+                cnpj = cpf_cnpj_raw
+
+            cpf_cnpj = cpf if cpf else cnpj
+
+            # =========================================================
+            # 🔥 DEFINIÇÃO SEGURA DO TIPO
+            # =========================================================
+            tipo = item.get("tipo")
+
+            if not tipo:
+                if cpf:
+                    tipo = "pf"
+                elif cnpj:
+                    tipo = "pj"
+                else:
+                    tipo = "indefinido"
+
+            proprietarios.append(
+                {
+                    "nome": nome,
+                    "cpf": cpf,
+                    "cnpj": cnpj,
+                    "cpf_cnpj": cpf_cnpj,
+                    "tipo": str(tipo).lower(),
+                    "origem": "ocr",
+                }
+            )
+
+        return proprietarios
+
 
     @staticmethod
     def _merge_proprietarios(
@@ -446,6 +417,38 @@ def _extrair_proprietarios_ocr(
             resultado.append(item)
 
         return resultado
+
+
+    @staticmethod
+    def _extrair_numero_ato(valor: Any, codigo: Optional[str] = None) -> Optional[str]:
+        texto = MatriculaAnalysisService._safe_text(valor)
+
+        if texto:
+            numeros = re.sub(r"\D", "", texto)
+            if numeros:
+                return numeros
+
+        if codigo:
+            numeros = re.sub(r"\D", "", codigo)
+            if numeros:
+                return numeros
+
+        return None
+
+    @staticmethod
+    def _classificar_tipo_juridico(descricao: Optional[str]) -> Optional[str]:
+        if not descricao:
+            return None
+
+        texto = MatriculaAnalysisService._normalizar_texto(descricao)
+
+        for tipo, palavras in MatriculaAnalysisService.TIPOS_ATO_KEYWORDS.items():
+            for palavra in palavras:
+                if palavra in texto:
+                    return tipo
+
+        return None
+
 
     # =========================================================
     # AVERBAÇÕES
