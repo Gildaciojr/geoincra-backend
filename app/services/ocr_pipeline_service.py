@@ -444,6 +444,7 @@ class OcrPipelineService:
 
                 if not isinstance(geojson_obj, dict) or not geojson_obj.get("type"):
                     raise Exception("GeoJSON inválido ou sem campo 'type'")
+
                 # =========================================================
                 # 🔥 ANÁLISE DO REFERENCIAL
                 # =========================================================
@@ -530,154 +531,6 @@ class OcrPipelineService:
                     "fonte": fonte_geom,
                 }
 
-                # =========================================================
-                # 🔥 PROCESSAMENTO DE CONFRONTANTES
-                # =========================================================
-                try:
-                    from app.services.confrontante_service import ConfrontanteService
-                    from app.models.confrontante import Confrontante
-
-                    confrontantes_raw = dados.get("confrontantes") or []
-                    confrontantes_processados = []
-
-                    if isinstance(confrontantes_raw, list):
-
-                        for index, c in enumerate(confrontantes_raw, start=1):
-
-                            if not isinstance(c, dict):
-                                continue
-
-                            # ================= NORMALIZAÇÃO =================
-                            lado = OcrPipelineService._normalizar_texto_simples(
-                                c.get("lado") or c.get("direcao")
-                            )
-
-                            lado_norm = OcrPipelineService._normalizar_texto_simples(
-                                c.get("lado_normalizado")
-                            )
-
-                            nome = OcrPipelineService._normalizar_texto_simples(c.get("nome"))
-                            descricao = OcrPipelineService._normalizar_texto_simples(c.get("descricao"))
-
-                            matricula_cft = OcrPipelineService._normalizar_numero_matricula(
-                                c.get("matricula")
-                            )
-
-                            identificacao = OcrPipelineService._normalizar_texto_simples(
-                                c.get("identificacao")
-                            )
-
-                            cpf_cnpj = OcrPipelineService._normalizar_texto_simples(
-                                c.get("cpf_cnpj")
-                            )
-
-                            tipo = OcrPipelineService._normalizar_texto_simples(c.get("tipo"))
-                            lote = OcrPipelineService._normalizar_texto_simples(c.get("lote"))
-                            gleba = OcrPipelineService._normalizar_texto_simples(c.get("gleba"))
-
-                            # ================= TEXTO BASE =================
-                            texto_base = (
-                                nome
-                                or identificacao
-                                or descricao
-                                or (f"MATRÍCULA {matricula_cft}" if matricula_cft else None)
-                                or None
-                            )
-
-                            # ================= FILTRO =================
-                            if not any([
-                                nome,
-                                descricao,
-                                matricula_cft,
-                                identificacao,
-                                cpf_cnpj,
-                                tipo,
-                                lote,
-                                gleba
-                            ]):
-                                continue
-
-                            # ================= GARANTIA DESCRIÇÃO =================
-                            if not descricao:
-                                descricao = texto_base
-
-                            # ================= PAYLOAD =================
-                            confrontantes_processados.append(
-                                {
-                                    "lado": lado,
-                                    "lado_normalizado": lado_norm,
-                                    "nome": nome,
-                                    "descricao": descricao,
-                                    "matricula": matricula_cft,
-                                    "identificacao": identificacao,
-                                    "cpf_cnpj": cpf_cnpj,
-                                    "tipo": tipo,
-                                    "lote": lote,
-                                    "gleba": gleba,
-                                    "texto_resumo": texto_base,
-                                }
-                            )
-
-                    if not confrontantes_processados:
-                        print("⚠️ Nenhum confrontante válido após normalização")
-
-                except Exception as exc:
-                    print(f"Erro ao processar confrontantes: {str(exc)}")
-
-            except Exception as exc:
-                OcrPipelineService._rollback_safely(db)
-                result["errors"].append(f"Geometria: {str(exc)}")
-                # =========================================================
-                # 🔥 PERSISTÊNCIA (OCR → BANCO)
-                # =========================================================
-                try:
-                    confrontantes = ConfrontanteService.processar_confrontantes(
-                        db=db,
-                        imovel=imovel,
-                        geometria=geometria,
-                        confrontantes_ocr=confrontantes_processados,
-                    )
-
-                    print(f"✅ Confrontantes processados: {len(confrontantes)}")
-
-                    # =========================================================
-                    # 🔥 BUSCA DO BANCO (FONTE OFICIAL)
-                    # =========================================================
-                    try:
-                        confrontantes_db = (
-                            db.query(Confrontante)
-                            .filter(Confrontante.imovel_id == imovel.id)
-                            .all()
-                        ) or []
-
-                        print(f"📦 Confrontantes carregados do banco: {len(confrontantes_db)}")
-
-                    except Exception as exc_db:
-                        confrontantes_db = []
-                        print(f"⚠️ Falha ao carregar confrontantes do banco: {str(exc_db)}")
-
-                    result["steps"]["confrontantes"] = {
-                        "success": True,
-                        "total": len(confrontantes),
-                        "normalizados": len(confrontantes_processados),
-                        "persistidos": len(confrontantes_db),
-                        "fonte_geom": fonte_geom,
-                    }
-
-                except Exception as exc:
-                    OcrPipelineService._rollback_safely(db)
-
-                    confrontantes_db = []
-
-                    result["steps"]["confrontantes"] = {
-                        "success": False,
-                        "message": f"Falha ao processar confrontantes: {str(exc)}",
-                    }
-
-                    result["errors"].append(f"Confrontantes: {str(exc)}")
-
-                    print(f"❌ Falha confrontantes: {str(exc)}")
-
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
 
@@ -695,6 +548,169 @@ class OcrPipelineService:
                 "message": "Nenhuma fonte geométrica válida encontrada.",
                 "fonte": fonte_geom,
             }
+
+        # =========================================================
+        # 🔥 PROCESSAMENTO DE CONFRONTANTES
+        # =========================================================
+        try:
+            from app.services.confrontante_service import ConfrontanteService
+            from app.models.confrontante import Confrontante
+
+            confrontantes_raw = dados.get("confrontantes") or []
+            confrontantes_processados: list[dict[str, object | None]] = []
+
+            if isinstance(confrontantes_raw, list):
+
+                for index, c in enumerate(confrontantes_raw, start=1):
+
+                    if not isinstance(c, dict):
+                        continue
+
+                    # ================= NORMALIZAÇÃO =================
+                    lado = OcrPipelineService._normalizar_texto_simples(
+                        c.get("lado") or c.get("direcao")
+                    )
+
+                    lado_norm = OcrPipelineService._normalizar_texto_simples(
+                        c.get("lado_normalizado")
+                    )
+
+                    nome = OcrPipelineService._normalizar_texto_simples(
+                        c.get("nome")
+                    )
+
+                    descricao = OcrPipelineService._normalizar_texto_simples(
+                        c.get("descricao")
+                    )
+
+                    matricula_cft = OcrPipelineService._normalizar_numero_matricula(
+                        c.get("matricula") or c.get("numero_matricula")
+                    )
+
+                    identificacao = OcrPipelineService._normalizar_texto_simples(
+                        c.get("identificacao")
+                    )
+
+                    cpf_cnpj = OcrPipelineService._normalizar_texto_simples(
+                        c.get("cpf_cnpj")
+                    )
+
+                    tipo = OcrPipelineService._normalizar_texto_simples(
+                        c.get("tipo")
+                    )
+
+                    lote = OcrPipelineService._normalizar_texto_simples(
+                        c.get("lote")
+                    )
+
+                    gleba = OcrPipelineService._normalizar_texto_simples(
+                        c.get("gleba")
+                    )
+
+                    # ================= TEXTO BASE =================
+                    texto_base = (
+                        nome
+                        or identificacao
+                        or descricao
+                        or (f"MATRÍCULA {matricula_cft}" if matricula_cft else None)
+                        or None
+                    )
+
+                    # ================= FILTRO =================
+                    if not any([
+                        lado,
+                        lado_norm,
+                        nome,
+                        descricao,
+                        matricula_cft,
+                        identificacao,
+                        cpf_cnpj,
+                        tipo,
+                        lote,
+                        gleba,
+                    ]):
+                        continue
+
+                    # ================= GARANTIA DESCRIÇÃO =================
+                    if not descricao:
+                        descricao = texto_base
+
+                    # ================= PAYLOAD =================
+                    confrontantes_processados.append(
+                        {
+                            "lado": lado,
+                            "lado_normalizado": lado_norm,
+                            "nome": nome,
+                            "descricao": descricao,
+                            "matricula": matricula_cft,
+                            "identificacao": identificacao,
+                            "cpf_cnpj": cpf_cnpj,
+                            "tipo": tipo,
+                            "lote": lote,
+                            "gleba": gleba,
+                            "texto_resumo": texto_base,
+                        }
+                    )
+
+            if confrontantes_processados:
+                confrontantes = ConfrontanteService.processar_confrontantes(
+                    db=db,
+                    imovel=imovel,
+                    geometria=geometria,
+                    confrontantes_ocr=confrontantes_processados,
+                )
+
+                print(f"✅ Confrontantes processados: {len(confrontantes)}")
+
+                try:
+                    confrontantes_db = (
+                        db.query(Confrontante)
+                        .filter(Confrontante.imovel_id == imovel.id)
+                        .all()
+                    ) or []
+
+                    print(f"📦 Confrontantes carregados do banco: {len(confrontantes_db)}")
+
+                except Exception as exc_db:
+                    confrontantes_db = []
+                    print(f"⚠️ Falha ao carregar confrontantes do banco: {str(exc_db)}")
+
+                result["steps"]["confrontantes"] = {
+                    "success": True,
+                    "total": len(confrontantes),
+                    "normalizados": len(confrontantes_processados),
+                    "persistidos": len(confrontantes_db),
+                    "fonte_geom": fonte_geom,
+                }
+
+            else:
+                confrontantes_db = []
+
+                result["steps"]["confrontantes"] = {
+                    "success": False,
+                    "total": 0,
+                    "normalizados": 0,
+                    "persistidos": 0,
+                    "message": "Nenhum confrontante válido após normalização.",
+                    "fonte_geom": fonte_geom,
+                }
+
+                print("⚠️ Nenhum confrontante válido após normalização")
+
+        except Exception as exc:
+            OcrPipelineService._rollback_safely(db)
+
+            confrontantes_db = []
+
+            result["steps"]["confrontantes"] = {
+                "success": False,
+                "message": f"Falha ao processar confrontantes: {str(exc)}",
+                "fonte_geom": fonte_geom,
+            }
+
+            result["errors"].append(f"Confrontantes: {str(exc)}")
+
+            print(f"❌ Falha confrontantes: {str(exc)}")
 
         # ================= MEMORIAL =================
         if geometria:
@@ -1064,24 +1080,87 @@ class OcrPipelineService:
                 confrontantes_formatados = []
 
                 try:
+
                     if isinstance(confrontantes_db, list) and confrontantes_db:
+
                         for c in confrontantes_db:
+
                             confrontantes_formatados.append(
                                 {
-                                    "nome": getattr(c, "nome", None),
-                                    "descricao": getattr(c, "descricao", None),
-                                    "lado": getattr(c, "lado", None),
-                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
-                                    "matricula": getattr(c, "matricula", None),
-                                    "identificacao": getattr(c, "identificacao", None),
+                                    # =====================================================
+                                    # IDENTIFICAÇÃO PRINCIPAL
+                                    # =====================================================
+                                    "nome": getattr(
+                                        c,
+                                        "nome_confrontante",
+                                        None,
+                                    ),
 
-                                    # 🔥 NOVO — CONSISTÊNCIA TOTAL COM PIPELINE
-                                    "cpf_cnpj": getattr(c, "cpf_cnpj", None),
-                                    "tipo": getattr(c, "tipo", None),
-                                    "lote": getattr(c, "lote", None),
-                                    "gleba": getattr(c, "gleba", None),
+                                    "descricao": getattr(
+                                        c,
+                                        "descricao",
+                                        None,
+                                    ),
+
+                                    # =====================================================
+                                    # DIREÇÃO
+                                    # =====================================================
+                                    "lado": getattr(
+                                        c,
+                                        "lado_label",
+                                        None,
+                                    ),
+
+                                    "lado_normalizado": getattr(
+                                        c,
+                                        "direcao_normalizada",
+                                        None,
+                                    ),
+
+                                    # =====================================================
+                                    # MATRÍCULA / IDENTIFICAÇÃO
+                                    # =====================================================
+                                    "matricula": getattr(
+                                        c,
+                                        "matricula_confrontante",
+                                        None,
+                                    ),
+
+                                    "identificacao": getattr(
+                                        c,
+                                        "identificacao_imovel_confrontante",
+                                        None,
+                                    ),
+
+                                    # =====================================================
+                                    # DADOS COMPLEMENTARES
+                                    # =====================================================
+                                    "cpf_cnpj": getattr(
+                                        c,
+                                        "cpf_cnpj",
+                                        None,
+                                    ),
+
+                                    "tipo": getattr(
+                                        c,
+                                        "tipo",
+                                        None,
+                                    ),
+
+                                    "lote": getattr(
+                                        c,
+                                        "lote",
+                                        None,
+                                    ),
+
+                                    "gleba": getattr(
+                                        c,
+                                        "gleba",
+                                        None,
+                                    ),
                                 }
                             )
+
                 except Exception:
                     confrontantes_formatados = []
 
@@ -1372,15 +1451,30 @@ class OcrPipelineService:
         if sigef_obrigatorio:
             sucesso_base = sucesso_base and sigef_ok
 
-        # 🔥 VALIDAÇÃO DE QUALIDADE OCR
+        # =========================================================
+        # 🔥 QUALIDADE OCR (NÃO BLOQUEANTE)
+        # =========================================================
         qualidade_minima_ok = score_ocr >= 60
 
         if not qualidade_minima_ok:
-            result["errors"].append(
-                f"Qualidade OCR insuficiente para sucesso final do pipeline (score={score_ocr})."
+
+            warnings = result.get("warnings")
+
+            if not isinstance(warnings, list):
+                warnings = []
+                result["warnings"] = warnings
+
+            warnings.append(
+                (
+                    "OCR com score reduzido "
+                    f"(score={score_ocr}), porém pipeline permaneceu executável."
+                )
             )
 
-        result["success"] = sucesso_base and qualidade_minima_ok
+        # =========================================================
+        # 🔥 SUCESSO FINAL REAL
+        # =========================================================
+        result["success"] = sucesso_base
 
         # 🔥 DEBUG / RASTREABILIDADE
         result["validacao_pipeline"] = {
@@ -1472,12 +1566,81 @@ class OcrPipelineService:
         )
 
         # =========================================================
+        # 🔥 FALLBACK PELO TEXTO INTEGRAL OCR
+        # =========================================================
+        if not numero_matricula:
+
+            texto_integral = " ".join(
+                [
+                    str(dados.get("texto") or ""),
+                    str(dados.get("texto_extraido") or ""),
+                    str(dados.get("inteiro_teor") or ""),
+                    str(dados.get("conteudo") or ""),
+                ]
+            )
+
+            texto_integral = " ".join(texto_integral.split())
+
+            regex_matriculas = [
+
+                # =====================================================
+                # MATRÍCULA Nº 12.345
+                # =====================================================
+                r"(?:MATR[IÍ]CULA\s*(?:N[º°O.]*)?\s*)(\d{1,3}(?:\.\d{3})+|\d+)",
+
+                # =====================================================
+                # SOB Nº 12.345
+                # =====================================================
+                r"(?:SOB\s*(?:N[º°O.]*)?\s*)(\d{1,3}(?:\.\d{3})+|\d+)",
+
+                # =====================================================
+                # M-12.345
+                # =====================================================
+                r"\bM[-\s]?(\d{1,3}(?:\.\d{3})+|\d+)\b",
+
+                # =====================================================
+                # MATRÍCULA: 12345
+                # =====================================================
+                r"(?:MATR[IÍ]CULA[:\s]*)(\d+)",
+
+                # =====================================================
+                # LIVRO/FICHA
+                # =====================================================
+                r"(?:FICHA|LIVRO)[^\d]{0,20}(\d{1,3}(?:\.\d{3})+|\d+)",
+            ]
+
+            for pattern in regex_matriculas:
+
+                try:
+
+                    match = re.search(
+                        pattern,
+                        texto_integral,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if match:
+
+                        candidato = match.group(1)
+
+                        candidato = OcrPipelineService._normalizar_numero_matricula(
+                            candidato
+                        )
+
+                        if candidato:
+                            numero_matricula = candidato
+                            break
+
+                except Exception:
+                    continue
+
+        # =========================================================
         # 🔥 NORMALIZAÇÃO FINAL
         # =========================================================
         numero_matricula = OcrPipelineService._normalizar_numero_matricula(
             numero_matricula
         )
-
+        
         # =========================================================
         # 🔴 VALIDAÇÃO FINAL
         # =========================================================
@@ -2341,3 +2504,54 @@ class OcrPipelineService:
             pass
 
         raise ValueError(f"Ângulo inválido: {valor}")
+    
+    @staticmethod
+    def _parse_distancia(valor: Any) -> float:
+
+        if valor is None:
+            raise ValueError("Distância ausente")
+
+        # =========================================================
+        # NORMALIZAÇÃO BASE
+        # =========================================================
+        texto = str(valor).strip().upper()
+
+        if not texto:
+            raise ValueError("Distância vazia")
+
+        # =========================================================
+        # NORMALIZAÇÕES OCR
+        # =========================================================
+        texto = texto.replace(",", ".")
+        texto = texto.replace("METROS", "")
+        texto = texto.replace("METRO", "")
+        texto = texto.replace("MTS", "")
+        texto = texto.replace("MT", "")
+        texto = texto.replace("M.", "")
+        texto = texto.replace("M", "")
+
+        texto = " ".join(texto.split())
+
+        # =========================================================
+        # EXTRAÇÃO NUMÉRICA
+        # =========================================================
+        match = re.search(
+            r"(-?\d+(?:\.\d+)?)",
+            texto,
+        )
+
+        if not match:
+            raise ValueError(f"Distância inválida: {valor}")
+
+        distancia = float(match.group(1))
+
+        # =========================================================
+        # VALIDAÇÕES TÉCNICAS
+        # =========================================================
+        if distancia <= 0:
+            raise ValueError("Distância <= 0")
+
+        if distancia > 100000:
+            raise ValueError("Distância excessiva")
+
+        return distancia

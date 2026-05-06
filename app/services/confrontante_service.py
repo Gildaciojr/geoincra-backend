@@ -484,84 +484,271 @@ class ConfrontanteService:
         return None
 
     @staticmethod
-    def extrair_confrontantes_do_texto(texto: str) -> list[dict[str, Any]]:
-        import re
+    def extrair_confrontantes_do_texto(
+        texto: str,
+    ) -> list[dict[str, Any]]:
 
         if not texto:
             return []
 
-        texto = str(texto)
-        texto_upper = texto.upper()
+        texto_original = str(texto)
 
-        # =========================================================
-        # REGEX BASE (direções)
-        # =========================================================
-        padrao = re.findall(
-            r"(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE)\s*[:\-]\s*(.*?)(?=(NORTE|SUL|LESTE|OESTE|NORDESTE|NOROESTE|SUDESTE|SUDOESTE|$))",
-            texto_upper,
-            re.DOTALL,
+        texto_normalizado = " ".join(texto_original.split())
+
+        texto_upper = (
+            texto_normalizado.upper()
+            .replace("À", "A")
+            .replace("Á", "A")
+            .replace("Ã", "A")
+            .replace("Â", "A")
+            .replace("É", "E")
+            .replace("Ê", "E")
+            .replace("Í", "I")
+            .replace("Ó", "O")
+            .replace("Ô", "O")
+            .replace("Õ", "O")
+            .replace("Ú", "U")
+            .replace("Ç", "C")
         )
 
-        confrontantes = []
+        # =========================================================
+        # DIREÇÕES SUPORTADAS
+        # =========================================================
+        direcoes_regex = (
+            r"NORTE|SUL|LESTE|OESTE|"
+            r"NORDESTE|NOROESTE|SUDESTE|SUDOESTE|"
+            r"\bN\b|\bS\b|\bL\b|\bO\b|"
+            r"\bNE\b|\bNW\b|\bSE\b|\bSW\b"
+        )
 
-        for direcao, conteudo, _ in padrao:
+        # =========================================================
+        # LOCALIZA TODOS OS BLOCOS DE DIREÇÃO
+        # =========================================================
+        matches = list(
+            re.finditer(
+                rf"({direcoes_regex})",
+                texto_upper,
+                flags=re.IGNORECASE,
+            )
+        )
 
-            descricao = conteudo.strip()
+        if not matches:
+            return []
 
-            if not descricao:
+        confrontantes: list[dict[str, Any]] = []
+
+        # =========================================================
+        # PROCESSAMENTO POR BLOCOS
+        # =========================================================
+        for idx, match in enumerate(matches):
+
+            try:
+
+                inicio = match.start()
+
+                if idx + 1 < len(matches):
+                    fim = matches[idx + 1].start()
+                else:
+                    fim = len(texto_normalizado)
+
+                bloco_original = texto_normalizado[inicio:fim].strip()
+
+                bloco_upper = bloco_original.upper()
+
+                # =====================================================
+                # DIREÇÃO
+                # =====================================================
+                direcao_bruta = match.group(1)
+
+                direcao = ConfrontanteService._normalizar_direcao(
+                    direcao_bruta
+                )
+
+                # =====================================================
+                # MATRÍCULA
+                # =====================================================
+                matricula = None
+
+                regex_matriculas = [
+
+                    r"(?:MATR[IÍ]CULA\s*(?:N[º°O.]*)?\s*)(\d{1,3}(?:\.\d{3})+|\d+)",
+
+                    r"(?:SOB\s*(?:N[º°O.]*)?\s*)(\d{1,3}(?:\.\d{3})+|\d+)",
+
+                    r"\bM[-\s]?(\d{1,3}(?:\.\d{3})+|\d+)\b",
+
+                    r"\b(\d{1,3}(?:\.\d{3})+)\b",
+                ]
+
+                for pattern in regex_matriculas:
+
+                    matricula_match = re.search(
+                        pattern,
+                        bloco_original,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if matricula_match:
+
+                        matricula = (
+                            ConfrontanteService._normalizar_matricula(
+                                matricula_match.group(1)
+                            )
+                        )
+
+                        if matricula:
+                            break
+
+                # =====================================================
+                # LOTE
+                # =====================================================
+                lote = None
+
+                lote_match = re.search(
+                    r"\bLOTE\s+([A-Z0-9\-\/]+)",
+                    bloco_upper,
+                )
+
+                if lote_match:
+                    lote = lote_match.group(1).strip()
+
+                # =====================================================
+                # GLEBA
+                # =====================================================
+                gleba = None
+
+                gleba_match = re.search(
+                    r"\bGLEBA\s+([A-Z0-9\-\/]+)",
+                    bloco_upper,
+                )
+
+                if gleba_match:
+                    gleba = gleba_match.group(1).strip()
+
+                # =====================================================
+                # CPF/CNPJ
+                # =====================================================
+                cpf_cnpj = None
+
+                cpf_match = re.search(
+                    r"\b\d{3}\.?\d{3}\.?\d{3}\-?\d{2}\b",
+                    bloco_original,
+                )
+
+                if cpf_match:
+                    cpf_cnpj = cpf_match.group(0)
+
+                # =====================================================
+                # NOME DO CONFRONTANTE
+                # =====================================================
+                nome = None
+
+                nome_patterns = [
+
+                    r"(?:PROPRIEDADE\s+DE)\s+([A-ZÀ-Ú\s]+)",
+
+                    r"(?:PERTENCENTE\s+A)\s+([A-ZÀ-Ú\s]+)",
+
+                    r"(?:DE\s+PROPRIEDADE\s+DE)\s+([A-ZÀ-Ú\s]+)",
+
+                    r"(?:CONFRONTANDO\s+COM)\s+([A-ZÀ-Ú\s]+)",
+                ]
+
+                for pattern in nome_patterns:
+
+                    nome_match = re.search(
+                        pattern,
+                        bloco_upper,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if nome_match:
+
+                        nome_extraido = (
+                            nome_match.group(1)
+                            .strip(" -,:;.")
+                            .strip()
+                        )
+
+                        nome_extraido = re.sub(
+                            r"\s{2,}",
+                            " ",
+                            nome_extraido,
+                        )
+
+                        if (
+                            len(nome_extraido) >= 5
+                            and not ConfrontanteService._is_texto_institucional(
+                                nome_extraido
+                            )
+                        ):
+                            nome = nome_extraido
+                            break
+
+                # =====================================================
+                # DESCRIÇÃO LIMPA
+                # =====================================================
+                descricao = bloco_original
+
+                descricao = re.sub(
+                    r"\s{2,}",
+                    " ",
+                    descricao,
+                )
+
+                descricao = descricao.strip(" -,:;\n\t")
+
+                # =====================================================
+                # VALIDAÇÃO SEMÂNTICA
+                # =====================================================
+                if not any([
+                    nome,
+                    matricula,
+                    lote,
+                    gleba,
+                    descricao,
+                ]):
+                    continue
+
+                confrontantes.append(
+                    {
+                        "direcao": direcao,
+                        "nome": nome,
+                        "descricao": descricao,
+                        "matricula": matricula,
+                        "cpf_cnpj": cpf_cnpj,
+                        "lote": lote,
+                        "gleba": gleba,
+                    }
+                )
+
+            except Exception:
                 continue
 
-            # =====================================================
-            # LIMPEZA BÁSICA
-            # =====================================================
-            descricao = " ".join(descricao.split())
+        # =========================================================
+        # DEDUPLICAÇÃO FINAL
+        # =========================================================
+        resultado_final: list[dict[str, Any]] = []
 
-            # remove múltiplos separadores
-            descricao = re.sub(r"\s{2,}", " ", descricao)
+        chaves_vistas: set[tuple[str, str, str, str]] = set()
 
-            # =====================================================
-            # EXTRAÇÃO DE MATRÍCULA (se existir)
-            # =====================================================
-            matricula_match = re.search(
-                r"\b\d{1,6}[/\.-]?\d{0,4}\b",
-                descricao
+        for item in confrontantes:
+
+            chave = (
+                str(item.get("direcao") or "").strip().upper(),
+                str(item.get("nome") or "").strip().upper(),
+                str(item.get("matricula") or "").strip().upper(),
+                str(item.get("descricao") or "").strip().upper(),
             )
 
-            matricula = None
-
-            if matricula_match:
-                matricula = matricula_match.group(0)
-
-            # =====================================================
-            # REMOÇÃO DE TERMOS INSTITUCIONAIS
-            # =====================================================
-            termos_ruins = [
-                "CARTORIO",
-                "CARTÓRIO",
-                "REGISTRO DE IMOVEIS",
-                "REGISTRO DE IMÓVEIS",
-                "OFICIO",
-                "OFÍCIO",
-                "COMARCA",
-            ]
-
-            descricao_limpa = descricao
-
-            for termo in termos_ruins:
-                descricao_limpa = descricao_limpa.replace(termo, "")
-
-            descricao_limpa = descricao_limpa.strip(" -,:;")
-
-            if not descricao_limpa and not matricula:
+            if chave in chaves_vistas:
                 continue
 
-            confrontantes.append({
-                "direcao": direcao,
-                "descricao": descricao_limpa or descricao,
-                "matricula": matricula,
-            })
+            chaves_vistas.add(chave)
 
-        return confrontantes
+            resultado_final.append(item)
+
+        return resultado_final
 
     @staticmethod
     def processar_confrontantes(
