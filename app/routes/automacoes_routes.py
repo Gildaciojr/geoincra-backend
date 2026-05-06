@@ -318,9 +318,21 @@ def criar_job_consulta_matriculas(
 
 class RiDigitalSolicitarCertidaoPayload(BaseModel):
     project_id: int
+
     cidade: str
+
     cartorio: str
-    matricula: str
+
+    # =========================================================
+    # LEGADO (compatibilidade)
+    # =========================================================
+    matricula: Optional[str] = None
+
+    # =========================================================
+    # NOVO PADRÃO
+    # =========================================================
+    matriculas: Optional[list[str]] = None
+
     finalidade: int
 
 
@@ -361,6 +373,57 @@ def criar_job_solicitar_certidao(
             detail="Credenciais do RI Digital não encontradas",
         )
 
+    # =========================================================
+    # NORMALIZAÇÃO DE MATRÍCULAS
+    # =========================================================
+    matriculas_normalizadas: list[str] = []
+
+    # ---------------------------------------------------------
+    # NOVO FORMATO
+    # ---------------------------------------------------------
+    if payload.matriculas:
+
+        for item in payload.matriculas:
+
+            valor = str(item or "").strip()
+
+            if not valor:
+                continue
+
+            if valor not in matriculas_normalizadas:
+                matriculas_normalizadas.append(valor)
+
+    # ---------------------------------------------------------
+    # LEGADO
+    # ---------------------------------------------------------
+    elif payload.matricula:
+
+        valor = str(payload.matricula).strip()
+
+        if valor:
+            matriculas_normalizadas.append(valor)
+
+    # =========================================================
+    # VALIDAÇÃO
+    # =========================================================
+    if not matriculas_normalizadas:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhuma matrícula válida foi informada",
+        )
+
+    # =========================================================
+    # LIMITE DEFENSIVO
+    # =========================================================
+    if len(matriculas_normalizadas) > 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Máximo permitido: 2 matrículas por solicitação",
+        )
+
+    # =========================================================
+    # JOB
+    # =========================================================
     job = AutomationJob(
         user_id=user.id,
         project_id=payload.project_id,
@@ -369,7 +432,17 @@ def criar_job_solicitar_certidao(
         payload_json={
             "cidade": payload.cidade,
             "cartorio": payload.cartorio,
-            "matricula": payload.matricula,
+
+            # =================================================
+            # NOVO PADRÃO
+            # =================================================
+            "matriculas": matriculas_normalizadas,
+
+            # =================================================
+            # COMPATIBILIDADE LEGADA
+            # =================================================
+            "matricula": matriculas_normalizadas[0],
+
             "finalidade": payload.finalidade,
         },
     )
@@ -378,17 +451,27 @@ def criar_job_solicitar_certidao(
     db.commit()
     db.refresh(job)
 
+    # =========================================================
+    # TIMELINE
+    # =========================================================
+    descricao_matriculas = ", ".join(matriculas_normalizadas)
+
     TimelineService.registrar_evento(
         db=db,
         project_id=payload.project_id,
         titulo="Automação RI Digital — Solicitação de Certidão",
-        descricao=f"Matrícula {payload.matricula} — {payload.cartorio}",
+        descricao=(
+            f"Matrículas: {descricao_matriculas} "
+            f"— {payload.cartorio}"
+        ),
         status="Pendente",
     )
 
     return {
         "job_id": str(job.id),
         "status": str(job.status),
+        "matriculas": matriculas_normalizadas,
+        "total_matriculas": len(matriculas_normalizadas),
     }
 
 
