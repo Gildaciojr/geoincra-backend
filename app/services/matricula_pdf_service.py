@@ -533,13 +533,17 @@ class MatriculaPdfService:
 
         def _draw_table_with_header(
             headers: List[str],
-            rows: List[List[str]],
+            rows: List[List[Paragraph | str]],
             col_widths: List[float],
+            cell_style: Optional[ParagraphStyle] = None,
         ):
             nonlocal y
 
             if not headers or not isinstance(headers, list):
                 return
+
+            if cell_style is None:
+                cell_style = style_bloco
 
             # =========================================================
             # NORMALIZAÇÃO DOS HEADERS
@@ -588,7 +592,7 @@ class MatriculaPdfService:
                             linha.append(
                                 Paragraph(
                                     texto if texto else "",
-                                    style_confrontante,
+                                    cell_style,
                                 )
                             )
 
@@ -597,7 +601,7 @@ class MatriculaPdfService:
                             linha.append(
                                 Paragraph(
                                     "",
-                                    style_confrontante,
+                                    cell_style,
                                 )
                             )
 
@@ -612,7 +616,7 @@ class MatriculaPdfService:
                 data = [
                     headers_seguro,
                     [
-                        Paragraph("", style_confrontante)
+                        Paragraph("", cell_style)
                         for _ in headers_seguro
                     ],
                 ]
@@ -1122,7 +1126,7 @@ class MatriculaPdfService:
         # =========================================================
         _draw_section_title("4. CONFRONTANTES")
 
-        style_confrontante = ParagraphStyle(
+        cell_style = ParagraphStyle(
             name="Confrontante",
             fontName="Helvetica",
             fontSize=7.4,
@@ -1253,10 +1257,10 @@ class MatriculaPdfService:
                 # =========================================================
                 confrontantes_rows.append(
                     [
-                        Paragraph(str(idx), style_confrontante),
-                        Paragraph(direcao, style_confrontante),
-                        Paragraph(_truncate_text(texto_base, 80), style_confrontante),
-                        Paragraph(descricao_composta, style_confrontante),
+                        Paragraph(str(idx), cell_style),
+                        Paragraph(direcao, cell_style),
+                        Paragraph(_truncate_text(texto_base, 80), cell_style),
+                        Paragraph(descricao_composta, cell_style),
                     ]
                 )
 
