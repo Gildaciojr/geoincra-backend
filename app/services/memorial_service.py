@@ -350,6 +350,7 @@ class MemorialService:
                 return texto or None
 
             def _formatar_confrontante(c: dict[str, Any]) -> str | None:
+
                 if not isinstance(c, dict):
                     return None
 
@@ -359,7 +360,9 @@ class MemorialService:
                     or c.get("confrontante")
                 )
 
-                descricao = _safe_text(c.get("descricao"))
+                descricao = _safe_text(
+                    c.get("descricao")
+                )
 
                 identificacao = _safe_text(
                     c.get("identificacao_imovel_confrontante")
@@ -374,9 +377,21 @@ class MemorialService:
                     or c.get("numero_matricula")
                 )
 
-                lote = _safe_text(c.get("lote"))
-                gleba = _safe_text(c.get("gleba"))
-                tipo = _safe_text(c.get("tipo"))
+                lote = _safe_text(
+                    c.get("lote")
+                )
+
+                gleba = _safe_text(
+                    c.get("gleba")
+                )
+
+                tipo = _safe_text(
+                    c.get("tipo")
+                )
+
+                cpf_cnpj = _safe_text(
+                    c.get("cpf_cnpj")
+                )
 
                 partes: List[str] = []
 
@@ -384,45 +399,155 @@ class MemorialService:
                 # PRIORIDADE AGRÁRIA — LOTE / GLEBA
                 # =====================================================
                 if lote or gleba:
-                    texto_imovel = "imóvel rural"
+
+                    texto_imovel = "o imóvel rural"
 
                     if lote:
-                        texto_imovel += f" Lote {lote}"
+                        texto_imovel += f" denominado Lote {lote}"
 
                     if gleba:
                         texto_imovel += f" da Gleba {gleba}"
 
-                    partes.append(texto_imovel)
+                    partes.append(
+                        texto_imovel
+                    )
 
                 # =====================================================
-                # IDENTIFICAÇÃO PRINCIPAL
+                # DESCRIÇÃO TÉCNICA COMPLETA
                 # =====================================================
-                if identificacao:
-                    partes.append(identificacao)
-
-                elif nome:
-                    partes.append(nome)
-
                 elif descricao:
-                    partes.append(descricao)
+
+                    descricao_limpa = (
+                        " ".join(descricao.split())
+                        .strip(" ,;.-")
+                    )
+
+                    partes.append(
+                        descricao_limpa
+                    )
+
+                # =====================================================
+                # IDENTIFICAÇÃO NOMINAL
+                # =====================================================
+                elif nome:
+
+                    nome_limpo = (
+                        " ".join(nome.split())
+                        .strip(" ,;.-")
+                    )
+
+                    if (
+                        tipo
+                        and tipo.upper()
+                        not in {
+                            "IMOVEL_RURAL",
+                            "IMÓVEL_RURAL",
+                        }
+                    ):
+
+                        partes.append(
+                            f"{nome_limpo}, tipo {tipo}"
+                        )
+
+                    else:
+
+                        partes.append(
+                            nome_limpo
+                        )
+
+                # =====================================================
+                # IDENTIFICAÇÃO SECUNDÁRIA
+                # =====================================================
+                elif identificacao:
+
+                    identificacao_limpa = (
+                        " ".join(identificacao.split())
+                        .strip(" ,;.-")
+                    )
+
+                    partes.append(
+                        identificacao_limpa
+                    )
+
+                # =====================================================
+                # CPF/CNPJ
+                # =====================================================
+                if cpf_cnpj:
+
+                    partes.append(
+                        f"CPF/CNPJ nº {cpf_cnpj}"
+                    )
 
                 # =====================================================
                 # MATRÍCULA DO CONFRONTANTE
                 # =====================================================
                 if matricula:
-                    partes.append(f"matrícula {matricula}")
+
+                    partes.append(
+                        f"matrícula nº {matricula}"
+                    )
 
                 # =====================================================
-                # TIPO DO CONFRONTANTE
+                # TIPO COMPLEMENTAR
                 # =====================================================
-                if tipo and tipo.upper() not in {"IMOVEL_RURAL", "IMÓVEL_RURAL"}:
-                    partes.append(f"tipo {tipo}")
+                if (
+                    tipo
+                    and tipo.upper()
+                    not in {
+                        "IMOVEL_RURAL",
+                        "IMÓVEL_RURAL",
+                    }
+                ):
 
-                if not partes:
+                    tipo_ja_informado = any(
+                        f"tipo {tipo}".lower() in p.lower()
+                        for p in partes
+                    )
+
+                    if not tipo_ja_informado:
+
+                        partes.append(
+                            f"tipo {tipo}"
+                        )
+
+                # =====================================================
+                # GARANTIA FINAL
+                # =====================================================
+                partes_limpas: List[str] = []
+
+                for p in partes:
+
+                    if not p:
+                        continue
+
+                    p_limpo = (
+                        " ".join(str(p).split())
+                        .strip(" ,;.-")
+                    )
+
+                    if not p_limpo:
+                        continue
+
+                    partes_limpas.append(
+                        p_limpo
+                    )
+
+                if not partes_limpas:
                     return None
 
-                texto_final = " ".join(partes)
-                texto_final = texto_final.replace("  ", " ").strip()
+                # =====================================================
+                # TEXTO FINAL PROFISSIONAL
+                # =====================================================
+                texto_final = ", ".join(partes_limpas)
+
+                texto_final = (
+                    texto_final
+                    .replace(" ,", ",")
+                    .replace(" .", ".")
+                    .replace(" ;", ";")
+                    .replace("  ", " ")
+                    .strip()
+                )
 
                 return texto_final or None
 

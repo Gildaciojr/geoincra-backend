@@ -609,9 +609,9 @@ class OcrPipelineService:
 
                     # ================= TEXTO BASE =================
                     texto_base = (
-                        nome
+                        descricao
                         or identificacao
-                        or descricao
+                        or nome
                         or (f"MATRÍCULA {matricula_cft}" if matricula_cft else None)
                         or None
                     )
@@ -724,7 +724,8 @@ class OcrPipelineService:
                     if isinstance(confrontantes_db, list) and confrontantes_db:
                         for c in confrontantes_db:
                             confrontantes_formatados.append(
-                                {
+                                {   "ordem_segmento": getattr(c, "ordem_segmento", None),
+                                    "lado_label": getattr(c, "lado_label", None),
                                     "nome": getattr(c, "nome_confrontante", None),
                                     "descricao": getattr(c, "descricao", None),
 
@@ -1640,7 +1641,7 @@ class OcrPipelineService:
         numero_matricula = OcrPipelineService._normalizar_numero_matricula(
             numero_matricula
         )
-        
+
         # =========================================================
         # 🔴 VALIDAÇÃO FINAL
         # =========================================================
