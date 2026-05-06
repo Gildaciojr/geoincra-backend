@@ -282,86 +282,139 @@ class MatriculaAnalysisService:
 
         return None
 
-    # =========================================================
-    # PROPRIETÁRIOS
-    # =========================================================
-    @staticmethod
-    def _extrair_proprietarios(texto: str) -> List[Dict[str, Any]]:
-        proprietarios: List[Dict[str, Any]] = []
+# =========================================================
+# PROPRIETÁRIOS
+# =========================================================
+@staticmethod
+def _extrair_proprietarios(texto: str) -> List[Dict[str, Any]]:
+    proprietarios: List[Dict[str, Any]] = []
 
-        linhas = texto.split(".")
-
-        for linha in linhas:
-            if "propriet" not in linha:
-                continue
-
-            nome = MatriculaAnalysisService._safe_text(linha)
-
-            if not nome:
-                continue
-
-            cpf = re.search(MatriculaAnalysisService.REGEX_CPF, linha)
-            cnpj = re.search(MatriculaAnalysisService.REGEX_CNPJ, linha)
-
-            proprietarios.append(
-                {
-                    "nome": nome[:150],
-                    "cpf": cpf.group(0) if cpf else None,
-                    "cnpj": cnpj.group(0) if cnpj else None,
-                    "cpf_cnpj": cpf.group(0) if cpf else cnpj.group(0) if cnpj else None,
-                    "tipo": "pj" if cnpj else "pf",
-                    "origem": "texto",
-                }
-            )
-
+    if not texto or not isinstance(texto, str):
         return proprietarios
 
-    @staticmethod
-    def _extrair_proprietarios_ocr(
-        dados_ocr: Optional[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+    linhas = texto.split(".")
 
-        if not dados_ocr or not isinstance(dados_ocr, dict):
-            return []
+    for linha in linhas:
+        if "propriet" not in linha.lower():
+            continue
 
-        proprietarios_raw = dados_ocr.get("proprietarios") or []
+        linha_limpa = MatriculaAnalysisService._safe_text(linha)
 
-        if not isinstance(proprietarios_raw, list):
-            return []
+        if not linha_limpa:
+            continue
 
-        proprietarios: List[Dict[str, Any]] = []
+        cpf_match = re.search(MatriculaAnalysisService.REGEX_CPF, linha)
+        cnpj_match = re.search(MatriculaAnalysisService.REGEX_CNPJ, linha)
 
-        for item in proprietarios_raw:
-            if not isinstance(item, dict):
-                continue
+        cpf = cpf_match.group(0) if cpf_match else None
+        cnpj = cnpj_match.group(0) if cnpj_match else None
 
-            nome = MatriculaAnalysisService._safe_text(item.get("nome"))
-            cpf_cnpj = MatriculaAnalysisService._safe_text(item.get("cpf_cnpj"))
+        cpf_cnpj = cpf if cpf else cnpj
 
-            if not nome:
-                continue
+        # =========================================================
+        # 🔥 LIMPEZA DO NOME (REMOVE DOCUMENTOS)
+        # =========================================================
+        nome = linha_limpa
 
-            somente_digitos = re.sub(r"\D", "", str(cpf_cnpj or ""))
+        if cpf:
+            nome = nome.replace(cpf, "")
+        if cnpj:
+            nome = nome.replace(cnpj, "")
 
-            cpf = cpf_cnpj if len(somente_digitos) == 11 else None
-            cnpj = cpf_cnpj if len(somente_digitos) == 14 else None
+        nome = nome.strip(" -,:;")
 
-            tipo = item.get("tipo")
-            if not tipo:
-                tipo = "pj" if cnpj else "pf"
+        if not nome:
+            continue
 
-            proprietarios.append(
-                {
-                    "nome": nome,
-                    "cpf": cpf,
-                    "cnpj": cnpj,
-                    "cpf_cnpj": cpf_cnpj,
-                    "tipo": str(tipo).lower(),
-                    "origem": "ocr",
-                }
-            )
+        # =========================================================
+        # 🔥 DEFINIÇÃO SEGURA DO TIPO
+        # =========================================================
+        if cpf:
+            tipo = "pf"
+        elif cnpj:
+            tipo = "pj"
+        else:
+            tipo = "indefinido"
 
-        return proprietarios
+        proprietarios.append(
+            {
+                "nome": nome[:150],
+                "cpf": cpf,
+                "cnpj": cnpj,
+                "cpf_cnpj": cpf_cnpj,
+                "tipo": tipo,
+                "origem": "texto",
+            }
+        )
+
+    return proprietarios
+
+
+@staticmethod
+def _extrair_proprietarios_ocr(
+    dados_ocr: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+
+    if not dados_ocr or not isinstance(dados_ocr, dict):
+        return []
+
+    proprietarios_raw = dados_ocr.get("proprietarios") or []
+
+    if not isinstance(proprietarios_raw, list):
+        return []
+
+    proprietarios: List[Dict[str, Any]] = []
+
+    for item in proprietarios_raw:
+        if not isinstance(item, dict):
+            continue
+
+        nome = MatriculaAnalysisService._safe_text(item.get("nome"))
+        cpf_cnpj_raw = MatriculaAnalysisService._safe_text(item.get("cpf_cnpj"))
+
+        if not nome:
+            continue
+
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO DE DOCUMENTO
+        # =========================================================
+        somente_digitos = re.sub(r"\D", "", str(cpf_cnpj_raw or ""))
+
+        cpf = None
+        cnpj = None
+
+        if len(somente_digitos) == 11:
+            cpf = cpf_cnpj_raw
+        elif len(somente_digitos) == 14:
+            cnpj = cpf_cnpj_raw
+
+        cpf_cnpj = cpf if cpf else cnpj
+
+        # =========================================================
+        # 🔥 DEFINIÇÃO SEGURA DO TIPO
+        # =========================================================
+        tipo = item.get("tipo")
+
+        if not tipo:
+            if cpf:
+                tipo = "pf"
+            elif cnpj:
+                tipo = "pj"
+            else:
+                tipo = "indefinido"
+
+        proprietarios.append(
+            {
+                "nome": nome,
+                "cpf": cpf,
+                "cnpj": cnpj,
+                "cpf_cnpj": cpf_cnpj,
+                "tipo": str(tipo).lower(),
+                "origem": "ocr",
+            }
+        )
+
+    return proprietarios
 
     @staticmethod
     def _merge_proprietarios(
@@ -731,25 +784,31 @@ class MatriculaAnalysisService:
         cadeia: Dict[str, Any],
     ) -> Dict[str, Any]:
 
-        status = "regular"
+        cadeia_valida = cadeia.get("cadeia_valida") if cadeia else None
 
-        if not proprietarios:
-            status = "irregular"
-
-        if cadeia and not cadeia.get("cadeia_valida"):
-            status = "cadeia_irregular"
-
+        # =========================================================
+        # 🔥 PRIORIDADE JURÍDICA (ORDEM CORRETA)
+        # =========================================================
         if riscos:
             status = "risco"
 
-        if onus:
+        elif onus:
             status = "com_onus"
+
+        elif cadeia and not cadeia_valida:
+            status = "cadeia_irregular"
+
+        elif not proprietarios:
+            status = "irregular"
+
+        else:
+            status = "regular"
 
         return {
             "status": status,
             "tem_onus": bool(onus),
             "tem_risco": bool(riscos),
-            "cadeia_valida": cadeia.get("cadeia_valida") if cadeia else None,
+            "cadeia_valida": cadeia_valida,
             "total_atos": cadeia.get("total_atos") if cadeia else 0,
             "total_registros": cadeia.get("total_registros") if cadeia else 0,
             "total_averbacoes": cadeia.get("total_averbacoes") if cadeia else 0,
@@ -769,6 +828,12 @@ class MatriculaAnalysisService:
 
         score = 100
 
+        cadeia_valida = cadeia.get("cadeia_valida") if cadeia else None
+        total_atos = cadeia.get("total_atos", 0) if cadeia else 0
+
+        # =========================================================
+        # 🔴 PENALIDADES PRINCIPAIS
+        # =========================================================
         if not proprietarios:
             score -= 30
 
@@ -778,11 +843,12 @@ class MatriculaAnalysisService:
         if riscos:
             score -= 30
 
-        if not cadeia.get("cadeia_valida"):
+        if cadeia_valida is False:
             score -= 15
 
-        total_atos = cadeia.get("total_atos", 0)
-
+        # =========================================================
+        # 🔴 QUALIDADE DA CADEIA REGISTRAL
+        # =========================================================
         if total_atos == 0:
             score -= 15
         elif total_atos < 2:
@@ -790,7 +856,16 @@ class MatriculaAnalysisService:
         elif total_atos < 4:
             score -= 5
 
-        return max(score, 0)
+        # =========================================================
+        # 🔒 PROTEÇÃO FINAL
+        # =========================================================
+        if score < 0:
+            return 0
+
+        if score > 100:
+            return 100
+
+        return score
 
     # =========================================================
     # FALLBACK

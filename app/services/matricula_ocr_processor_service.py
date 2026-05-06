@@ -578,197 +578,211 @@ class MatriculaOcrProcessorService:
                 "message": str(e)
             }
 
-    @staticmethod
-    def _salvar_confrontantes(
-        db: Session,
-        matricula: Matricula,
-        confrontantes: List[Dict[str, Any]]
-    ):
+@staticmethod
+def _salvar_confrontantes(
+    db: Session,
+    matricula: Matricula,
+    confrontantes: List[Dict[str, Any]]
+):
 
-        imovel_id = matricula.imovel_id
+    imovel_id = matricula.imovel_id
 
-        if not imovel_id:
-            return
+    if not imovel_id:
+        return
 
-        def _limpar_texto(valor: Any) -> str | None:
-            if not valor:
-                return None
-            texto = str(valor).strip()
-            texto = " ".join(texto.split())
-            return texto or None
+    def _limpar_texto(valor: Any) -> str | None:
+        if not valor:
+            return None
+        texto = str(valor).strip()
+        texto = " ".join(texto.split())
+        return texto or None
 
-        def _normalizar_matricula(valor: Any) -> str | None:
-            if not valor:
-                return None
-            texto = re.sub(r"[^\d./-]", "", str(valor))
-            return texto or None
+    def _normalizar_matricula(valor: Any) -> str | None:
+        if not valor:
+            return None
+        texto = re.sub(r"[^\d./-]", "", str(valor))
+        return texto or None
 
-        def _is_texto_institucional(texto: str | None) -> bool:
-            if not texto:
-                return False
+    def _is_texto_institucional(texto: str | None) -> bool:
+        if not texto:
+            return False
 
-            texto_upper = texto.upper()
+        texto_upper = texto.upper()
 
-            palavras_ruins = [
-                "CARTORIO",
-                "CARTÓRIO",
-                "REGISTRO DE IMOVEIS",
-                "REGISTRO DE IMÓVEIS",
-                "OFICIO",
-                "OFÍCIO",
-                "COMARCA",
-            ]
+        palavras_ruins = [
+            "CARTORIO",
+            "CARTÓRIO",
+            "REGISTRO DE IMOVEIS",
+            "REGISTRO DE IMÓVEIS",
+            "OFICIO",
+            "OFÍCIO",
+            "COMARCA",
+        ]
 
-            return any(p in texto_upper for p in palavras_ruins)
+        return any(p in texto_upper for p in palavras_ruins)
 
-        for item in confrontantes:
+    def _merge_texto(atual: Any, novo: Any) -> str | None:
+        atual_limpo = _limpar_texto(atual)
+        novo_limpo = _limpar_texto(novo)
 
-            if not isinstance(item, dict):
-                continue
+        if atual_limpo and novo_limpo:
+            return novo_limpo if len(novo_limpo) > len(atual_limpo) else atual_limpo
 
-            # =========================================================
-            # DIREÇÃO (NORMALIZAÇÃO SEGURA)
-            # =========================================================
-            direcao = (
-                item.get("direcao")
-                or item.get("lado_normalizado")
-                or item.get("lado")
+        return novo_limpo or atual_limpo
+
+    for item in confrontantes:
+
+        if not isinstance(item, dict):
+            continue
+
+        # =========================================================
+        # DIREÇÃO
+        # =========================================================
+        direcao = (
+            item.get("direcao")
+            or item.get("lado_normalizado")
+            or item.get("lado")
+        )
+
+        if isinstance(direcao, str):
+            direcao = direcao.strip().upper()
+
+        if not direcao:
+            direcao = "NAO_INFORMADO"
+
+        direcao_normalizada = (
+            item.get("direcao_normalizada")
+            or item.get("lado_normalizado")
+        )
+
+        if isinstance(direcao_normalizada, str):
+            direcao_normalizada = direcao_normalizada.strip().upper()
+
+        # =========================================================
+        # CAMPOS
+        # =========================================================
+        nome = _limpar_texto(item.get("nome") or item.get("descricao"))
+        identificacao = _limpar_texto(item.get("identificacao"))
+        descricao = _limpar_texto(item.get("descricao"))
+        matricula_cft = _normalizar_matricula(item.get("matricula"))
+
+        tipo = _limpar_texto(item.get("tipo"))
+        lote = _limpar_texto(item.get("lote"))
+        gleba = _limpar_texto(item.get("gleba"))
+
+        # =========================================================
+        # SANITIZAÇÃO
+        # =========================================================
+        if _is_texto_institucional(nome):
+            nome = None
+
+        if _is_texto_institucional(descricao):
+            descricao = None
+
+        # =========================================================
+        # VALIDAÇÃO (AGORA CORRETA)
+        # =========================================================
+        if not any([nome, matricula_cft, identificacao, descricao, tipo, lote, gleba]):
+            continue
+
+        # =========================================================
+        # DEDUPLICAÇÃO
+        # =========================================================
+        existente = (
+            db.query(Confrontante)
+            .filter(
+                Confrontante.imovel_id == imovel_id,
+                Confrontante.direcao == direcao,
+                Confrontante.nome_confrontante == nome,
+                Confrontante.identificacao_imovel_confrontante == identificacao,
+            )
+            .first()
+        )
+
+        if not existente and matricula_cft:
+            existente = (
+                db.query(Confrontante)
+                .filter(
+                    Confrontante.imovel_id == imovel_id,
+                    Confrontante.matricula_confrontante == matricula_cft,
+                )
+                .first()
             )
 
-            if isinstance(direcao, str):
-                direcao = direcao.strip().upper()
-
-            if not direcao:
-                direcao = "NAO_INFORMADO"
-
-            direcao_normalizada = (
-                item.get("direcao_normalizada")
-                or item.get("lado_normalizado")
-            )
-
-            if isinstance(direcao_normalizada, str):
-                direcao_normalizada = direcao_normalizada.strip().upper()
-
-            # =========================================================
-            # CAMPOS BASE
-            # =========================================================
-            nome = _limpar_texto(item.get("nome") or item.get("descricao"))
-            identificacao = _limpar_texto(item.get("identificacao"))
-            descricao = _limpar_texto(item.get("descricao"))
-            matricula_cft = _normalizar_matricula(item.get("matricula"))
-
-            tipo = _limpar_texto(item.get("tipo"))
-            lote = _limpar_texto(item.get("lote"))
-            gleba = _limpar_texto(item.get("gleba"))
-
-            # =========================================================
-            # SANITIZAÇÃO SEMÂNTICA
-            # =========================================================
-            if _is_texto_institucional(nome):
-                nome = None
-
-            if _is_texto_institucional(descricao):
-                descricao = None
-
-            # =========================================================
-            # VALIDAÇÃO DE CONTEÚDO REAL
-            # =========================================================
-            if not any([nome, matricula_cft, identificacao, descricao]):
-                continue
-
-            # =========================================================
-            # 🔥 DEDUPLICAÇÃO PROFISSIONAL (MULTI-CRITÉRIO)
-            # =========================================================
+        if not existente:
             existente = (
                 db.query(Confrontante)
                 .filter(
                     Confrontante.imovel_id == imovel_id,
                     Confrontante.direcao == direcao,
-                    Confrontante.nome_confrontante == nome,
-                    Confrontante.identificacao_imovel_confrontante == identificacao,
+                    Confrontante.descricao == descricao,
                 )
                 .first()
             )
 
-            if not existente and matricula_cft:
-                existente = (
-                    db.query(Confrontante)
-                    .filter(
-                        Confrontante.imovel_id == imovel_id,
-                        Confrontante.matricula_confrontante == matricula_cft,
-                    )
-                    .first()
-                )
+        observacoes_partes = ["Atualizado automaticamente via OCR"]
 
-            if not existente:
-                existente = (
-                    db.query(Confrontante)
-                    .filter(
-                        Confrontante.imovel_id == imovel_id,
-                        Confrontante.direcao == direcao,
-                        Confrontante.descricao == descricao,
-                    )
-                    .first()
-                )
+        if tipo:
+            observacoes_partes.append(f"TIPO={tipo}")
+        if lote:
+            observacoes_partes.append(f"LOTE={lote}")
+        if gleba:
+            observacoes_partes.append(f"GLEBA={gleba}")
 
-            # =========================================================
-            # 🔥 UPDATE INTELIGENTE (MERGE)
-            # =========================================================
-            if existente:
+        observacoes_texto = " | ".join(observacoes_partes)
 
-                if not existente.nome_confrontante and nome:
-                    existente.nome_confrontante = nome
+        # =========================================================
+        # UPDATE (AGORA COMPLETO)
+        # =========================================================
+        if existente:
 
-                if not existente.matricula_confrontante and matricula_cft:
-                    existente.matricula_confrontante = matricula_cft
+            existente.matricula_id = existente.matricula_id or matricula.id
+            existente.direcao = direcao
+            existente.direcao_normalizada = direcao_normalizada or existente.direcao_normalizada
 
-                if not existente.identificacao_imovel_confrontante and identificacao:
-                    existente.identificacao_imovel_confrontante = identificacao
-
-                if not existente.descricao and descricao:
-                    existente.descricao = descricao
-
-                if direcao_normalizada and not existente.direcao_normalizada:
-                    existente.direcao_normalizada = direcao_normalizada
-
-                if not existente.observacoes:
-                    existente.observacoes = "Atualizado automaticamente via OCR (merge inteligente)"
-
-                continue
-
-            # =========================================================
-            # 🔥 OBSERVAÇÕES COMPLETAS
-            # =========================================================
-            observacoes_partes = [
-                "Criado automaticamente via OCR"
-            ]
-
-            if tipo:
-                observacoes_partes.append(f"TIPO={tipo}")
-            if lote:
-                observacoes_partes.append(f"LOTE={lote}")
-            if gleba:
-                observacoes_partes.append(f"GLEBA={gleba}")
-
-            observacoes_texto = " | ".join(observacoes_partes)
-
-            # =========================================================
-            # 🔥 INSERT CONTROLADO + RASTREABILIDADE
-            # =========================================================
-            db.add(
-                Confrontante(
-                    imovel_id=imovel_id,
-                    geometria_id=None,
-                    direcao=direcao,
-                    direcao_normalizada=direcao_normalizada,
-                    nome_confrontante=nome,
-                    matricula_confrontante=matricula_cft,
-                    matricula_id=matricula.id,
-                    identificacao_imovel_confrontante=identificacao,
-                    descricao=descricao,
-                    observacoes=f"{observacoes_texto} | matricula_ref={matricula.numero_matricula}",
-                )
+            existente.nome_confrontante = _merge_texto(existente.nome_confrontante, nome)
+            existente.matricula_confrontante = _merge_texto(existente.matricula_confrontante, matricula_cft)
+            existente.identificacao_imovel_confrontante = _merge_texto(
+                existente.identificacao_imovel_confrontante,
+                identificacao,
             )
+            existente.descricao = _merge_texto(existente.descricao, descricao)
+
+            # 🔥 NOVO (CRÍTICO)
+            existente.tipo = _merge_texto(existente.tipo, tipo)
+            existente.lote = _merge_texto(existente.lote, lote)
+            existente.gleba = _merge_texto(existente.gleba, gleba)
+
+            existente.observacoes = _merge_texto(
+                existente.observacoes,
+                f"{observacoes_texto} | matricula_ref={matricula.numero_matricula}",
+            )
+
+            continue
+
+        # =========================================================
+        # INSERT (AGORA COMPLETO)
+        # =========================================================
+        db.add(
+            Confrontante(
+                imovel_id=imovel_id,
+                geometria_id=None,
+                direcao=direcao,
+                direcao_normalizada=direcao_normalizada,
+                nome_confrontante=nome,
+                matricula_confrontante=matricula_cft,
+                matricula_id=matricula.id,
+                identificacao_imovel_confrontante=identificacao,
+                descricao=descricao,
+
+                # 🔥 NOVO
+                tipo=tipo,
+                lote=lote,
+                gleba=gleba,
+
+                observacoes=f"{observacoes_texto} | matricula_ref={matricula.numero_matricula}",
+            )
+        )
 
     @staticmethod
     def _parse_json(raw: Any) -> Dict[str, Any]:
@@ -1004,33 +1018,80 @@ class MatriculaOcrProcessorService:
 
         confrontantes_payload: List[Dict[str, Any]] = []
 
-        for c in confrontantes:
+        for idx, c in enumerate(confrontantes, start=1):
+
+            nome = _safe(c.nome_confrontante)
+            descricao = _safe(c.descricao)
+            identificacao = _safe(c.identificacao_imovel_confrontante)
+            matricula_cft = _safe(c.matricula_confrontante)
+
+            tipo = _safe(getattr(c, "tipo", None))
+            lote = _safe(getattr(c, "lote", None))
+            gleba = _safe(getattr(c, "gleba", None))
+
+            texto_base = (
+                nome
+                or identificacao
+                or descricao
+                or (f"MATRÍCULA {matricula_cft}" if matricula_cft else None)
+                or "CONFRONTANTE NÃO IDENTIFICADO"
+            )
+
+            detalhamento_partes: List[str] = []
+
+            if identificacao:
+                detalhamento_partes.append(f"Imóvel: {identificacao}")
+
+            if matricula_cft:
+                detalhamento_partes.append(f"Matrícula: {matricula_cft}")
+
+            if lote:
+                detalhamento_partes.append(f"Lote: {lote}")
+
+            if gleba:
+                detalhamento_partes.append(f"Gleba: {gleba}")
+
+            if tipo:
+                detalhamento_partes.append(f"Tipo: {tipo}")
+
+            if descricao:
+                detalhamento_partes.append(descricao)
+
+            detalhamento_final = (
+                " | ".join(detalhamento_partes)
+                if detalhamento_partes
+                else texto_base
+            )
+
             confrontantes_payload.append(
                 {
-                    # 🔹 legado
                     "direcao": _safe(c.direcao),
-                    "nome": _safe(c.nome_confrontante),
-                    "matricula": _safe(c.matricula_confrontante),
-                    "descricao": _safe(c.descricao),
-                    "identificacao": _safe(c.identificacao_imovel_confrontante),
+                    "nome": nome,
+                    "matricula": matricula_cft,
+                    "descricao": descricao,
+                    "identificacao": identificacao,
 
-                    # 🔥 estrutura enriquecida
                     "lado": _safe(c.direcao),
                     "lado_normalizado": _safe(c.direcao_normalizada),
                     "ordem_segmento": c.ordem_segmento,
                     "lado_label": _safe(c.lado_label),
 
                     "confrontante": {
-                        "nome": _safe(c.nome_confrontante),
-                        "matricula": _safe(c.matricula_confrontante),
-                        "identificacao_imovel": _safe(c.identificacao_imovel_confrontante),
-                        "descricao": _safe(c.descricao),
+                        "nome": nome,
+                        "matricula": matricula_cft,
+                        "identificacao_imovel": identificacao,
+                        "descricao": descricao,
                         "observacoes": _safe(c.observacoes),
+                        "tipo": tipo,
+                        "lote": lote,
+                        "gleba": gleba,
                     },
 
-                    # 🔥 reservado para a próxima evolução do schema
+                    "detalhamento": detalhamento_final,
+                    "texto_resumo": texto_base,
+
                     "matricula_detalhada": {
-                        "numero_matricula": _safe(c.matricula_confrontante),
+                        "numero_matricula": matricula_cft,
                         "cartorio": None,
                         "comarca": None,
                         "area_total": None,
@@ -1042,10 +1103,66 @@ class MatriculaOcrProcessorService:
             )
 
         # =========================================================
-        # PAYLOAD FINAL (EXPANDIDO + COMPATÍVEL)
+        # PAYLOAD FINAL (FORA DO FOR)
         # =========================================================
 
         return {
+            "matricula": matricula.numero_matricula,
+            "livro": matricula.livro,
+            "folha": matricula.folha,
+            "comarca": matricula.comarca,
+            "codigo_cartorio": matricula.codigo_cartorio,
+            "status": matricula.status,
+
+            "numero_matricula": matricula.numero_matricula,
+            "descricao_imovel": _safe(descricao_imovel),
+            "area_total": area_total,
+            "unidade_area": unidade_area,
+            "area_hectares": area_hectares,
+
+            "matricula_principal": {
+                "numero_matricula": matricula.numero_matricula,
+                "livro": _safe(matricula.livro),
+                "folha": _safe(matricula.folha),
+                "comarca": _safe(matricula.comarca),
+                "codigo_cartorio": _safe(matricula.codigo_cartorio),
+                "status": _safe(matricula.status),
+                "arquivo_path": _safe(matricula.arquivo_path),
+                "inteiro_teor": _safe(matricula.inteiro_teor),
+                "observacoes": _safe(matricula.observacoes),
+            },
+
+            "imovel_principal": {
+                "id": imovel.id,
+                "nome": _safe(imovel.nome),
+                "descricao": _safe(imovel.descricao),
+                "area_hectares": getattr(imovel, "area_hectares", None),
+                "ccir": _safe(getattr(imovel, "ccir", None)),
+                "matricula_principal": _safe(getattr(imovel, "matricula_principal", None)),
+            },
+
+            "proprietarios": proprietarios,
+            "confrontantes": confrontantes_payload,
+
+            "metadata": {
+                "origem": "matricula_ocr_processor_service",
+                "possui_ocr": bool(dados_normalizados),
+                "ocr_result_id": getattr(ocr, "id", None) if ocr else None,
+                "documento_ocr_encontrado": bool(ocr),
+                "total_confrontantes": len(confrontantes_payload),
+                "total_proprietarios": len(proprietarios),
+                "normalizado": True,
+                "proprietarios_origem_banco": bool(proprietarios_db),
+                "matricula_id": matricula.id,
+                "imovel_id": imovel.id,
+            }
+        }
+
+    # =========================================================
+    # PAYLOAD FINAL (EXPANDIDO + COMPATÍVEL)
+    # =========================================================
+
+    return {
             # =====================================================
             # LEGADO — NÃO QUEBRAR
             # =====================================================

@@ -271,7 +271,7 @@ class OcrPipelineService:
             }
             result["errors"].append(f"Matrícula: {str(exc)}")
 
-        # ================= ANÁLISE =================
+         # ================= ANÁLISE =================
         try:
             if matricula and matricula.inteiro_teor:
 
@@ -296,21 +296,29 @@ class OcrPipelineService:
                     pass
 
                 # =========================================================
-                # CONFRONTANTES (BANCO)
+                # CONFRONTANTES (BANCO) — CORRIGIDO
                 # =========================================================
                 try:
-                    confrontantes_formatados = []
+                    confrontantes_formatados: list[dict[str, Any]] = []
 
                     if confrontantes_db:
                         for c in confrontantes_db:
                             confrontantes_formatados.append(
                                 {
-                                    "nome": getattr(c, "nome", None),
+                                    "nome": getattr(c, "nome_confrontante", None),
                                     "descricao": getattr(c, "descricao", None),
-                                    "lado": getattr(c, "lado", None),
-                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
-                                    "matricula": getattr(c, "matricula", None),
-                                    "identificacao": getattr(c, "identificacao", None),
+
+                                    # 🔥 CORREÇÃO DE MAPEAMENTO
+                                    "lado": getattr(c, "lado_label", None),
+                                    "lado_normalizado": getattr(c, "direcao_normalizada", None),
+
+                                    "matricula": getattr(c, "matricula_confrontante", None),
+                                    "identificacao": getattr(c, "identificacao_imovel_confrontante", None),
+
+                                    # 🔥 NOVOS CAMPOS
+                                    "tipo": getattr(c, "tipo", None),
+                                    "lote": getattr(c, "lote", None),
+                                    "gleba": getattr(c, "gleba", None),
                                 }
                             )
 
@@ -320,24 +328,29 @@ class OcrPipelineService:
                 except Exception:
                     pass
 
-                # 🔥 CONSISTÊNCIA OCR vs DB
+                # =========================================================
+                # CONSISTÊNCIA OCR vs DB
+                # =========================================================
                 try:
                     confrontantes_ocr = dados.get("confrontantes") or []
+
                     if isinstance(confrontantes_ocr, list):
                         if len(confrontantes_ocr) != len(confrontantes_db):
                             print("⚠️ Divergência OCR vs Banco em confrontantes")
                 except Exception:
                     pass
 
+                # =========================================================
+                # CHAMADA DA ANÁLISE
+                # =========================================================
                 analise = MatriculaAnalysisService.analisar(
                     texto=matricula.inteiro_teor,
                     dados_ocr=dados,
-
                 )
-                
 
-
-                # 🔥 ENRIQUECIMENTO
+                # =========================================================
+                # ENRIQUECIMENTO DA ANÁLISE
+                # =========================================================
                 if isinstance(analise, dict):
 
                     classificacao = analise.get("classificacao") or {}
@@ -404,11 +417,28 @@ class OcrPipelineService:
         except Exception as exc:
             OcrPipelineService._rollback_safely(db)
             result["errors"].append(f"Resolver geojson: {str(exc)}")
+            try:
+                if isinstance(dados.get("geometria"), dict):
+                    fonte_geom = (
+                        dados.get("geometria", {}).get("fonte")
+                        or ("GEOJSON" if dados.get("geometria", {}).get("geojson") else None)
+                        or ("SEGMENTOS" if dados.get("geometria", {}).get("segmentos") else None)
+                        or ("MEMORIAL" if dados.get("geometria", {}).get("memorial_texto") else None)
+                    )
+            except Exception:
+                fonte_geom = None
+
+        except Exception as exc:
+            OcrPipelineService._rollback_safely(db)
+            result["errors"].append(f"Resolver geojson: {str(exc)}")
 
         if geojson:
             try:
+                # =========================================================
                 # 🔥 VALIDAÇÃO MÍNIMA DO GEOJSON
+                # =========================================================
                 geojson_obj = None
+
                 try:
                     geojson_obj = json.loads(geojson) if isinstance(geojson, str) else geojson
                 except Exception:
@@ -417,6 +447,9 @@ class OcrPipelineService:
                 if not isinstance(geojson_obj, dict) or not geojson_obj.get("type"):
                     raise Exception("GeoJSON inválido ou sem campo 'type'")
 
+                # =========================================================
+                # 🔥 ANÁLISE DO REFERENCIAL
+                # =========================================================
                 analise_geo = GeometriaService.analisar_referencial(
                     geojson=geojson,
                     epsg_origem=4326,
@@ -425,11 +458,17 @@ class OcrPipelineService:
                 tipo_referencial = str(analise_geo.get("tipo_referencial"))
                 epsg_origem = 0 if tipo_referencial == "LOCAL_CARTESIANA" else 4326
 
+                # =========================================================
+                # 🔥 CÁLCULO DE ÁREA E PERÍMETRO
+                # =========================================================
                 epsg_utm, area_ha, perimetro_m = GeometriaService.calcular_area_perimetro(
                     geojson=geojson,
                     epsg_origem=epsg_origem,
                 )
 
+                # =========================================================
+                # 🔥 PERSISTÊNCIA DA GEOMETRIA
+                # =========================================================
                 geometria = Geometria(
                     imovel_id=imovel.id,
                     geojson=geojson,
@@ -443,12 +482,17 @@ class OcrPipelineService:
                 db.commit()
                 db.refresh(geometria)
 
-                # ================= GEOJSON FILE =================
+                # =========================================================
+                # 🔥 EXPORTAÇÃO GEOJSON
+                # =========================================================
                 geo_file = GeometriaService.exportar_geojson(
                     imovel_id=imovel.id,
                     geojson=geometria.geojson,
                 )
 
+                # =========================================================
+                # 🔥 DOCUMENTO TÉCNICO
+                # =========================================================
                 doc_geo = create_documento_tecnico(
                     db=db,
                     imovel_id=imovel.id,
@@ -467,6 +511,9 @@ class OcrPipelineService:
                     ),
                 )
 
+                # =========================================================
+                # 🔥 URL FINAL
+                # =========================================================
                 url_geo = OcrPipelineService._build_file_url(
                     base_url,
                     geo_file.get("arquivo_path"),
@@ -486,12 +533,14 @@ class OcrPipelineService:
                     "fonte": fonte_geom,
                 }
 
+                # =========================================================
+                # 🔥 PROCESSAMENTO DE CONFRONTANTES
+                # =========================================================
                 try:
                     from app.services.confrontante_service import ConfrontanteService
                     from app.models.confrontante import Confrontante
 
                     confrontantes_raw = dados.get("confrontantes") or []
-
                     confrontantes_processados = []
 
                     if isinstance(confrontantes_raw, list):
@@ -501,33 +550,61 @@ class OcrPipelineService:
                             if not isinstance(c, dict):
                                 continue
 
+                            # ================= NORMALIZAÇÃO =================
                             lado = OcrPipelineService._normalizar_texto_simples(
                                 c.get("lado") or c.get("direcao")
                             )
+
                             lado_norm = OcrPipelineService._normalizar_texto_simples(
                                 c.get("lado_normalizado")
                             )
 
-                            nome = OcrPipelineService._normalizar_texto_simples(
-                                c.get("nome")
-                            )
-                            descricao = OcrPipelineService._normalizar_texto_simples(
-                                c.get("descricao")
-                            )
-                            matricula_cft = OcrPipelineService._normalizar_texto_simples(
+                            nome = OcrPipelineService._normalizar_texto_simples(c.get("nome"))
+                            descricao = OcrPipelineService._normalizar_texto_simples(c.get("descricao"))
+
+                            matricula_cft = OcrPipelineService._normalizar_numero_matricula(
                                 c.get("matricula")
                             )
+
                             identificacao = OcrPipelineService._normalizar_texto_simples(
                                 c.get("identificacao")
                             )
+
                             cpf_cnpj = OcrPipelineService._normalizar_texto_simples(
                                 c.get("cpf_cnpj")
                             )
 
-                            # 🔥 REGRA: precisa ter pelo menos alguma informação útil
-                            if not any([nome, descricao, matricula_cft, identificacao, cpf_cnpj]):
+                            tipo = OcrPipelineService._normalizar_texto_simples(c.get("tipo"))
+                            lote = OcrPipelineService._normalizar_texto_simples(c.get("lote"))
+                            gleba = OcrPipelineService._normalizar_texto_simples(c.get("gleba"))
+
+                            # ================= TEXTO BASE =================
+                            texto_base = (
+                                nome
+                                or identificacao
+                                or descricao
+                                or (f"MATRÍCULA {matricula_cft}" if matricula_cft else None)
+                                or None
+                            )
+
+                            # ================= FILTRO =================
+                            if not any([
+                                nome,
+                                descricao,
+                                matricula_cft,
+                                identificacao,
+                                cpf_cnpj,
+                                tipo,
+                                lote,
+                                gleba
+                            ]):
                                 continue
 
+                            # ================= GARANTIA DESCRIÇÃO =================
+                            if not descricao:
+                                descricao = texto_base
+
+                            # ================= PAYLOAD =================
                             confrontantes_processados.append(
                                 {
                                     "lado": lado,
@@ -537,20 +614,26 @@ class OcrPipelineService:
                                     "matricula": matricula_cft,
                                     "identificacao": identificacao,
                                     "cpf_cnpj": cpf_cnpj,
-
-                                    # 🔥 NÃO PERDER DADOS DO NORMALIZER
-                                    "tipo": OcrPipelineService._normalizar_texto_simples(c.get("tipo")),
-                                    "lote": OcrPipelineService._normalizar_texto_simples(c.get("lote")),
-                                    "gleba": OcrPipelineService._normalizar_texto_simples(c.get("gleba")),
+                                    "tipo": tipo,
+                                    "lote": lote,
+                                    "gleba": gleba,
+                                    "texto_resumo": texto_base,
                                 }
                             )
 
                     if not confrontantes_processados:
                         print("⚠️ Nenhum confrontante válido após normalização")
 
-                    # =========================================================
-                    # 🔥 PERSISTÊNCIA (OCR → BANCO)
-                    # =========================================================
+                except Exception as exc:
+                    print(f"Erro ao processar confrontantes: {str(exc)}")
+
+            except Exception as exc:
+                OcrPipelineService._rollback_safely(db)
+                result["errors"].append(f"Geometria: {str(exc)}")
+                # =========================================================
+                # 🔥 PERSISTÊNCIA (OCR → BANCO)
+                # =========================================================
+                try:
                     confrontantes = ConfrontanteService.processar_confrontantes(
                         db=db,
                         imovel=imovel,
@@ -600,12 +683,15 @@ class OcrPipelineService:
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
+
                 result["steps"]["geometria"] = {
                     "success": False,
                     "message": f"Falha ao gerar geometria: {str(exc)}",
                     "fonte": fonte_geom,
                 }
+
                 result["errors"].append(f"Geometria: {str(exc)}")
+
         else:
             result["steps"]["geometria"] = {
                 "success": False,
@@ -626,15 +712,18 @@ class OcrPipelineService:
                         for c in confrontantes_db:
                             confrontantes_formatados.append(
                                 {
-                                    "nome": getattr(c, "nome", None),
+                                    "nome": getattr(c, "nome_confrontante", None),
                                     "descricao": getattr(c, "descricao", None),
-                                    "lado": getattr(c, "lado", None),
-                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
-                                    "matricula": getattr(c, "matricula", None),
-                                    "identificacao": getattr(c, "identificacao", None),
 
-                                    # 🔥 NOVO — NÃO PERDER DADOS
-                                    "cpf_cnpj": getattr(c, "cpf_cnpj", None),
+                                    # 🔥 CORREÇÃO REAL (ALINHADO COM MODEL)
+                                    "lado": getattr(c, "lado_label", None),
+                                    "lado_normalizado": getattr(c, "direcao_normalizada", None),
+
+                                    "matricula": getattr(c, "matricula_confrontante", None),
+                                    "identificacao": getattr(c, "identificacao_imovel_confrontante", None),
+
+                                    # 🔥 CAMPOS COMPLETOS (SEM PERDA)
+                                    "cpf_cnpj": getattr(c, "cpf_cnpj", None),  # pode não existir → ok
                                     "tipo": getattr(c, "tipo", None),
                                     "lote": getattr(c, "lote", None),
                                     "gleba": getattr(c, "gleba", None),
@@ -653,6 +742,9 @@ class OcrPipelineService:
                 except Exception:
                     nome_imovel = None
 
+                # =========================================================
+                # GERAÇÃO DO MEMORIAL
+                # =========================================================
                 memorial = MemorialService.gerar_memorial(
                     geometria_id=geometria.id,
                     geojson=geometria.geojson,
@@ -670,6 +762,9 @@ class OcrPipelineService:
                 if not memorial_texto:
                     raise ValueError("Memorial gerado sem texto_preview.")
 
+                # =========================================================
+                # DOCUMENTO TÉCNICO
+                # =========================================================
                 doc_memorial = create_documento_tecnico(
                     db=db,
                     imovel_id=imovel.id,
@@ -711,12 +806,15 @@ class OcrPipelineService:
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
+
                 result["steps"]["memorial"] = {
                     "success": False,
                     "message": f"Falha ao gerar memorial: {str(exc)}",
                     "fonte": fonte_geom,
                 }
+
                 result["errors"].append(f"Memorial: {str(exc)}")
+
         else:
             result["steps"]["memorial"] = {
                 "success": False,
@@ -740,14 +838,17 @@ class OcrPipelineService:
                         for c in confrontantes_db:
                             confrontantes_formatados.append(
                                 {
-                                    "nome": getattr(c, "nome", None),
+                                    "nome": getattr(c, "nome_confrontante", None),
                                     "descricao": getattr(c, "descricao", None),
-                                    "lado": getattr(c, "lado", None),
-                                    "lado_normalizado": getattr(c, "lado_normalizado", None),
-                                    "matricula": getattr(c, "matricula", None),
-                                    "identificacao": getattr(c, "identificacao", None),
 
-                                    # 🔥 NOVO — CONSISTÊNCIA COM MEMORIAL
+                                    # 🔥 CORREÇÃO REAL
+                                    "lado": getattr(c, "lado_label", None),
+                                    "lado_normalizado": getattr(c, "direcao_normalizada", None),
+
+                                    "matricula": getattr(c, "matricula_confrontante", None),
+                                    "identificacao": getattr(c, "identificacao_imovel_confrontante", None),
+
+                                    # 🔥 CAMPOS COMPLETOS
                                     "cpf_cnpj": getattr(c, "cpf_cnpj", None),
                                     "tipo": getattr(c, "tipo", None),
                                     "lote": getattr(c, "lote", None),
@@ -757,11 +858,17 @@ class OcrPipelineService:
                 except Exception:
                     confrontantes_formatados = []
 
+                # =========================================================
+                # GERAÇÃO DO SVG
+                # =========================================================
                 svg = CroquiService.gerar_svg(
                     geometria.geojson,
                     confrontantes=confrontantes_formatados,
                 )
 
+                # =========================================================
+                # PERSISTÊNCIA EM DISCO
+                # =========================================================
                 folder = f"app/uploads/imoveis/{imovel.id}/croqui"
                 os.makedirs(folder, exist_ok=True)
 
@@ -770,8 +877,14 @@ class OcrPipelineService:
                 with open(path_svg, "w", encoding="utf-8") as f:
                     f.write(svg)
 
+                # =========================================================
+                # URL
+                # =========================================================
                 url_svg = OcrPipelineService._build_file_url(base_url, path_svg)
 
+                # =========================================================
+                # DOCUMENTO TÉCNICO
+                # =========================================================
                 doc_croqui = create_documento_tecnico(
                     db=db,
                     imovel_id=imovel.id,
@@ -784,7 +897,7 @@ class OcrPipelineService:
                             "geometria_id": geometria.id,
                             "confrontantes_incluidos": bool(confrontantes_formatados),
                             "total_confrontantes": len(confrontantes_formatados),
-                            "fonte_geom": fonte_geom,  # 🔥 NOVO
+                            "fonte_geom": fonte_geom,
                         },
                         gerado_em=datetime.utcnow(),
                     ),
@@ -797,7 +910,7 @@ class OcrPipelineService:
                     "documento_tecnico_id": doc_croqui.id,
                     "confrontantes_incluidos": bool(confrontantes_formatados),
                     "total_confrontantes": len(confrontantes_formatados),
-                    "fonte": fonte_geom,  # 🔥 NOVO
+                    "fonte": fonte_geom,
                     "message": f"Croqui salvo: {path_svg}",
                 }
 
@@ -805,12 +918,16 @@ class OcrPipelineService:
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
+
                 result["steps"]["croqui"] = {
                     "success": False,
                     "message": f"Falha ao gerar croqui: {str(exc)}",
                 }
+
                 result["errors"].append(f"Croqui: {str(exc)}")
+
                 print(f"❌ Falha ao gerar croqui: {str(exc)}")
+
         else:
             result["steps"]["croqui"] = {
                 "success": False,
@@ -1134,15 +1251,21 @@ class OcrPipelineService:
 
                     sigef_data = exportar_sigef_csv(db, payload)
 
+                    if not isinstance(sigef_data, dict):
+                        raise Exception("Retorno inválido ao gerar SIGEF CSV")
+
                     path_sigef = sigef_data.get("arquivo_path")
                     documento_tecnico_id = sigef_data.get("documento_tecnico_id")
+
+                    if not path_sigef:
+                        raise Exception("SIGEF CSV gerado sem arquivo_path")
 
                     url_sigef = OcrPipelineService._build_file_url(
                         base_url,
                         path_sigef,
                     )
 
-                    if not documento_tecnico_id and path_sigef:
+                    if not documento_tecnico_id:
                         doc_sigef = create_documento_tecnico(
                             db=db,
                             imovel_id=imovel.id,
@@ -1155,7 +1278,7 @@ class OcrPipelineService:
                                     "geometria_id": geometria.id,
                                     "epsg_utm": sigef_data.get("epsg_utm"),
                                     "epsg_origem": geometria.epsg_origem,
-                                    "fonte_geom": fonte_geom,  # 🔥 NOVO
+                                    "fonte_geom": fonte_geom,
                                 },
                                 gerado_em=datetime.utcnow(),
                             ),
@@ -1169,20 +1292,24 @@ class OcrPipelineService:
                         "arquivo_url": url_sigef,
                         "epsg_utm": sigef_data.get("epsg_utm"),
                         "epsg_origem": geometria.epsg_origem,
-                        "fonte": fonte_geom,  # 🔥 NOVO
+                        "fonte": fonte_geom,
                         "message": "Planilha SIGEF gerada com sucesso.",
                     }
 
-                    print("✅ Planilha SIGEF gerada")
+                    print(f"[SIGEF] ✅ Planilha SIGEF gerada: {path_sigef}")
 
                 except Exception as exc:
                     OcrPipelineService._rollback_safely(db)
+
                     result["steps"]["sigef_csv"] = {
                         "success": False,
                         "message": f"Falha ao gerar SIGEF CSV: {str(exc)}",
                     }
+
                     result["errors"].append(f"SIGEF CSV: {str(exc)}")
-                    print(f"❌ Falha ao gerar SIGEF CSV: {str(exc)}")
+
+                    print(f"[SIGEF] ❌ Falha ao gerar SIGEF CSV: {str(exc)}")
+
             else:
                 result["steps"]["sigef_csv"] = {
                     "success": False,
@@ -1194,7 +1321,8 @@ class OcrPipelineService:
                     "fonte": fonte_geom,
                 }
 
-                print("ℹ️ SIGEF CSV ignorado: geometria local/cartesiana")
+                print("[SIGEF] ℹ️ Ignorado: geometria local/cartesiana")
+
         else:
             result["steps"]["sigef_csv"] = {
                 "success": False,
@@ -1202,18 +1330,20 @@ class OcrPipelineService:
                 "message": "SIGEF CSV não executado: geometria inexistente.",
                 "fonte": fonte_geom,
             }
-
         # =========================================================
         # SUCESSO FINAL
         # =========================================================
-        geometria_ok = bool(result["steps"]["geometria"].get("success"))
-        memorial_ok = bool(result["steps"]["memorial"].get("success"))
-        croqui_ok = bool(result["steps"]["croqui"].get("success"))
-        cad_ok = bool(result["steps"]["cad"].get("success"))
+        steps = result.get("steps", {})
+
+        geometria_ok = bool((steps.get("geometria") or {}).get("success"))
+        memorial_ok = bool((steps.get("memorial") or {}).get("success"))
+        croqui_ok = bool((steps.get("croqui") or {}).get("success"))
+        cad_ok = bool((steps.get("cad") or {}).get("success"))
+        sigef_ok = bool((steps.get("sigef_csv") or {}).get("success"))
 
         epsg_origem_atual = geometria.epsg_origem if geometria else None
 
-        # 🔥 NOVO — QUALIDADE OCR (SEM QUEBRAR CONTRATO)
+        # 🔥 NOVO — QUALIDADE OCR
         qualidade_ocr = dados.get("qualidade") if isinstance(dados, dict) else None
 
         score_ocr = 0
@@ -1234,9 +1364,7 @@ class OcrPipelineService:
             and epsg_origem_atual > 0
         )
 
-        sigef_ok = bool(result["steps"]["sigef_csv"].get("success"))
-
-        # 🔥 NOVO — REGRAS DE SUCESSO
+        # 🔥 REGRAS DE SUCESSO
         sucesso_base = (
             geometria_ok
             and memorial_ok
@@ -1247,7 +1375,7 @@ class OcrPipelineService:
         if sigef_obrigatorio:
             sucesso_base = sucesso_base and sigef_ok
 
-        # 🔥 NOVO — VALIDAÇÃO DE QUALIDADE (SEM QUEBRAR FLUXO)
+        # 🔥 VALIDAÇÃO DE QUALIDADE OCR
         qualidade_minima_ok = score_ocr >= 60
 
         if not qualidade_minima_ok:
@@ -1257,7 +1385,7 @@ class OcrPipelineService:
 
         result["success"] = sucesso_base and qualidade_minima_ok
 
-        # 🔥 NOVO — DEBUG E RASTREABILIDADE (CRÍTICO PARA PRODUÇÃO)
+        # 🔥 DEBUG / RASTREABILIDADE
         result["validacao_pipeline"] = {
             "geometria_ok": geometria_ok,
             "memorial_ok": memorial_ok,
@@ -1271,39 +1399,50 @@ class OcrPipelineService:
         }
 
         print("🏁 Pipeline OCR concluído")
+
         return result
 
-    @staticmethod
-    def _normalizar_texto_simples(valor: Any) -> Optional[str]:
-        if valor is None:
-            return None
+@staticmethod
+def _normalizar_texto_simples(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
 
-        texto = str(valor).strip()
-        if not texto:
-            return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
 
-        return " ".join(texto.split())
+    return " ".join(texto.split())
 
-    @staticmethod
-    def _normalizar_numero_matricula(valor: Any) -> Optional[str]:
-        if valor is None:
-            return None
 
-        texto = str(valor).strip()
-        if not texto:
-            return None
+@staticmethod
+def _normalizar_numero_matricula(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
 
-        texto = re.sub(
-            r"(matr[ií]cula|mat\.?|registro|n[º°o]|sob\s*n[º°o])",
-            "",
-            texto,
-            flags=re.IGNORECASE,
-        )
+    # 🔥 reutiliza normalização base
+    texto = OcrPipelineService._normalizar_texto_simples(valor)
 
-        texto = re.sub(r"[^\d./-]", "", texto)
-        texto = texto.strip()
+    if not texto:
+        return None
 
-        return texto or None
+    # 🔥 remove termos comuns com boundary (evita remoção indevida)
+    texto = re.sub(
+        r"\b(matr[ií]cula|mat\.?|registro|n[º°o]|sob\s*n[º°o])\b",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    )
+
+    # 🔥 remove tudo que não for padrão de matrícula
+    texto = re.sub(r"[^\d./-]", "", texto)
+
+    texto = texto.strip()
+
+    # 🔥 fallback de segurança
+    if not texto:
+        return None
+
+    return texto
     
     @staticmethod
     def _upsert_matricula(
@@ -1313,29 +1452,43 @@ class OcrPipelineService:
     ) -> Optional[Matricula]:
         numero_matricula: Optional[str] = None
 
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO DO PAYLOAD
+        # =========================================================
         matricula_payload = dados.get("matricula")
-        if isinstance(matricula_payload, dict):
-            numero_matricula = matricula_payload.get("numero")
+        if not isinstance(matricula_payload, dict):
+            matricula_payload = {}
 
-        if not numero_matricula:
-            numero_matricula = (
-                dados.get("numero_matricula")
-                or dados.get("matricula")
+        # =========================================================
+        # 🔥 PRIORIDADE CORRETA DE EXTRAÇÃO
+        # =========================================================
+        numero_matricula = (
+            matricula_payload.get("numero")
+            or dados.get("numero_matricula")
+            or (
+                dados.get("matricula")
+                if not isinstance(dados.get("matricula"), dict)
+                else None
             )
+        )
 
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO FINAL
+        # =========================================================
         numero_matricula = OcrPipelineService._normalizar_numero_matricula(
             numero_matricula
         )
 
+        # =========================================================
+        # 🔴 VALIDAÇÃO FINAL
+        # =========================================================
         if not numero_matricula:
             return None
 
         # =========================================================
-        # 🔥 NOVO — RESOLVER CARTÓRIO (INTEGRAÇÃO REAL COM BANCO)
+        # 🔥 RESOLVER CARTÓRIO (INTEGRAÇÃO COM BANCO)
         # =========================================================
         try:
-            from app.services.matricula_ocr_processor_service import MatriculaOcrProcessorService
-
             cartorio_id = MatriculaOcrProcessorService._resolver_cartorio(
                 db,
                 dados,
@@ -1343,40 +1496,23 @@ class OcrPipelineService:
         except Exception:
             cartorio_id = None
 
+        # =========================================================
+        # 🔥 CAMPOS NORMALIZADOS
+        # =========================================================
         livro: Optional[str] = OcrPipelineService._normalizar_texto_simples(
-            dados.get("livro")
-            or (
-                matricula_payload.get("livro")
-                if isinstance(matricula_payload, dict)
-                else None
-            )
+            dados.get("livro") or matricula_payload.get("livro")
         )
 
         folha: Optional[str] = OcrPipelineService._normalizar_texto_simples(
-            dados.get("folha")
-            or (
-                matricula_payload.get("folha")
-                if isinstance(matricula_payload, dict)
-                else None
-            )
+            dados.get("folha") or matricula_payload.get("folha")
         )
 
         comarca: Optional[str] = OcrPipelineService._normalizar_texto_simples(
-            dados.get("comarca")
-            or (
-                matricula_payload.get("comarca")
-                if isinstance(matricula_payload, dict)
-                else None
-            )
+            dados.get("comarca") or matricula_payload.get("comarca")
         )
 
         cartorio: Optional[str] = OcrPipelineService._normalizar_texto_simples(
-            dados.get("cartorio")
-            or (
-                matricula_payload.get("cartorio")
-                if isinstance(matricula_payload, dict)
-                else None
-            )
+            dados.get("cartorio") or matricula_payload.get("cartorio")
         )
 
         codigo_cartorio: Optional[str] = OcrPipelineService._normalizar_texto_simples(
@@ -1387,11 +1523,7 @@ class OcrPipelineService:
 
         descricao_imovel: Optional[str] = OcrPipelineService._normalizar_texto_simples(
             dados.get("descricao_imovel")
-            or (
-                dados.get("imovel", {}).get("descricao")
-                if isinstance(dados.get("imovel"), dict)
-                else None
-            )
+            or (dados.get("imovel") or {}).get("descricao")
         )
 
         observacoes: Optional[str] = OcrPipelineService._normalizar_texto_simples(
@@ -1401,6 +1533,9 @@ class OcrPipelineService:
         proprietarios = dados.get("proprietarios")
         confrontantes = dados.get("confrontantes")
 
+        # =========================================================
+        # 🔥 MONTAGEM DO INTEIRO TEOR
+        # =========================================================
         inteiro_teor_partes: list[str] = []
 
         if descricao_imovel:
@@ -1418,8 +1553,12 @@ class OcrPipelineService:
         if folha:
             inteiro_teor_partes.append(f"FOLHA: {folha}")
 
+        # =========================================================
+        # 🔥 PROPRIETÁRIOS
+        # =========================================================
         if isinstance(proprietarios, list) and proprietarios:
             inteiro_teor_partes.append("PROPRIETÁRIOS:")
+
             for item in proprietarios:
                 if not isinstance(item, dict):
                     continue
@@ -1431,48 +1570,144 @@ class OcrPipelineService:
                 if not nome:
                     continue
 
-                linha = f"- {nome}"
+                partes_linha: list[str] = [nome]
+
                 if cpf_cnpj:
-                    linha += f" | CPF/CNPJ: {cpf_cnpj}"
+                    partes_linha.append(f"CPF/CNPJ: {cpf_cnpj}")
+
                 if tipo:
-                    linha += f" | Tipo: {tipo}"
+                    partes_linha.append(f"Tipo: {tipo}")
 
-                inteiro_teor_partes.append(linha)
+                inteiro_teor_partes.append("- " + " | ".join(partes_linha))
 
+        # =========================================================
+        # 🔥 CONFRONTANTES
+        # =========================================================
         if isinstance(confrontantes, list) and confrontantes:
             inteiro_teor_partes.append("CONFRONTANTES:")
+
             for item in confrontantes:
                 if not isinstance(item, dict):
                     continue
 
+                # =========================================================
+                # 🔥 NORMALIZAÇÃO COMPLETA (ALINHADA COM PIPELINE)
+                # =========================================================
                 direcao = OcrPipelineService._normalizar_texto_simples(
-                    item.get("direcao") or item.get("lado")
+                    item.get("lado_normalizado")
+                    or item.get("direcao")
+                    or item.get("lado")
                 )
-                nome = OcrPipelineService._normalizar_texto_simples(item.get("nome"))
-                descricao = OcrPipelineService._normalizar_texto_simples(item.get("descricao"))
-                matricula_confrontante = OcrPipelineService._normalizar_texto_simples(
+
+                nome = OcrPipelineService._normalizar_texto_simples(
+                    item.get("nome")
+                )
+
+                descricao = OcrPipelineService._normalizar_texto_simples(
+                    item.get("descricao")
+                )
+
+                matricula_confrontante = OcrPipelineService._normalizar_numero_matricula(
                     item.get("matricula") or item.get("numero_matricula")
                 )
 
+                identificacao = OcrPipelineService._normalizar_texto_simples(
+                    item.get("identificacao")
+                )
+
+                tipo = OcrPipelineService._normalizar_texto_simples(
+                    item.get("tipo")
+                )
+
+                lote = OcrPipelineService._normalizar_texto_simples(
+                    item.get("lote")
+                )
+
+                gleba = OcrPipelineService._normalizar_texto_simples(
+                    item.get("gleba")
+                )
+
+                cpf_cnpj = OcrPipelineService._normalizar_texto_simples(
+                    item.get("cpf_cnpj")
+                )
+
+                # =========================================================
+                # 🔥 GARANTIA DE DIREÇÃO (CRÍTICO)
+                # =========================================================
+                if not direcao:
+                    direcao = "NÃO INFORMADO"
+
+                # =========================================================
+                # 🔴 FILTRO INTELIGENTE
+                # =========================================================
+                if not any([
+                    nome,
+                    descricao,
+                    matricula_confrontante,
+                    identificacao,
+                    tipo,
+                    lote,
+                    gleba,
+                    cpf_cnpj,
+                    direcao,
+                ]):
+                    continue
+
+                # =========================================================
+                # 🔥 MONTAGEM PROFISSIONAL DO TEXTO
+                # =========================================================
                 partes_linha: list[str] = []
 
                 if direcao:
                     partes_linha.append(f"DIREÇÃO: {direcao}")
+
                 if nome:
                     partes_linha.append(f"NOME: {nome}")
+
                 if matricula_confrontante:
                     partes_linha.append(f"MATRÍCULA: {matricula_confrontante}")
+
+                if identificacao:
+                    partes_linha.append(f"IMÓVEL: {identificacao}")
+
+                if lote:
+                    partes_linha.append(f"LOTE: {lote}")
+
+                if gleba:
+                    partes_linha.append(f"GLEBA: {gleba}")
+
+                if tipo:
+                    partes_linha.append(f"TIPO: {tipo}")
+
+                if cpf_cnpj:
+                    partes_linha.append(f"CPF/CNPJ: {cpf_cnpj}")
+
                 if descricao:
                     partes_linha.append(f"DESCRIÇÃO: {descricao}")
 
                 if partes_linha:
                     inteiro_teor_partes.append("- " + " | ".join(partes_linha))
 
+        # =========================================================
+        # 🔥 OBSERVAÇÕES
+        # =========================================================
         if observacoes:
             inteiro_teor_partes.append(f"OBSERVAÇÕES: {observacoes}")
 
+        # =========================================================
+        # 🔥 CONSOLIDAÇÃO DO INTEIRO TEOR
+        # =========================================================
         inteiro_teor_montado = "\n".join(inteiro_teor_partes).strip() or None
 
+        # =========================================================
+        # 🔥 PROTEÇÃO DE TAMANHO (CRÍTICO)
+        # =========================================================
+        if inteiro_teor_montado and len(inteiro_teor_montado) > 10000:
+            inteiro_teor_montado = inteiro_teor_montado[:10000] + "..."
+
+        # =========================================================
+        # 🔥 BUSCA DA MATRÍCULA
+        # =========================================================
         matricula: Optional[Matricula] = (
             db.query(Matricula)
             .filter(
@@ -1486,26 +1721,35 @@ class OcrPipelineService:
         # CREATE
         # =========================================================
         if not matricula:
-            matricula = Matricula(
-                imovel_id=imovel.id,
-                numero_matricula=numero_matricula,
-                livro=livro,
-                folha=folha,
-                comarca=comarca,
-                codigo_cartorio=codigo_cartorio,
-                cartorio_id=cartorio_id,  # 🔥 NOVO
-                inteiro_teor=inteiro_teor_montado,
-                observacoes=observacoes,
-                status="ATIVA",
-            )
+            try:
+                matricula = Matricula(
+                    imovel_id=imovel.id,
+                    numero_matricula=numero_matricula,
+                    livro=livro,
+                    folha=folha,
+                    comarca=comarca,
+                    codigo_cartorio=codigo_cartorio,
+                    cartorio_id=cartorio_id,  # 🔥 NOVO
+                    inteiro_teor=inteiro_teor_montado,
+                    observacoes=observacoes,
+                    status="ATIVA",
+                )
 
-            db.add(matricula)
-            db.commit()
-            db.refresh(matricula)
+                db.add(matricula)
+                db.commit()
+                db.refresh(matricula)
 
-            print(f"✅ Matrícula criada: {numero_matricula}")
-            return matricula
+                print(f"✅ Matrícula criada: {numero_matricula}")
+                return matricula
 
+            except Exception as exc:
+                OcrPipelineService._rollback_safely(db)
+                print(f"❌ Erro ao criar matrícula: {str(exc)}")
+                return None
+
+        # =========================================================
+        # UPDATE CONTROLADO
+        # =========================================================
         alterou: bool = False
 
         if livro and livro != matricula.livro:
@@ -1524,25 +1768,46 @@ class OcrPipelineService:
             matricula.codigo_cartorio = codigo_cartorio
             alterou = True
 
-        # 🔥 NOVO — SETA CARTÓRIO SE AINDA NÃO EXISTIR
+        # 🔥 CARTÓRIO (APENAS SE NÃO EXISTIR)
         if not matricula.cartorio_id and cartorio_id:
             matricula.cartorio_id = cartorio_id
             alterou = True
 
+        # =========================================================
+        # 🔥 INTEIRO TEOR (REGRA MELHORADA)
+        # =========================================================
         if inteiro_teor_montado:
-            if not matricula.inteiro_teor or len(inteiro_teor_montado) > len(matricula.inteiro_teor):
+            atual = matricula.inteiro_teor or ""
+
+            if (
+                not atual
+                or len(inteiro_teor_montado) > len(atual)
+                or inteiro_teor_montado != atual
+            ):
                 matricula.inteiro_teor = inteiro_teor_montado
                 alterou = True
 
+        # =========================================================
+        # 🔥 OBSERVAÇÕES (CONTROLADO)
+        # =========================================================
         if observacoes:
-            if not matricula.observacoes or observacoes != matricula.observacoes:
+            atual_obs = matricula.observacoes or ""
+
+            if not atual_obs or observacoes != atual_obs:
                 matricula.observacoes = observacoes
                 alterou = True
 
+        # =========================================================
+        # 🔥 COMMIT FINAL SE NECESSÁRIO
+        # =========================================================
         if alterou:
-            db.commit()
-            db.refresh(matricula)
-            print(f"ℹ️ Matrícula atualizada: {numero_matricula}")
+            try:
+                db.commit()
+                db.refresh(matricula)
+                print(f"ℹ️ Matrícula atualizada: {numero_matricula}")
+            except Exception as exc:
+                OcrPipelineService._rollback_safely(db)
+                print(f"❌ Erro ao atualizar matrícula: {str(exc)}")
         else:
             print(f"ℹ️ Matrícula já existente (sem alterações): {numero_matricula}")
 
@@ -1551,10 +1816,38 @@ class OcrPipelineService:
     @staticmethod
     def _resolver_geojson(dados: dict[str, Any]) -> Optional[str]:
 
+        def _validar_geojson(geojson_str: str) -> Optional[str]:
+            try:
+                parsed = json.loads(geojson_str)
+
+                if (
+                    isinstance(parsed, dict)
+                    and parsed.get("type") in ["Polygon", "MultiPolygon"]
+                    and isinstance(parsed.get("coordinates"), list)
+                ):
+                    try:
+                        from shapely.geometry import shape, mapping
+
+                        geom = shape(parsed)
+
+                        if not geom.is_valid:
+                            geom = geom.buffer(0)
+
+                        if geom.is_valid and not geom.is_empty:
+                            # 🔥 RETORNA GEOMETRIA CORRIGIDA (CRÍTICO)
+                            return json.dumps(mapping(geom))
+
+                    except Exception as exc:
+                        print(f"⚠️ Falha validação shapely: {str(exc)}")
+
+            except Exception:
+                pass
+
+            return None
+
         # =========================================================
         # 🔥 PRIORIDADE: ESTRUTURA NORMALIZADA (OCR NORMALIZER)
         # =========================================================
-
         geometria = dados.get("geometria")
 
         if isinstance(geometria, dict):
@@ -1567,32 +1860,10 @@ class OcrPipelineService:
             geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
 
             if geojson_normalizado:
-                try:
-                    parsed = json.loads(geojson_normalizado)
-
-                    if (
-                        isinstance(parsed, dict)
-                        and parsed.get("type") in ["Polygon", "MultiPolygon"]
-                        and isinstance(parsed.get("coordinates"), list)
-                    ):
-                        try:
-                            from shapely.geometry import shape
-
-                            geom = shape(parsed)
-
-                            # 🔥 validação real
-                            if not geom.is_valid:
-                                geom = geom.buffer(0)
-
-                            if geom.is_valid and not geom.is_empty:
-                                print("✅ GeoJSON válido (estrutura normalizada + validado)")
-                                return json.dumps(parsed)
-
-                        except Exception as exc:
-                            print(f"⚠️ Falha validação shapely: {str(exc)}")
-
-                except Exception:
-                    print("⚠️ GeoJSON inválido após normalização")
+                geo_validado = _validar_geojson(geojson_normalizado)
+                if geo_validado:
+                    print("✅ GeoJSON válido (estrutura normalizada + validado)")
+                    return geo_validado
 
             # ================= SEGMENTOS =================
             if isinstance(segmentos, list) and segmentos:
@@ -1615,38 +1886,17 @@ class OcrPipelineService:
                     return geojson_por_memorial
 
         # =========================================================
-        # 🔄 FALLBACK LEGADO (NÃO QUEBRAR SISTEMA ATUAL)
+        # 🔄 FALLBACK LEGADO
         # =========================================================
-
         geojson = dados.get("geojson")
 
         geojson_normalizado = OcrPipelineService._normalizar_geojson(geojson)
 
         if geojson_normalizado:
-            try:
-                parsed = json.loads(geojson_normalizado)
-
-                if (
-                    isinstance(parsed, dict)
-                    and parsed.get("type") in ["Polygon", "MultiPolygon"]
-                ):
-                    try:
-                        from shapely.geometry import shape
-
-                        geom = shape(parsed)
-
-                        if not geom.is_valid:
-                            geom = geom.buffer(0)
-
-                        if geom.is_valid and not geom.is_empty:
-                            print("⚠️ GeoJSON legado válido (corrigido)")
-                            return json.dumps(parsed)
-
-                    except Exception as exc:
-                        print(f"⚠️ Falha validação shapely legado: {str(exc)}")
-
-            except Exception:
-                print("⚠️ GeoJSON legado inválido")
+            geo_validado = _validar_geojson(geojson_normalizado)
+            if geo_validado:
+                print("⚠️ GeoJSON legado válido (corrigido)")
+                return geo_validado
 
         # ================= SEGMENTOS LEGADO =================
         segmentos_memorial = dados.get("segmentos_memorial")
@@ -1727,27 +1977,36 @@ class OcrPipelineService:
         return sqrt((dx * dx) + (dy * dy))
 
     @staticmethod
-    def _fechar_anel(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    def _fechar_anel(
+        coords: list[tuple[float, float]]
+    ) -> list[tuple[float, float]]:
+
         if len(coords) < 3:
             return coords
 
         # 🔥 EVITA MUTAÇÃO DO ORIGINAL
-        coords_copy = list(coords)
+        coords_copy: list[tuple[float, float]] = list(coords)
 
         primeiro: tuple[float, float] = coords_copy[0]
         ultimo: tuple[float, float] = coords_copy[-1]
 
-        distancia_fechamento = OcrPipelineService._distancia_entre_pontos(
+        distancia_fechamento: float = OcrPipelineService._distancia_entre_pontos(
             primeiro,
             ultimo,
         )
 
-        # 🔥 FECHAMENTO POR TOLERÂNCIA
+        # =========================================================
+        # 🔥 FECHAMENTO POR TOLERÂNCIA (SIGEF SAFE)
+        # =========================================================
         if distancia_fechamento <= OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS:
-            return coords_copy[:-1] + [primeiro]
+            # 🔥 substitui último ponto pelo primeiro (padronização)
+            coords_copy[-1] = primeiro
+            return coords_copy
 
-        # 🔥 FECHAMENTO FORÇADO
-        if primeiro != ultimo:
+        # =========================================================
+        # 🔥 FECHAMENTO FORÇADO (FLOAT SAFE)
+        # =========================================================
+        if distancia_fechamento > 0:
             coords_copy.append(primeiro)
 
         return coords_copy
@@ -1756,14 +2015,16 @@ class OcrPipelineService:
     def _gerar_geojson_por_segmentos(
         segmentos_memorial: Any,
     ) -> Optional[str]:
+
         if not isinstance(segmentos_memorial, list) or not segmentos_memorial:
             return None
 
         coords: list[tuple[float, float]] = [(0.0, 0.0)]
-        x = 0.0
-        y = 0.0
+        x: float = 0.0
+        y: float = 0.0
 
         for index, seg in enumerate(segmentos_memorial, start=1):
+
             if not isinstance(seg, dict):
                 print(f"⚠️ Segmento inválido na posição {index}")
                 return None
@@ -1781,7 +2042,9 @@ class OcrPipelineService:
                 return None
 
             try:
-                azimute = OcrPipelineService._parse_angulo_para_graus(str(angulo_raw))
+                azimute = OcrPipelineService._parse_angulo_para_graus(
+                    str(angulo_raw)
+                )
 
                 if azimute < 0 or azimute > 360:
                     raise ValueError("Azimute fora do intervalo válido")
@@ -1797,8 +2060,8 @@ class OcrPipelineService:
 
             azimute_rad = radians(azimute)
 
-            dx = distancia * sin(azimute_rad)
-            dy = distancia * cos(azimute_rad)
+            dx: float = distancia * sin(azimute_rad)
+            dy: float = distancia * cos(azimute_rad)
 
             # 🔥 proteção contra valores absurdos
             if abs(dx) > 1e7 or abs(dy) > 1e7:
@@ -1814,7 +2077,9 @@ class OcrPipelineService:
             print("⚠️ Segmentos insuficientes para formar polígono")
             return None
 
-        # 🔥 valida erro de fechamento antes de fechar
+        # =========================================================
+        # 🔥 VALIDA ERRO DE FECHAMENTO
+        # =========================================================
         erro_fechamento = OcrPipelineService._distancia_entre_pontos(
             coords[0],
             coords[-1],
@@ -1822,10 +2087,19 @@ class OcrPipelineService:
 
         if erro_fechamento > OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS * 5:
             print(f"⚠️ Erro de fechamento elevado: {erro_fechamento:.2f}m")
+            # 🔥 BLOQUEIO (evita geometria distorcida)
+            return None
 
         coords = OcrPipelineService._fechar_anel(coords)
 
-        if len(set(coords)) < 3:
+        # =========================================================
+        # 🔥 VALIDAÇÃO DE DEGENERAÇÃO (FLOAT SAFE)
+        # =========================================================
+        coords_unicos = [
+            (round(p[0], 6), round(p[1], 6)) for p in coords
+        ]
+
+        if len(set(coords_unicos)) < 3:
             print("⚠️ Coordenadas degeneradas (polígono inválido)")
             return None
 
@@ -1838,12 +2112,25 @@ class OcrPipelineService:
             print("⚠️ Polígono inválido mesmo após correção")
             return None
 
-        return json.dumps(polygon.__geo_interface__)
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO FINAL DO GEOJSON
+        # =========================================================
+        try:
+            from shapely.geometry import mapping
 
+            geojson_final = mapping(polygon)
+
+            return json.dumps(geojson_final)
+
+        except Exception as exc:
+            print(f"⚠️ Falha ao converter polygon para GeoJSON: {str(exc)}")
+            return None
+        
     @staticmethod
     def _gerar_geojson_por_memorial(
         memorial_texto: Any,
     ) -> Optional[str]:
+
         if not isinstance(memorial_texto, str):
             return None
 
@@ -1860,11 +2147,18 @@ class OcrPipelineService:
 
         geojson = resultado.get("geojson")
 
-        if not isinstance(geojson, dict):
+        # =========================================================
+        # 🔥 VALIDAÇÃO ESTRUTURAL MÍNIMA
+        # =========================================================
+        if (
+            not isinstance(geojson, dict)
+            or geojson.get("type") not in ["Polygon", "MultiPolygon"]
+            or not isinstance(geojson.get("coordinates"), list)
+        ):
             return None
 
         try:
-            from shapely.geometry import shape
+            from shapely.geometry import shape, mapping
 
             geom = shape(geojson)
 
@@ -1875,50 +2169,23 @@ class OcrPipelineService:
                 print("⚠️ Geometria do memorial inválida")
                 return None
 
-            return json.dumps(geojson)
+            # =========================================================
+            # 🔥 PADRONIZAÇÃO FINAL (CRÍTICO)
+            # =========================================================
+            geojson_final = mapping(geom)
+
+            return json.dumps(geojson_final)
 
         except Exception as exc:
             print(f"⚠️ Falha ao validar geometria do memorial: {str(exc)}")
             return None
-
-    @staticmethod
-    def _parse_distancia(valor: Any) -> float:
-        if isinstance(valor, (int, float)):
-            return float(valor)
-
-        texto = str(valor).strip()
-
-        if not texto:
-            raise ValueError("Distância vazia")
-
-        # 🔥 NORMALIZAÇÃO INTELIGENTE (PT-BR + EN)
-        texto = texto.replace(" ", "")
-
-        # caso 1: formato brasileiro → 1.234,56
-        if "," in texto and "." in texto:
-            texto = texto.replace(".", "").replace(",", ".")
-
-        # caso 2: só vírgula → 1234,56
-        elif "," in texto:
-            texto = texto.replace(",", ".")
-
-        # caso 3: só ponto → assume decimal padrão (não remove)
-
-        try:
-            distancia = float(texto)
-        except Exception:
-            raise ValueError(f"Distância inválida: {valor}")
-
-        if distancia <= 0:
-            raise ValueError("Distância deve ser positiva")
-
-        return distancia
-
+        
     @staticmethod
     def _parse_angulo_para_graus(valor: str) -> float:
+
         valor_limpo = str(valor).strip().upper()
 
-        # 🔥 NORMALIZAÇÃO DE SÍMBOLOS OCR
+        # 🔥 NORMALIZAÇÃO OCR
         valor_limpo = valor_limpo.replace("º", "°")
         valor_limpo = valor_limpo.replace("’", "'")
         valor_limpo = valor_limpo.replace("“", '"').replace("”", '"')
@@ -1926,13 +2193,37 @@ class OcrPipelineService:
         valor_limpo = " ".join(valor_limpo.split())
 
         # =========================================================
-        # FORMATO RUMO (N 10°30' E)
+        # 🔥 RUMO (N 10°30' E)
         # =========================================================
         if re.match(r"^[NS]\s*.+\s*[EW]$", valor_limpo):
             return MemorialParserService._rumo_para_azimute(valor_limpo)
 
         # =========================================================
-        # FORMATO DMS COMPLETO (01°22'35")
+        # 🔥 DIREÇÃO EMBUTIDA (10°30' NE)
+        # =========================================================
+        match_direcao = re.search(r"(.+?)\s*([NS][EW])$", valor_limpo)
+        if match_direcao:
+            angulo_base = match_direcao.group(1).strip()
+            direcao = match_direcao.group(2)
+
+            try:
+                graus_base = OcrPipelineService._parse_angulo_para_graus(angulo_base)
+
+                # conversão para azimute
+                if direcao == "NE":
+                    return graus_base
+                elif direcao == "SE":
+                    return 180 - graus_base
+                elif direcao == "SW":
+                    return 180 + graus_base
+                elif direcao == "NW":
+                    return 360 - graus_base
+
+            except Exception:
+                pass
+
+        # =========================================================
+        # 🔥 DMS COMPLETO (01°22'35")
         # =========================================================
         match_dms = re.search(
             r"(\d+)[°]\s*(\d+)?'?\s*(\d+(?:\.\d+)?)?\"?",
@@ -1946,6 +2237,10 @@ class OcrPipelineService:
             m = float(minutos or 0)
             s = float(segundos or 0)
 
+            # 🔥 VALIDAÇÃO REAL
+            if m >= 60 or s >= 60:
+                raise ValueError("Minutos/segundos inválidos")
+
             decimal = g + (m / 60) + (s / 3600)
 
             if decimal < 0 or decimal > 360:
@@ -1954,12 +2249,16 @@ class OcrPipelineService:
             return decimal
 
         # =========================================================
-        # FORMATO "01 22 35" (OCR quebrado)
+        # 🔥 OCR QUEBRADO (01 22 35)
         # =========================================================
         partes = re.findall(r"\d+(?:\.\d+)?", valor_limpo)
 
         if len(partes) == 3:
             g, m, s = map(float, partes)
+
+            if m >= 60 or s >= 60:
+                raise ValueError("Minutos/segundos inválidos")
+
             decimal = g + (m / 60) + (s / 3600)
 
             if decimal < 0 or decimal > 360:
@@ -1969,6 +2268,10 @@ class OcrPipelineService:
 
         if len(partes) == 2:
             g, m = map(float, partes)
+
+            if m >= 60:
+                raise ValueError("Minutos inválidos")
+
             decimal = g + (m / 60)
 
             if decimal < 0 or decimal > 360:
@@ -1977,7 +2280,7 @@ class OcrPipelineService:
             return decimal
 
         # =========================================================
-        # DECIMAL DIRETO
+        # 🔥 DECIMAL DIRETO
         # =========================================================
         try:
             decimal = float(valor_limpo.replace(",", "."))
@@ -1988,4 +2291,19 @@ class OcrPipelineService:
             return decimal
 
         except Exception:
-            raise ValueError(f"Ângulo inválido: {valor}")
+            pass
+
+        # =========================================================
+        # 🔥 FALLBACK OCR (REMOVE LIXO)
+        # =========================================================
+        try:
+            texto_limpo = re.sub(r"[^\d.,]", "", valor_limpo)
+            decimal = float(texto_limpo.replace(",", "."))
+
+            if 0 <= decimal <= 360:
+                return decimal
+
+        except Exception:
+            pass
+
+        raise ValueError(f"Ângulo inválido: {valor}")

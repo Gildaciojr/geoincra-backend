@@ -40,6 +40,55 @@ def _normalizar_texto(valor: Any) -> Optional[str]:
 
     return texto
 
+def _extrair_matricula_do_texto(texto: Optional[str]) -> Optional[str]:
+    if not texto:
+        return None
+
+    texto = str(texto)
+
+    match = re.search(
+        r"(?i)(?:matr[íi]cula\s*(?:n[ºo°]?\s*)?)?(\d{2,6}[./-]?\d{0,6})",
+        texto
+    )
+
+    if match:
+        return _normalizar_matricula(match.group(1))
+
+    return None
+
+
+def _extrair_direcao_do_texto(texto: Optional[str]) -> Optional[str]:
+    if not texto:
+        return None
+
+    texto_upper = _normalizar_texto_upper_sem_acentos(texto)
+
+    if not texto_upper:
+        return None
+
+    if "NORTE" in texto_upper:
+        return "N"
+    if "SUL" in texto_upper:
+        return "S"
+    if "LESTE" in texto_upper:
+        return "E"
+    if "OESTE" in texto_upper:
+        return "W"
+
+    return None
+
+
+def _limpar_descricao_confrontante(descricao: Optional[str]) -> Optional[str]:
+    if not descricao:
+        return None
+
+    texto = descricao
+
+    texto = re.sub(r"(?i)matr[íi]cula\s*n[ºo°]?\s*\d+[./-]?\d*", "", texto)
+    texto = re.sub(r"\s{2,}", " ", texto)
+
+    return texto.strip() or None
+
 
 def _normalizar_texto_upper_sem_acentos(valor: Any) -> Optional[str]:
     texto = _normalizar_texto(valor)
@@ -940,22 +989,85 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
 
     confrontantes: List[Dict[str, Optional[str]]] = []
 
+    def _extrair_matricula_forte(*valores: Any) -> Optional[str]:
+        for valor in valores:
+            texto = _normalizar_texto(valor)
+            if not texto:
+                continue
+
+            candidatos = [
+                r"(?i)\bmatr[íi]cula\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\bmat\.?\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\bregistro\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\bsob\s+(?:a\s+)?(?:matr[íi]cula|mat\.?)\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+            ]
+
+            for pattern in candidatos:
+                match = re.search(pattern, texto)
+                if match:
+                    matricula = _normalizar_matricula(match.group(1))
+                    if matricula:
+                        return matricula
+
+            matricula = _normalizar_matricula(texto)
+            if matricula and len(_somente_digitos(matricula)) >= 3:
+                return matricula
+
+        return None
+
+    def _extrair_direcao_forte(*valores: Any) -> tuple[Optional[str], Optional[str]]:
+        for valor in valores:
+            texto = _normalizar_texto_upper_sem_acentos(valor)
+            if not texto:
+                continue
+
+            padroes = [
+                ("NORTE", "N"),
+                ("SUL", "S"),
+                ("LESTE", "E"),
+                ("OESTE", "W"),
+                ("NORDESTE", "NE"),
+                ("NOROESTE", "NW"),
+                ("SUDESTE", "SE"),
+                ("SUDOESTE", "SW"),
+            ]
+
+            for original, normalizado in padroes:
+                if original in texto:
+                    return original, normalizado
+
+            direcao = _normalizar_direcao(texto)
+            if direcao:
+                return _normalizar_lado_original(direcao), direcao
+
+        return None, None
+
+    def _limpar_identificacao(valor: Any, nome_ref: Optional[str], descricao_ref: Optional[str]) -> Optional[str]:
+        identificacao = _normalizar_identificacao_generica(valor)
+        if not identificacao:
+            return None
+
+        if nome_ref and identificacao == nome_ref:
+            return None
+
+        if descricao_ref and identificacao == descricao_ref:
+            return None
+
+        return identificacao
+
     for i, c in enumerate(confrontantes_raw, start=1):
 
-        # =========================================================
-        # 🔤 CASO STRING (OCR MAIS SUJO)
-        # =========================================================
         if isinstance(c, str):
-            descricao = _normalizar_texto(c)
+            descricao_original = _normalizar_texto(c)
 
-            if not descricao:
+            if not descricao_original:
                 warnings.append(f"Confrontante {i} ignorado (string vazia)")
                 continue
 
-            extraidos = _extrair_lote_gleba_de_texto(descricao)
-
-            lado_original = _normalizar_lado_original(descricao)
-            lado_normalizado = _normalizar_direcao(descricao)
+            extraidos = _extrair_lote_gleba_de_texto(descricao_original)
+            lado_original, lado_normalizado = _extrair_direcao_forte(descricao_original)
+            matricula_confrontante = _extrair_matricula_forte(descricao_original)
+            descricao_limpa = _limpar_descricao_confrontante(descricao_original) or descricao_original
 
             confrontantes.append(
                 {
@@ -963,27 +1075,23 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                     "lado_normalizado": lado_normalizado,
                     "direcao": lado_normalizado or lado_original,
                     "nome": None,
-                    "descricao": descricao,
-                    "matricula": _normalizar_matricula(descricao),
-                    "identificacao": descricao,
-                    "cpf_cnpj": _normalizar_cpf_cnpj(descricao),
-                    "tipo": _inferir_tipo_confrontante(None, descricao, descricao),
+                    "descricao": descricao_limpa,
+                    "matricula": matricula_confrontante,
+                    "identificacao": descricao_original,
+                    "cpf_cnpj": _normalizar_cpf_cnpj(descricao_original),
+                    "tipo": _normalizar_texto_upper_sem_acentos(
+                        _inferir_tipo_confrontante(None, descricao_limpa, descricao_original)
+                    ),
                     "lote": extraidos["lote"],
                     "gleba": extraidos["gleba"],
                 }
             )
             continue
 
-        # =========================================================
-        # 🔴 INVALIDO
-        # =========================================================
         if not isinstance(c, dict):
             warnings.append(f"Confrontante {i} ignorado (estrutura inválida)")
             continue
 
-        # =========================================================
-        # 🔹 CAMPOS BASE
-        # =========================================================
         lado_bruto = _coalesce(
             c.get("direcao"),
             c.get("lado"),
@@ -995,116 +1103,132 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             _coalesce(
                 c.get("nome"),
                 c.get("confrontante"),
+                c.get("proprietario"),
+                c.get("proprietario_confrontante"),
             )
         )
 
-        descricao = _normalizar_texto(
+        descricao_original = _normalizar_texto(
             _coalesce(
                 c.get("descricao"),
                 c.get("descricao_completa"),
                 c.get("texto"),
+                c.get("texto_original"),
             )
         )
 
-        # =========================================================
-        # 🔥 NOVO — MATRÍCULA MAIS INTELIGENTE
-        # =========================================================
-        matricula_confrontante = _normalizar_matricula(
-            _coalesce(
-                c.get("matricula"),
-                c.get("numero_matricula"),
-                descricao,
-                nome,
-            )
+        matricula_confrontante = _extrair_matricula_forte(
+            c.get("matricula"),
+            c.get("numero_matricula"),
+            c.get("matricula_confrontante"),
+            descricao_original,
+            nome,
         )
 
-        # =========================================================
-        # 🔥 NOVO — CPF/CNPJ
-        # =========================================================
         cpf_cnpj = _normalizar_cpf_cnpj(
             _coalesce(
                 c.get("cpf_cnpj"),
                 c.get("cpf"),
                 c.get("cnpj"),
-                descricao,
+                descricao_original,
                 nome,
             )
         )
 
-        # =========================================================
-        # 🔥 IDENTIFICAÇÃO FORTE
-        # =========================================================
-        identificacao = _normalizar_identificacao_generica(
-            _coalesce(
-                c.get("identificacao"),
-                c.get("identificacao_imovel"),
-                c.get("imovel"),
-                c.get("nome_imovel"),
-                nome,
-                descricao,
-            )
+        identificacao_raw = _coalesce(
+            c.get("identificacao"),
+            c.get("identificacao_imovel"),
+            c.get("imovel"),
+            c.get("nome_imovel"),
+            c.get("fazenda"),
+            c.get("sitio"),
+            c.get("gleba_descricao"),
         )
 
-        # =========================================================
-        # 🔥 LOTE / GLEBA
-        # =========================================================
+        identificacao = _limpar_identificacao(
+            identificacao_raw,
+            nome_ref=nome,
+            descricao_ref=descricao_original,
+        )
+
+        extraidos_nome = _extrair_lote_gleba_de_texto(nome)
+        extraidos_descricao = _extrair_lote_gleba_de_texto(descricao_original)
+        extraidos_identificacao = _extrair_lote_gleba_de_texto(identificacao)
+
         lote = _normalizar_texto(
             _coalesce(
                 c.get("lote"),
-                _extrair_lote_gleba_de_texto(nome).get("lote") if nome else None,
-                _extrair_lote_gleba_de_texto(descricao).get("lote") if descricao else None,
-                _extrair_lote_gleba_de_texto(identificacao).get("lote") if identificacao else None,
+                extraidos_nome.get("lote"),
+                extraidos_descricao.get("lote"),
+                extraidos_identificacao.get("lote"),
             )
         )
 
         gleba = _normalizar_texto(
             _coalesce(
                 c.get("gleba"),
-                _extrair_lote_gleba_de_texto(nome).get("gleba") if nome else None,
-                _extrair_lote_gleba_de_texto(descricao).get("gleba") if descricao else None,
-                _extrair_lote_gleba_de_texto(identificacao).get("gleba") if identificacao else None,
+                extraidos_nome.get("gleba"),
+                extraidos_descricao.get("gleba"),
+                extraidos_identificacao.get("gleba"),
             )
         )
 
-        # =========================================================
-        # 🔥 TIPO (AGORA MAIS FORTE)
-        # =========================================================
         tipo = _normalizar_texto_upper_sem_acentos(
             _coalesce(
                 c.get("tipo"),
-                _inferir_tipo_confrontante(nome, descricao, identificacao),
+                _inferir_tipo_confrontante(nome, descricao_original, identificacao),
             )
         )
 
-        # =========================================================
-        # 🔹 DIREÇÃO
-        # =========================================================
-        lado_original = _normalizar_lado_original(lado_bruto)
-        lado_normalizado = _normalizar_direcao(lado_bruto)
+        lado_original, lado_normalizado = _extrair_direcao_forte(
+            lado_bruto,
+            descricao_original,
+            identificacao,
+        )
 
-        # fallback inteligente
-        if not lado_normalizado and descricao:
-            lado_normalizado = _normalizar_direcao(descricao)
-            lado_original = _normalizar_lado_original(descricao)
+        descricao = _limpar_descricao_confrontante(descricao_original)
 
-        # =========================================================
-        # 🔥 DESCRIÇÃO INTELIGENTE (NOVA)
-        # =========================================================
         if not descricao:
-            descricao = " / ".join(
-                x for x in [nome, identificacao, matricula_confrontante] if x
-            ) or None
+            partes_fallback: List[str] = []
 
-        # =========================================================
-        # 🔴 FILTRO
-        # =========================================================
-        if not nome and not descricao and not matricula_confrontante and not identificacao:
-            warnings.append(f"Confrontante {i} ignorado (sem conteúdo útil)")
+            if nome:
+                partes_fallback.append(nome)
+
+            if identificacao and identificacao != nome:
+                partes_fallback.append(identificacao)
+
+            if matricula_confrontante:
+                partes_fallback.append(f"Matrícula {matricula_confrontante}")
+
+            if lote:
+                partes_fallback.append(f"Lote {lote}")
+
+            if gleba:
+                partes_fallback.append(f"Gleba {gleba}")
+
+            descricao = " / ".join(partes_fallback) if partes_fallback else None
+
+        if not identificacao:
+            identificacao = _normalizar_identificacao_generica(
+                _coalesce(
+                    c.get("identificacao_imovel"),
+                    c.get("imovel"),
+                    c.get("nome_imovel"),
+                    descricao_original if not nome else None,
+                )
+            )
+
+        nome = _normalizar_texto(nome)
+        identificacao = _normalizar_texto(identificacao)
+        descricao = _normalizar_texto(descricao)
+        matricula_confrontante = _normalizar_matricula(matricula_confrontante)
+
+        if not any([nome, descricao, matricula_confrontante, identificacao, lote, gleba, tipo]):
+            warnings.append(
+                f"Confrontante {i} ignorado (sem conteúdo útil após normalização)"
+            )
             continue
 
-        # =========================================================
-        # ✅ OUTPUT FINAL
-        # =========================================================
         confrontantes.append(
             {
                 "lado": lado_original,
@@ -1413,7 +1537,7 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     elif len(historico_atos) < 2:
       score -= 5
 
-    warnings.append("Histórico registral muito raso")
+      warnings.append("Histórico registral muito raso")
 
     # =========================================================
     # NORMALIZA SCORE
