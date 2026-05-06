@@ -402,7 +402,7 @@ class OcrPipelineService:
         try:
             geojson = OcrPipelineService._resolver_geojson(dados)
 
-            # 🔥 NOVO — identificar fonte geométrica (sem quebrar legado)
+            # 🔥 identificar fonte geométrica
             try:
                 if isinstance(dados.get("geometria"), dict):
                     fonte_geom = (
@@ -417,6 +417,8 @@ class OcrPipelineService:
         except Exception as exc:
             OcrPipelineService._rollback_safely(db)
             result["errors"].append(f"Resolver geojson: {str(exc)}")
+
+            # 🔥 fallback seguro
             try:
                 if isinstance(dados.get("geometria"), dict):
                     fonte_geom = (
@@ -427,10 +429,6 @@ class OcrPipelineService:
                     )
             except Exception:
                 fonte_geom = None
-
-        except Exception as exc:
-            OcrPipelineService._rollback_safely(db)
-            result["errors"].append(f"Resolver geojson: {str(exc)}")
 
         if geojson:
             try:
@@ -446,7 +444,6 @@ class OcrPipelineService:
 
                 if not isinstance(geojson_obj, dict) or not geojson_obj.get("type"):
                     raise Exception("GeoJSON inválido ou sem campo 'type'")
-
                 # =========================================================
                 # 🔥 ANÁLISE DO REFERENCIAL
                 # =========================================================
@@ -1399,50 +1396,52 @@ class OcrPipelineService:
         }
 
         print("🏁 Pipeline OCR concluído")
+        
 
         return result
 
-@staticmethod
-def _normalizar_texto_simples(valor: Any) -> Optional[str]:
-    if valor is None:
-        return None
+    @staticmethod
+    def _normalizar_texto_simples(valor: Any) -> Optional[str]:
+        if valor is None:
+            return None
 
-    texto = str(valor).strip()
-    if not texto:
-        return None
+        texto = str(valor).strip()
 
-    return " ".join(texto.split())
+        if not texto:
+            return None
+
+        return " ".join(texto.split())
 
 
-@staticmethod
-def _normalizar_numero_matricula(valor: Any) -> Optional[str]:
-    if valor is None:
-        return None
+    @staticmethod
+    def _normalizar_numero_matricula(valor: Any) -> Optional[str]:
+        if valor is None:
+            return None
 
-    # 🔥 reutiliza normalização base
-    texto = OcrPipelineService._normalizar_texto_simples(valor)
+        # 🔥 reutiliza normalização base
+        texto = OcrPipelineService._normalizar_texto_simples(valor)
 
-    if not texto:
-        return None
+        if not texto:
+            return None
 
-    # 🔥 remove termos comuns com boundary (evita remoção indevida)
-    texto = re.sub(
-        r"\b(matr[ií]cula|mat\.?|registro|n[º°o]|sob\s*n[º°o])\b",
-        "",
-        texto,
-        flags=re.IGNORECASE,
-    )
+        # 🔥 remove termos comuns com boundary (evita remoção indevida)
+        texto = re.sub(
+            r"\b(matr[ií]cula|mat\.?|registro|n[º°o]|sob\s*n[º°o])\b",
+            "",
+            texto,
+            flags=re.IGNORECASE,
+        )
 
-    # 🔥 remove tudo que não for padrão de matrícula
-    texto = re.sub(r"[^\d./-]", "", texto)
+        # 🔥 remove tudo que não for padrão de matrícula
+        texto = re.sub(r"[^\d./-]", "", texto)
 
-    texto = texto.strip()
+        texto = texto.strip()
 
-    # 🔥 fallback de segurança
-    if not texto:
-        return None
+        # 🔥 fallback de segurança
+        if not texto:
+            return None
 
-    return texto
+        return texto
     
     @staticmethod
     def _upsert_matricula(
