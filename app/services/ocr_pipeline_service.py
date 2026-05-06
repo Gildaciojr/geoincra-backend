@@ -1538,19 +1538,29 @@ class OcrPipelineService:
         inteiro_teor_partes: list[str] = []
 
         if descricao_imovel:
-            inteiro_teor_partes.append(f"DESCRIÇÃO DO IMÓVEL: {descricao_imovel}")
+            inteiro_teor_partes.append(
+                f"DESCRIÇÃO DO IMÓVEL: {descricao_imovel}"
+            )
 
         if comarca:
-            inteiro_teor_partes.append(f"COMARCA: {comarca}")
+            inteiro_teor_partes.append(
+                f"COMARCA: {comarca}"
+            )
 
         if cartorio:
-            inteiro_teor_partes.append(f"CARTÓRIO: {cartorio}")
+            inteiro_teor_partes.append(
+                f"CARTÓRIO: {cartorio}"
+            )
 
         if livro:
-            inteiro_teor_partes.append(f"LIVRO: {livro}")
+            inteiro_teor_partes.append(
+                f"LIVRO: {livro}"
+            )
 
         if folha:
-            inteiro_teor_partes.append(f"FOLHA: {folha}")
+            inteiro_teor_partes.append(
+                f"FOLHA: {folha}"
+            )
 
         # =========================================================
         # 🔥 PROPRIETÁRIOS
@@ -1658,45 +1668,70 @@ class OcrPipelineService:
                 partes_linha: list[str] = []
 
                 if direcao:
-                    partes_linha.append(f"DIREÇÃO: {direcao}")
+                    partes_linha.append(
+                        f"DIREÇÃO: {direcao}"
+                    )
 
                 if nome:
-                    partes_linha.append(f"NOME: {nome}")
+                    partes_linha.append(
+                        f"NOME: {nome}"
+                    )
 
                 if matricula_confrontante:
-                    partes_linha.append(f"MATRÍCULA: {matricula_confrontante}")
+                    partes_linha.append(
+                        f"MATRÍCULA: {matricula_confrontante}"
+                    )
 
                 if identificacao:
-                    partes_linha.append(f"IMÓVEL: {identificacao}")
+                    partes_linha.append(
+                        f"IMÓVEL: {identificacao}"
+                    )
 
                 if lote:
-                    partes_linha.append(f"LOTE: {lote}")
+                    partes_linha.append(
+                        f"LOTE: {lote}"
+                    )
 
                 if gleba:
-                    partes_linha.append(f"GLEBA: {gleba}")
+                    partes_linha.append(
+                        f"GLEBA: {gleba}"
+                    )
 
                 if tipo:
-                    partes_linha.append(f"TIPO: {tipo}")
+                    partes_linha.append(
+                        f"TIPO: {tipo}"
+                    )
 
                 if cpf_cnpj:
-                    partes_linha.append(f"CPF/CNPJ: {cpf_cnpj}")
+                    partes_linha.append(
+                        f"CPF/CNPJ: {cpf_cnpj}"
+                    )
 
                 if descricao:
-                    partes_linha.append(f"DESCRIÇÃO: {descricao}")
+                    partes_linha.append(
+                        f"DESCRIÇÃO: {descricao}"
+                    )
 
+                # =========================================================
+                # 🔥 CORREÇÃO CRÍTICA DE RENDERIZAÇÃO (PDF / WEASYPRINT)
+                # =========================================================
                 if partes_linha:
-                    inteiro_teor_partes.append("- " + " | ".join(partes_linha))
+                    inteiro_teor_partes.append(
+                        "- " + "<br/>".join(partes_linha)
+                    )
 
         # =========================================================
         # 🔥 OBSERVAÇÕES
         # =========================================================
         if observacoes:
-            inteiro_teor_partes.append(f"OBSERVAÇÕES: {observacoes}")
+            inteiro_teor_partes.append(
+                f"OBSERVAÇÕES: {observacoes}"
+            )
 
         # =========================================================
         # 🔥 CONSOLIDAÇÃO DO INTEIRO TEOR
         # =========================================================
-        inteiro_teor_montado = "\n".join(inteiro_teor_partes).strip() or None
+        inteiro_teor_montado = "<br/>".join(inteiro_teor_partes).strip() or None
 
         # =========================================================
         # 🔥 PROTEÇÃO DE TAMANHO (CRÍTICO)
@@ -1728,7 +1763,7 @@ class OcrPipelineService:
                     folha=folha,
                     comarca=comarca,
                     codigo_cartorio=codigo_cartorio,
-                    cartorio_id=cartorio_id,  # 🔥 NOVO
+                    cartorio_id=cartorio_id,
                     inteiro_teor=inteiro_teor_montado,
                     observacoes=observacoes,
                     status="ATIVA",
