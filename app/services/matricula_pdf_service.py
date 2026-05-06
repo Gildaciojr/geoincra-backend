@@ -554,35 +554,74 @@ class MatriculaPdfService:
             # =========================================================
             # NORMALIZAÇÃO DAS LINHAS
             # =========================================================
-            rows_seguras: List[List[str]] = []
+            rows_seguras: List[List[Any]] = []
 
             if rows and isinstance(rows, list):
+
                 for r in rows:
+
                     if not isinstance(r, list):
                         continue
 
-                    linha: List[str] = []
+                    linha: List[Any] = []
 
                     for i in range(len(headers_seguro)):
+
                         try:
                             valor = r[i] if i < len(r) else ""
                         except Exception:
                             valor = ""
 
+                        # =====================================================
+                        # 🔥 PRESERVA FLOWABLES NATIVOS DO REPORTLAB
+                        # =====================================================
+                        if isinstance(valor, Paragraph):
+                            linha.append(valor)
+                            continue
+
+                        # =====================================================
+                        # 🔥 NORMALIZA TEXTO COMUM
+                        # =====================================================
                         try:
-                            linha.append(_safe_text(valor))
+                            texto = _safe_text(valor)
+
+                            linha.append(
+                                Paragraph(
+                                    texto if texto else "",
+                                    style_confrontante,
+                                )
+                            )
+
                         except Exception:
-                            linha.append("")
+
+                            linha.append(
+                                Paragraph(
+                                    "",
+                                    style_confrontante,
+                                )
+                            )
 
                     rows_seguras.append(linha)
 
-            # evita tabela vazia
-            data = [headers_seguro] + (rows_seguras or [["" for _ in headers_seguro]])
+            # =========================================================
+            # 🔥 EVITA TABELA VAZIA
+            # =========================================================
+            if rows_seguras:
+                data = [headers_seguro] + rows_seguras
+            else:
+                data = [
+                    headers_seguro,
+                    [
+                        Paragraph("", style_confrontante)
+                        for _ in headers_seguro
+                    ],
+                ]
 
             tabela = Table(
                 data,
                 colWidths=col_widths,
                 repeatRows=1,
+                splitByRow=True,
             )
 
             tabela.setStyle(
@@ -1086,9 +1125,15 @@ class MatriculaPdfService:
         style_confrontante = ParagraphStyle(
             name="Confrontante",
             fontName="Helvetica",
-            fontSize=8,
-            leading=10,
+            fontSize=7.4,
+            leading=11,
+            textColor=colors.HexColor("#111827"),
             wordWrap="CJK",
+            splitLongWords=True,
+            allowWidows=1,
+            allowOrphans=1,
+            spaceBefore=0,
+            spaceAfter=0,
         )
 
         def _truncate_text(texto: str, limite: int = 180) -> str:
@@ -1224,9 +1269,9 @@ class MatriculaPdfService:
                 rows=confrontantes_rows,
                 col_widths=[
                     10 * mm,
-                    20 * mm,
-                    45 * mm,
-                    largura_util - (10 * mm + 20 * mm + 45 * mm),
+                    24 * mm,
+                    42 * mm,
+                    largura_util - (10 * mm + 24 * mm + 42 * mm),
                 ],
             )
         else:
