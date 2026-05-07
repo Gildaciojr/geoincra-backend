@@ -249,51 +249,173 @@ class GeometriaService:
         epsg_origem: int | None = 4326,
     ) -> dict[str, Any]:
 
-        geom = GeometriaService._parse_polygon_geojson(geojson)
+        # =====================================================
+        # 🔥 NORMALIZAÇÃO ORIGINAL
+        # =====================================================
+        geojson_obj = GeometriaService._normalizar_geojson_input(
+            geojson
+        )
 
+        geom = GeometriaService._parse_polygon_geojson(
+            geojson_obj
+        )
+
+        # =====================================================
+        # 🔥 METADATA DO GEOJSON
+        # =====================================================
+        metadata = {}
+
+        if isinstance(geojson_obj, dict):
+            metadata = geojson_obj.get("metadata") or {}
+
+        referencial_metadata = str(
+            metadata.get("referencial") or ""
+        ).upper().strip()
+
+        origem_metadata = str(
+            metadata.get("origem") or ""
+        ).upper().strip()
+
+        # =====================================================
+        # 🔥 BOUNDS
+        # =====================================================
         bounds = GeometriaService._bbox_info(geom)
+
         spanx = bounds["spanx"]
         spany = bounds["spany"]
 
         centroid = geom.centroid
+
         cx = GeometriaService._safe_float(centroid.x)
         cy = GeometriaService._safe_float(centroid.y)
 
-        if math.isnan(cx) or math.isnan(cy) or math.isinf(cx) or math.isinf(cy):
-            raise HTTPException(status_code=400, detail="Centroide inválido (NaN/Inf).")
+        if (
+            math.isnan(cx)
+            or math.isnan(cy)
+            or math.isinf(cx)
+            or math.isinf(cy)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Centroide inválido (NaN/Inf).",
+            )
 
-        faixa_geografica_valida = GeometriaService._coordenadas_parecem_geograficas(geom)
+        # =====================================================
+        # 🔥 HEURÍSTICAS
+        # =====================================================
+        faixa_geografica_valida = (
+            GeometriaService._coordenadas_parecem_geograficas(
+                geom
+            )
+        )
 
-        # Heurística:
-        # - se EPSG <= 0: LOCAL_CARTESIANA
-        # - se bounds não parecem geográficos: LOCAL_CARTESIANA
-        # - se escala em graus é desproporcional: LOCAL_CARTESIANA
-        escala_graus = spanx < 5 and spany < 5
+        escala_graus = (
+            spanx < 5
+            and spany < 5
+        )
 
-        if epsg_origem is not None and int(epsg_origem) <= 0:
+        # =====================================================
+        # 🔥 PRIORIDADE 01:
+        # METADATA EXPLÍCITA
+        # =====================================================
+        if referencial_metadata == "LOCAL_CARTESIANO":
+
             tipo = "LOCAL_CARTESIANA"
-        elif not faixa_geografica_valida:
-            tipo = "LOCAL_CARTESIANA"
-        elif not escala_graus:
-            tipo = "LOCAL_CARTESIANA"
-        else:
+
+        elif referencial_metadata == "GEOGRAFICO":
+
             tipo = "GEOGRAFICA"
 
+        # =====================================================
+        # 🔥 PRIORIDADE 02:
+        # EPSG LOCAL
+        # =====================================================
+        elif (
+            epsg_origem is not None
+            and int(epsg_origem) <= 0
+        ):
+
+            tipo = "LOCAL_CARTESIANA"
+
+        # =====================================================
+        # 🔥 PRIORIDADE 03:
+        # OCR / MEMORIAL RECONSTRUÍDO
+        # =====================================================
+        elif origem_metadata in {
+            "SEGMENTOS_MEMORIAL",
+            "OCR_PIPELINE",
+        }:
+
+            tipo = "LOCAL_CARTESIANA"
+
+        # =====================================================
+        # 🔥 PRIORIDADE 04:
+        # HEURÍSTICA ESPACIAL
+        # =====================================================
+        elif not faixa_geografica_valida:
+
+            tipo = "LOCAL_CARTESIANA"
+
+        elif not escala_graus:
+
+            tipo = "LOCAL_CARTESIANA"
+
+        else:
+
+            tipo = "GEOGRAFICA"
+
+        # =====================================================
+        # 🔥 RETORNO TÉCNICO
+        # =====================================================
         return {
             "tipo_referencial": tipo,
+
             "geom": geom,
+
             "bounds": bounds,
+
             "centroid": {
                 "x": cx,
                 "y": cy,
             },
-            "vertices": GeometriaService._count_vertices(geom),
-            "area_bruta_unidades": GeometriaService._safe_float(geom.area),
-            "perimetro_bruto_unidades": GeometriaService._safe_float(geom.length),
-            "faixa_geografica_valida": faixa_geografica_valida,
-            "escala_graus_valida": escala_graus,
-        }
 
+            "vertices": GeometriaService._count_vertices(
+                geom
+            ),
+
+            "area_bruta_unidades": (
+                GeometriaService._safe_float(
+                    geom.area
+                )
+            ),
+
+            "perimetro_bruto_unidades": (
+                GeometriaService._safe_float(
+                    geom.length
+                )
+            ),
+
+            "faixa_geografica_valida": (
+                faixa_geografica_valida
+            ),
+
+            "escala_graus_valida": (
+                escala_graus
+            ),
+
+            # =================================================
+            # 🔥 NOVOS CAMPOS TÉCNICOS
+            # =================================================
+            "metadata_detectada": metadata,
+
+            "referencial_metadata": (
+                referencial_metadata
+            ),
+
+            "origem_metadata": (
+                origem_metadata
+            ),
+        }
     # =========================================================
     # CALCULAR AREA E PERIMETRO
     # =========================================================

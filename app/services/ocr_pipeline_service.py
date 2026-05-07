@@ -2318,10 +2318,51 @@ class OcrPipelineService:
 
             geojson_final = mapping(polygon)
 
-            return json.dumps(geojson_final)
+            # =====================================================
+            # 🔥 ENRIQUECIMENTO GEODÉSICO
+            # =====================================================
+            # IMPORTANTE:
+            # Esta geometria NÃO representa coordenadas geográficas reais.
+            #
+            # Ela foi reconstruída matematicamente via:
+            # - memorial descritivo
+            # - azimutes
+            # - distâncias
+            # - OCR documental
+            #
+            # Portanto:
+            # - NÃO possui datum oficial
+            # - NÃO possui georreferenciamento absoluto
+            # - NÃO deve ser tratada como EPSG geográfico real
+            # =====================================================
+
+            geojson_final["metadata"] = {
+                "referencial": "LOCAL_CARTESIANO",
+                "origem": "SEGMENTOS_MEMORIAL",
+                "reconstruido_por_ocr": True,
+                "possui_georreferenciamento_real": False,
+                "tipo_geometria": "POLIGONO_RECONSTRUIDO",
+                "engine": "OCR_PIPELINE",
+                "fechamento_tolerancia_metros": (
+                    OcrPipelineService.FECHAMENTO_TOLERANCIA_METROS
+                ),
+                "erro_fechamento_metros": round(
+                    float(erro_fechamento),
+                    6,
+                ),
+                "vertices": len(coords) - 1,
+            }
+
+            return json.dumps(
+                geojson_final,
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
-            print(f"⚠️ Falha ao converter polygon para GeoJSON: {str(exc)}")
+            print(
+                "⚠️ Falha ao converter polygon para GeoJSON: "
+                f"{str(exc)}"
+            )
             return None
         
     @staticmethod
@@ -2378,181 +2419,365 @@ class OcrPipelineService:
             print(f"⚠️ Falha ao validar geometria do memorial: {str(exc)}")
             return None
         
-    @staticmethod
-    def _parse_angulo_para_graus(valor: str) -> float:
+@staticmethod
+def _parse_angulo_para_graus(valor: str) -> float:
 
-        valor_limpo = str(valor).strip().upper()
+    valor_original = str(valor)
 
-        # 🔥 NORMALIZAÇÃO OCR
-        valor_limpo = valor_limpo.replace("º", "°")
-        valor_limpo = valor_limpo.replace("’", "'")
-        valor_limpo = valor_limpo.replace("“", '"').replace("”", '"')
+    valor_limpo = valor_original.strip().upper()
 
-        valor_limpo = " ".join(valor_limpo.split())
+    # =========================================================
+    # 🔥 NORMALIZAÇÃO OCR
+    # =========================================================
+    valor_limpo = valor_limpo.replace("º", "°")
+    valor_limpo = valor_limpo.replace("’", "'")
+    valor_limpo = valor_limpo.replace("`", "'")
 
-        # =========================================================
-        # 🔥 RUMO (N 10°30' E)
-        # =========================================================
-        if re.match(r"^[NS]\s*.+\s*[EW]$", valor_limpo):
-            return MemorialParserService._rumo_para_azimute(valor_limpo)
+    valor_limpo = valor_limpo.replace("“", '"')
+    valor_limpo = valor_limpo.replace("”", '"')
 
-        # =========================================================
-        # 🔥 DIREÇÃO EMBUTIDA (10°30' NE)
-        # =========================================================
-        match_direcao = re.search(r"(.+?)\s*([NS][EW])$", valor_limpo)
-        if match_direcao:
-            angulo_base = match_direcao.group(1).strip()
-            direcao = match_direcao.group(2)
+    valor_limpo = valor_limpo.replace("O", "0")
 
-            try:
-                graus_base = OcrPipelineService._parse_angulo_para_graus(angulo_base)
+    valor_limpo = " ".join(valor_limpo.split())
 
-                # conversão para azimute
-                if direcao == "NE":
-                    return graus_base
-                elif direcao == "SE":
-                    return 180 - graus_base
-                elif direcao == "SW":
-                    return 180 + graus_base
-                elif direcao == "NW":
-                    return 360 - graus_base
-
-            except Exception:
-                pass
-
-        # =========================================================
-        # 🔥 DMS COMPLETO (01°22'35")
-        # =========================================================
-        match_dms = re.search(
-            r"(\d+)[°]\s*(\d+)?'?\s*(\d+(?:\.\d+)?)?\"?",
-            valor_limpo,
+    # =========================================================
+    # 🔥 RUMO QUADRANTAL
+    # =========================================================
+    #
+    # Ex:
+    # N 10°30'20" E
+    # S 45°22' W
+    #
+    # =========================================================
+    if re.match(
+        r"^[NS]\s*.+\s*[EW]$",
+        valor_limpo,
+    ):
+        az = MemorialParserService._rumo_para_azimute(
+            valor_limpo
         )
 
-        if match_dms:
-            graus, minutos, segundos = match_dms.groups()
+        if az < 0 or az > 360:
+            raise ValueError("Rumo convertido inválido")
 
-            g = float(graus or 0)
-            m = float(minutos or 0)
-            s = float(segundos or 0)
+        return az
 
-            # 🔥 VALIDAÇÃO REAL
-            if m >= 60 or s >= 60:
-                raise ValueError("Minutos/segundos inválidos")
+    # =========================================================
+    # 🔥 DIREÇÃO EMBUTIDA
+    # =========================================================
+    #
+    # Ex:
+    # 10°30' NE
+    #
+    # =========================================================
+    match_direcao = re.search(
+        r"(.+?)\s*([NS][EW])$",
+        valor_limpo,
+    )
 
-            decimal = g + (m / 60) + (s / 3600)
+    if match_direcao:
 
-            if decimal < 0 or decimal > 360:
-                raise ValueError("Ângulo DMS inválido")
+        angulo_base = match_direcao.group(1).strip()
+        direcao = match_direcao.group(2)
 
-            return decimal
+        graus_base = (
+            OcrPipelineService._parse_angulo_para_graus(
+                angulo_base
+            )
+        )
 
-        # =========================================================
-        # 🔥 OCR QUEBRADO (01 22 35)
-        # =========================================================
-        partes = re.findall(r"\d+(?:\.\d+)?", valor_limpo)
+        if graus_base < 0 or graus_base > 90:
+            raise ValueError(
+                "Ângulo base inválido para rumo quadrantal"
+            )
 
-        if len(partes) == 3:
-            g, m, s = map(float, partes)
+        if direcao == "NE":
+            return graus_base
 
-            if m >= 60 or s >= 60:
-                raise ValueError("Minutos/segundos inválidos")
+        elif direcao == "SE":
+            return 180 - graus_base
 
-            decimal = g + (m / 60) + (s / 3600)
+        elif direcao == "SW":
+            return 180 + graus_base
 
-            if decimal < 0 or decimal > 360:
-                raise ValueError("Ângulo inválido (3 partes)")
+        elif direcao == "NW":
+            return 360 - graus_base
 
-            return decimal
+    # =========================================================
+    # 🔥 DMS COMPLETO
+    # =========================================================
+    #
+    # Ex:
+    # 01°22'35"
+    #
+    # =========================================================
+    match_dms = re.search(
+        r"(\d+)[°]\s*(\d+)?'?\s*(\d+(?:\.\d+)?)?\"?",
+        valor_limpo,
+    )
 
-        if len(partes) == 2:
-            g, m = map(float, partes)
+    if match_dms:
 
-            if m >= 60:
-                raise ValueError("Minutos inválidos")
+        graus, minutos, segundos = match_dms.groups()
 
-            decimal = g + (m / 60)
+        g = float(graus or 0)
+        m = float(minutos or 0)
+        s = float(segundos or 0)
 
-            if decimal < 0 or decimal > 360:
-                raise ValueError("Ângulo inválido (2 partes)")
+        if m >= 60:
+            raise ValueError("Minutos inválidos")
 
-            return decimal
+        if s >= 60:
+            raise ValueError("Segundos inválidos")
 
-        # =========================================================
-        # 🔥 DECIMAL DIRETO
-        # =========================================================
-        try:
-            decimal = float(valor_limpo.replace(",", "."))
+        decimal = g + (m / 60) + (s / 3600)
 
-            if decimal < 0 or decimal > 360:
-                raise ValueError("Ângulo fora do intervalo")
+        if decimal < 0 or decimal > 360:
+            raise ValueError("Ângulo DMS inválido")
 
-            return decimal
+        return decimal
 
-        except Exception:
-            pass
+    # =========================================================
+    # 🔥 OCR PARCIAL
+    # =========================================================
+    #
+    # Ex:
+    # 01 22 35
+    #
+    # =========================================================
+    partes = re.findall(
+        r"\d+(?:\.\d+)?",
+        valor_limpo,
+    )
 
-        # =========================================================
-        # 🔥 FALLBACK OCR (REMOVE LIXO)
-        # =========================================================
-        try:
-            texto_limpo = re.sub(r"[^\d.,]", "", valor_limpo)
-            decimal = float(texto_limpo.replace(",", "."))
+    if len(partes) == 3:
 
-            if 0 <= decimal <= 360:
-                return decimal
+        g, m, s = map(float, partes)
 
-        except Exception:
-            pass
+        if m >= 60:
+            raise ValueError("Minutos inválidos")
 
-        raise ValueError(f"Ângulo inválido: {valor}")
+        if s >= 60:
+            raise ValueError("Segundos inválidos")
+
+        decimal = g + (m / 60) + (s / 3600)
+
+        if decimal < 0 or decimal > 360:
+            raise ValueError(
+                "Ângulo inválido OCR 3 partes"
+            )
+
+        return decimal
+
+    if len(partes) == 2:
+
+        g, m = map(float, partes)
+
+        if m >= 60:
+            raise ValueError("Minutos inválidos")
+
+        decimal = g + (m / 60)
+
+        if decimal < 0 or decimal > 360:
+            raise ValueError(
+                "Ângulo inválido OCR 2 partes"
+            )
+
+        return decimal
+
+    # =========================================================
+    # 🔥 DECIMAL DIRETO
+    # =========================================================
+    try:
+
+        decimal = float(
+            valor_limpo.replace(",", ".")
+        )
+
+        if decimal < 0 or decimal > 360:
+            raise ValueError(
+                "Ângulo decimal inválido"
+            )
+
+        return decimal
+
+    except Exception:
+        pass
+
+    # =========================================================
+    # 🔥 OCR CORROMPIDO
+    # =========================================================
+    #
+    # NÃO tenta mais "adivinhar"
+    # removendo lixo arbitrariamente.
+    #
+    # Isso estava causando:
+    # - explosão geométrica
+    # - azimutes absurdos
+    # - polígonos inválidos
+    #
+    # =========================================================
+    raise ValueError(
+        f"Ângulo inválido: {valor_original}"
+    )
     
-    @staticmethod
-    def _parse_distancia(valor: Any) -> float:
+@staticmethod
+def _parse_distancia(valor: Any) -> float:
 
-        if valor is None:
-            raise ValueError("Distância ausente")
+    if valor is None:
+        raise ValueError("Distância ausente")
 
-        # =========================================================
-        # NORMALIZAÇÃO BASE
-        # =========================================================
-        texto = str(valor).strip().upper()
+    # =========================================================
+    # NORMALIZAÇÃO BASE
+    # =========================================================
+    texto_original = str(valor)
 
-        if not texto:
-            raise ValueError("Distância vazia")
+    texto = texto_original.strip().upper()
 
-        # =========================================================
-        # NORMALIZAÇÕES OCR
-        # =========================================================
-        texto = texto.replace(",", ".")
-        texto = texto.replace("METROS", "")
-        texto = texto.replace("METRO", "")
-        texto = texto.replace("MTS", "")
-        texto = texto.replace("MT", "")
-        texto = texto.replace("M.", "")
-        texto = texto.replace("M", "")
+    if not texto:
+        raise ValueError("Distância vazia")
 
-        texto = " ".join(texto.split())
+    # =========================================================
+    # NORMALIZAÇÕES OCR
+    # =========================================================
+    texto = texto.replace("METROS", "")
+    texto = texto.replace("METRO", "")
+    texto = texto.replace("MTS", "")
+    texto = texto.replace("MT", "")
+    texto = texto.replace("M.", "")
+    texto = texto.replace("M", "")
 
-        # =========================================================
-        # EXTRAÇÃO NUMÉRICA
-        # =========================================================
-        match = re.search(
-            r"(-?\d+(?:\.\d+)?)",
-            texto,
+    texto = texto.replace("O", "0")
+    texto = texto.replace("l", "1")
+    texto = texto.replace("I", "1")
+
+    texto = " ".join(texto.split())
+
+    # =========================================================
+    # EXTRAÇÃO NUMÉRICA INTELIGENTE
+    # =========================================================
+    #
+    # SUPORTA:
+    #
+    # 1.905,312
+    # 1905,312
+    # 1,905.312
+    # 1905.312
+    # 1905
+    #
+    # SEM TRUNCAR VALORES
+    #
+    # =========================================================
+    match = re.search(
+        r"(-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?|-?\d+(?:[.,]\d+)?)",
+        texto,
+    )
+
+    if not match:
+        raise ValueError(f"Distância inválida: {valor}")
+
+    numero_str = match.group(1).strip()
+
+    # =========================================================
+    # NORMALIZAÇÃO PT-BR / EN-US
+    # =========================================================
+    #
+    # REGRAS:
+    #
+    # 1.905,312 -> 1905.312
+    # 1,905.312 -> 1905.312
+    # 1905,312  -> 1905.312
+    #
+    # =========================================================
+    virgulas = numero_str.count(",")
+    pontos = numero_str.count(".")
+
+    # =========================================================
+    # FORMATO MISTO
+    # =========================================================
+    if virgulas > 0 and pontos > 0:
+
+        ultima_virgula = numero_str.rfind(",")
+        ultimo_ponto = numero_str.rfind(".")
+
+        # PT-BR
+        if ultima_virgula > ultimo_ponto:
+            numero_str = numero_str.replace(".", "")
+            numero_str = numero_str.replace(",", ".")
+
+        # EN-US
+        else:
+            numero_str = numero_str.replace(",", "")
+
+    # =========================================================
+    # SOMENTE VÍRGULA
+    # =========================================================
+    elif virgulas > 0 and pontos == 0:
+
+        partes = numero_str.split(",")
+
+        # decimal
+        if len(partes[-1]) <= 3:
+            numero_str = numero_str.replace(",", ".")
+
+        # milhar
+        else:
+            numero_str = numero_str.replace(",", "")
+
+    # =========================================================
+    # SOMENTE PONTO
+    # =========================================================
+    elif pontos > 0 and virgulas == 0:
+
+        partes = numero_str.split(".")
+
+        # múltiplos pontos -> provável milhar
+        if len(partes) > 2:
+            decimal = partes[-1]
+            inteiro = "".join(partes[:-1])
+
+            numero_str = f"{inteiro}.{decimal}"
+
+    # =========================================================
+    # CONVERSÃO FINAL
+    # =========================================================
+    try:
+        distancia = float(numero_str)
+
+    except Exception as exc:
+        raise ValueError(
+            f"Falha ao converter distância: {valor}"
+        ) from exc
+
+    # =========================================================
+    # VALIDAÇÕES TÉCNICAS
+    # =========================================================
+    if distancia <= 0:
+        raise ValueError("Distância <= 0")
+
+    # =========================================================
+    # PROTEÇÃO OCR CORROMPIDO
+    # =========================================================
+    if distancia > 100000:
+        raise ValueError(
+            f"Distância excessiva detectada: {distancia}"
         )
 
-        if not match:
-            raise ValueError(f"Distância inválida: {valor}")
+    # =========================================================
+    # PROTEÇÃO CONTRA MICROSEGMENTOS
+    # =========================================================
+    #
+    # Evita:
+    # 0.001
+    # 0.002
+    # 0.15
+    #
+    # que normalmente surgem de OCR quebrado
+    #
+    # =========================================================
+    if distancia < 0.5:
+        raise ValueError(
+            f"Distância muito pequena/suspeita: {distancia}"
+        )
 
-        distancia = float(match.group(1))
-
-        # =========================================================
-        # VALIDAÇÕES TÉCNICAS
-        # =========================================================
-        if distancia <= 0:
-            raise ValueError("Distância <= 0")
-
-        if distancia > 100000:
-            raise ValueError("Distância excessiva")
-
-        return distancia
+    return distancia
