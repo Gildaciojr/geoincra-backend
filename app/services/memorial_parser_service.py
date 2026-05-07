@@ -661,37 +661,152 @@ class MemorialParserService:
         distancias_calculadas: list[float] = []
         azimutes_calculados: list[float] = []
 
+        # =========================================================
+        # 🔥 CONTROLE ESPACIAL
+        # =========================================================
+        minx = 0.0
+        miny = 0.0
+        maxx = 0.0
+        maxy = 0.0
+
+        # =========================================================
+        # 🔥 CONTROLE ANGULAR
+        # =========================================================
+        ultimo_azimute: float | None = None
+
+        # =========================================================
+        # 🔥 LIMITES TÉCNICOS
+        # =========================================================
+        LIMITE_ENVELOPE_METROS = 50000.0
+        LIMITE_SEGMENTO_METROS = 5000.0
+        LIMITE_EXPLOSAO_FATOR = 25.0
+        LIMITE_SALTO_ANGULAR = 170.0
+
         for idx, seg in enumerate(segmentos, start=1):
+
             azimute = seg.get("azimute")
             distancia = seg.get("distancia")
 
             if azimute is None or distancia is None:
-                raise ValueError(f"Segmento inválido na posição {idx}: azimute ou distância ausente")
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"azimute ou distância ausente"
+                )
 
             try:
                 az_val = float(azimute)
                 dist_val = float(distancia)
+
             except Exception:
-                raise ValueError(f"Segmento inválido na posição {idx}: valores não numéricos")
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"valores não numéricos"
+                )
 
             if az_val < 0 or az_val > 360:
-                raise ValueError(f"Segmento inválido na posição {idx}: azimute fora do intervalo")
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"azimute fora do intervalo"
+                )
 
             if dist_val <= 0:
-                raise ValueError(f"Segmento inválido na posição {idx}: distância não positiva")
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"distância não positiva"
+                )
 
             if dist_val < MemorialParserService.DISTANCIA_MINIMA_METROS:
                 raise ValueError(
-                    f"Segmento inválido na posição {idx}: distância muito pequena ({dist_val})"
+                    f"Segmento inválido na posição {idx}: "
+                    f"distância muito pequena ({dist_val})"
                 )
+
+            if dist_val > LIMITE_SEGMENTO_METROS:
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"distância excessiva ({dist_val})"
+                )
+
+            if distancias_calculadas:
+
+                media_distancias = (
+                    sum(distancias_calculadas)
+                    / len(distancias_calculadas)
+                )
+
+                if media_distancias > 0:
+
+                    fator_explosao = (
+                        dist_val / media_distancias
+                    )
+
+                    if fator_explosao > LIMITE_EXPLOSAO_FATOR:
+                        raise ValueError(
+                            f"Segmento inválido na posição {idx}: "
+                            f"explosão vetorial detectada "
+                            f"(x{fator_explosao:.2f})"
+                        )
+
+            if ultimo_azimute is not None:
+
+                delta_angular = abs(
+                    az_val - ultimo_azimute
+                )
+
+                delta_angular = min(
+                    delta_angular,
+                    360 - delta_angular,
+                )
+
+                if delta_angular > LIMITE_SALTO_ANGULAR:
+                    raise ValueError(
+                        f"Segmento inválido na posição {idx}: "
+                        f"salto angular suspeito "
+                        f"({delta_angular:.2f}°)"
+                    )
+
+            ultimo_azimute = az_val
 
             az = radians(az_val)
 
             dx = dist_val * sin(az)
             dy = dist_val * cos(az)
 
-            x += dx
-            y += dy
+            if dx != dx or dy != dy:
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"deslocamento NaN"
+                )
+
+            if abs(dx) > 1e7 or abs(dy) > 1e7:
+                raise ValueError(
+                    f"Segmento inválido na posição {idx}: "
+                    f"deslocamento absurdo"
+                )
+
+            novo_x = x + dx
+            novo_y = y + dy
+
+            minx = min(minx, novo_x)
+            miny = min(miny, novo_y)
+
+            maxx = max(maxx, novo_x)
+            maxy = max(maxy, novo_y)
+
+            spanx = abs(maxx - minx)
+            spany = abs(maxy - miny)
+
+            if (
+                spanx > LIMITE_ENVELOPE_METROS
+                or spany > LIMITE_ENVELOPE_METROS
+            ):
+                raise ValueError(
+                    f"Envelope geométrico inválido "
+                    f"({spanx:.2f} x {spany:.2f})"
+                )
+
+            x = novo_x
+            y = novo_y
 
             coords.append((x, y))
 
@@ -716,7 +831,7 @@ class MemorialParserService:
                 )
 
         # =========================================================
-        # CORREÇÃO DE FECHAMENTO (NÍVEL PROFISSIONAL)
+        # 🔥 CORREÇÃO DE FECHAMENTO CONTROLADA
         # =========================================================
         primeiro = coords[0]
         ultimo = coords[-1]
@@ -724,41 +839,172 @@ class MemorialParserService:
         erro_x = ultimo[0] - primeiro[0]
         erro_y = ultimo[1] - primeiro[1]
 
-        erro_total = sqrt((erro_x ** 2) + (erro_y ** 2))
+        erro_total = sqrt(
+            (erro_x ** 2)
+            + (erro_y ** 2)
+        )
 
+        # =========================================================
+        # 🔥 LIMITE MÁXIMO DE CORREÇÃO
+        # =========================================================
+        #
+        # IMPORTANTE:
+        #
+        # Pequeno erro:
+        # - aceitável
+        # - comum em OCR
+        #
+        # Grande erro:
+        # - memorial inválido
+        # - rumo incorreto
+        # - OCR contaminado
+        # - geometria degenerada
+        #
+        # =========================================================
+        limite_correcao = (
+            MemorialParserService
+            .FECHAMENTO_TOLERANCIA_METROS
+            * 5
+        )
+
+        if erro_total > limite_correcao:
+
+            raise ValueError(
+                "Erro de fechamento excessivo "
+                f"({erro_total:.3f} m)"
+            )
+
+        # =========================================================
+        # 🔥 CORREÇÃO DISTRIBUÍDA
+        # =========================================================
         if erro_total > 0:
-            coords_corrigidos = [coords[0]]
 
-            total_vertices = len(coords) - 1
+            coords_corrigidos = [
+                coords[0]
+            ]
 
-            for i in range(1, len(coords)):
-                fator = i / total_vertices
+            total_vertices = (
+                len(coords) - 1
+            )
 
-                novo_x = coords[i][0] - (erro_x * fator)
-                novo_y = coords[i][1] - (erro_y * fator)
+            if total_vertices <= 0:
+                raise ValueError(
+                    "Quantidade inválida "
+                    "de vértices"
+                )
 
-                coords_corrigidos.append((novo_x, novo_y))
+            for i in range(
+                1,
+                len(coords),
+            ):
+
+                fator = (
+                    i / total_vertices
+                )
+
+                novo_x = (
+                    coords[i][0]
+                    - (erro_x * fator)
+                )
+
+                novo_y = (
+                    coords[i][1]
+                    - (erro_y * fator)
+                )
+
+                coords_corrigidos.append(
+                    (
+                        novo_x,
+                        novo_y,
+                    )
+                )
 
             coords = coords_corrigidos
 
         # =========================================================
         # FECHAMENTO FINAL (mantido)
         # =========================================================
-        coords, erro_fechamento = MemorialParserService._fechar_anel(coords)
-
         polygon = Polygon(coords)
 
+        # =========================================================
+        # 🔥 GEOMETRIA VAZIA
+        # =========================================================
         if polygon.is_empty:
-            raise ValueError("Geometria vazia gerada do memorial")
 
+            raise ValueError(
+                "Geometria vazia gerada do memorial"
+            )
+
+        # =========================================================
+        # 🔥 VALIDAÇÃO TOPOLOGICA
+        # =========================================================
         if not polygon.is_valid:
-            polygon = polygon.buffer(0)
 
-        if polygon.is_empty or not polygon.is_valid:
-            raise ValueError("Geometria inválida gerada do memorial")
+            polygon_corrigido = polygon.buffer(0)
 
-        area_m2 = float(polygon.area)
-        perimetro_m = float(polygon.length)
+            # =====================================================
+            # 🔥 FALHA TOTAL
+            # =====================================================
+            if (
+                polygon_corrigido.is_empty
+                or not polygon_corrigido.is_valid
+            ):
+
+                raise ValueError(
+                    "Geometria inválida gerada "
+                    "do memorial"
+                )
+
+            # =====================================================
+            # 🔥 BLOQUEIA MULTIPOLYGON
+            # =====================================================
+            if (
+                polygon_corrigido.geom_type
+                != "Polygon"
+            ):
+
+                raise ValueError(
+                    "Memorial gerou geometria "
+                    "fragmentada (MultiPolygon)"
+                )
+
+            polygon = polygon_corrigido
+
+        # =========================================================
+        # 🔥 SOMENTE POLYGON
+        # =========================================================
+        if polygon.geom_type != "Polygon":
+
+            raise ValueError(
+                "Tipo geométrico inválido: "
+                f"{polygon.geom_type}"
+            )
+
+        # =========================================================
+        # 🔥 ÁREA DEGENERADA
+        # =========================================================
+        if polygon.area <= 0:
+
+            raise ValueError(
+                "Área geométrica inválida"
+            )
+
+        # =========================================================
+        # 🔥 PERÍMETRO DEGENERADO
+        # =========================================================
+        if polygon.length <= 0:
+
+            raise ValueError(
+                "Perímetro geométrico inválido"
+            )
+
+        area_m2 = float(
+            polygon.area
+        )
+
+        perimetro_m = float(
+            polygon.length
+        )
 
         return {
             "geojson": polygon.__geo_interface__,

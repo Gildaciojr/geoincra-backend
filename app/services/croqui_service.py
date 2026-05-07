@@ -868,53 +868,159 @@ class CroquiService:
             pontos: List[Tuple[float, float]],
             size: int,
         ) -> Tuple[List[Tuple[float, float]], bool]:
+
             if not pontos:
                 return pontos, False
 
-            xs = [float(p[0]) for p in pontos]
-            ys = [float(p[1]) for p in pontos]
+            pontos_limpos: List[Tuple[float, float]] = []
 
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
+            for p in pontos:
+
+                try:
+                    px = float(p[0])
+                    py = float(p[1])
+
+                    if (
+                        math.isnan(px)
+                        or math.isnan(py)
+                        or math.isinf(px)
+                        or math.isinf(py)
+                    ):
+                        continue
+
+                    pontos_limpos.append((px, py))
+
+                except Exception:
+                    continue
+
+            if len(pontos_limpos) < 3:
+                return pontos, False
+
+            xs = [p[0] for p in pontos_limpos]
+            ys = [p[1] for p in pontos_limpos]
+
+            min_x = min(xs)
+            max_x = max(xs)
+
+            min_y = min(ys)
+            max_y = max(ys)
 
             largura_atual = max_x - min_x
             altura_atual = max_y - min_y
 
+            # =====================================================
+            # 🔥 GEOMETRIA DEGENERADA
+            # =====================================================
             if largura_atual <= 0:
+                return pontos, False
+
+            if altura_atual < 0:
                 return pontos, False
 
             proporcao = altura_atual / largura_atual
 
-            # =========================================================
-            # CROQUI QUASE LINEAR
-            # =========================================================
+            # =====================================================
+            # 🔥 SOMENTE GEOMETRIAS MUITO LINEARES
+            # =====================================================
+            #
+            # Evita deformar:
+            # - polígonos normais
+            # - áreas reais
+            # - croquis naturalmente proporcionais
+            #
+            # =====================================================
             if proporcao >= 0.18:
                 return pontos, False
 
             draw = CroquiService._drawing_bounds(size)
 
-            altura_minima_visual = draw["height"] * 0.28
+            altura_util = float(draw["height"])
+
+            # =====================================================
+            # 🔥 ALTURA VISUAL MÍNIMA
+            # =====================================================
+            #
+            # Mantém leitura visual profissional
+            # sem explodir o croqui.
+            #
+            # =====================================================
+            altura_minima_visual = altura_util * 0.28
 
             centro_y = (min_y + max_y) / 2.0
 
-            altura_base = altura_atual if altura_atual > 0 else 1.0
+            # =====================================================
+            # 🔥 CONTROLE DE ESCALA
+            # =====================================================
+            if altura_atual <= 0:
+                altura_base = 1.0
+            else:
+                altura_base = altura_atual
+
             fator = altura_minima_visual / altura_base
 
-            fator = max(1.0, min(fator, 18.0))
+            # =====================================================
+            # 🔥 LIMITADOR PROFISSIONAL
+            # =====================================================
+            #
+            # Evita:
+            # - explosão visual
+            # - auto interseção
+            # - distorções absurdas
+            #
+            # =====================================================
+            fator = max(1.0, min(fator, 12.0))
 
             pontos_enfatizados: List[Tuple[float, float]] = []
 
-            for index, (x, y) in enumerate(pontos):
+            for index, (x, y) in enumerate(pontos_limpos):
+
                 y_base = float(y)
 
+                # =================================================
+                # 🔥 GEOMETRIA EXTREMAMENTE RETA
+                # =================================================
                 if altura_atual <= 3:
-                    alternancia = -1 if index % 2 == 0 else 1
-                    deslocamento = alternancia * (altura_minima_visual / 2.0)
-                    novo_y = centro_y + deslocamento
-                else:
-                    novo_y = centro_y + ((y_base - centro_y) * fator)
 
-                pontos_enfatizados.append((float(x), novo_y))
+                    alternancia = -1.0 if index % 2 == 0 else 1.0
+
+                    deslocamento = (
+                        altura_minima_visual * 0.22
+                    ) * alternancia
+
+                    novo_y = centro_y + deslocamento
+
+                # =================================================
+                # 🔥 ESCALONAMENTO CONTROLADO
+                # =================================================
+                else:
+
+                    distancia_centro = y_base - centro_y
+
+                    novo_y = centro_y + (
+                        distancia_centro * fator
+                    )
+
+                # =================================================
+                # 🔥 PROTEÇÃO FLOAT
+                # =================================================
+                if (
+                    math.isnan(novo_y)
+                    or math.isinf(novo_y)
+                ):
+                    novo_y = y_base
+
+                pontos_enfatizados.append(
+                    (
+                        float(x),
+                        float(novo_y),
+                    )
+                )
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO FINAL
+            # =====================================================
+            if len(pontos_enfatizados) != len(pontos):
+                return pontos, False
 
             return pontos_enfatizados, True
 
