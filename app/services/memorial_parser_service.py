@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import re
+
 from math import cos, radians, sin, sqrt
 from typing import Any
 
 from shapely.geometry import Polygon
-
 
 class MemorialParserService:
 
@@ -181,66 +182,235 @@ class MemorialParserService:
 
     @staticmethod
     def _parse_distancia(valor: Any) -> float:
+
+        # =========================================================
+        # NUMÉRICO DIRETO
+        # =========================================================
         if isinstance(valor, (int, float)):
+
             dist = float(valor)
 
+            if math.isnan(dist) or math.isinf(dist):
+                raise ValueError(
+                    "Distância inválida (NaN/Inf)"
+                )
+
             if dist <= 0:
-                raise ValueError("Distância deve ser positiva")
+                raise ValueError(
+                    "Distância deve ser positiva"
+                )
+
+            if dist < 0.5:
+                raise ValueError(
+                    f"Distância muito pequena: {dist}"
+                )
+
+            if dist > 100000:
+                raise ValueError(
+                    f"Distância excessiva: {dist}"
+                )
 
             return dist
 
-        texto = MemorialParserService._normalizar_texto_base(str(valor))
+        # =========================================================
+        # NORMALIZAÇÃO BASE
+        # =========================================================
+        texto_original = str(valor)
+
+        texto = MemorialParserService._normalizar_texto_base(
+            texto_original
+        )
 
         if not texto:
-            raise ValueError("Distância vazia")
+            raise ValueError(
+                "Distância vazia"
+            )
 
-        texto = texto.lower()
+        texto = texto.upper()
 
         # =========================================================
         # LIMPEZA OCR-SAFE
         # =========================================================
-        texto = texto.replace("metros", "")
-        texto = texto.replace("metro", "")
-        texto = texto.replace("mts", "")
-        texto = texto.replace("mt", "")
-        texto = texto.replace("m.", "")
-        texto = texto.replace("m", "")
+        texto = texto.replace("METROS", "")
+        texto = texto.replace("METRO", "")
+        texto = texto.replace("MTS", "")
+        texto = texto.replace("MT", "")
+        texto = texto.replace("M.", "")
+        texto = texto.replace("M", "")
+
         texto = texto.replace(";", "")
         texto = texto.replace(":", "")
+
+        # =========================================================
+        # 🔥 OCR CONTROLADO
+        # =========================================================
+        #
+        # 1O5,22 -> 105,22
+        # 15l.33 -> 151.33
+        #
+        # =========================================================
+        texto = re.sub(
+            r"(?<=\d)[O](?=\d)",
+            "0",
+            texto,
+        )
+
+        texto = re.sub(
+            r"(?<=\d)[LI](?=\d)",
+            "1",
+            texto,
+        )
+
         texto = texto.strip()
 
-        # remove lixo preservando dígitos, vírgula, ponto e sinal
-        texto = re.sub(r"[^\d,.\-]", "", texto)
+        # =========================================================
+        # REMOVE LIXO
+        # =========================================================
+        texto = re.sub(
+            r"[^\d,.\-]",
+            "",
+            texto,
+        )
 
         if not texto:
-            raise ValueError(f"Distância inválida: {valor}")
+            raise ValueError(
+                f"Distância inválida: {valor}"
+            )
 
         # =========================================================
-        # NORMALIZAÇÃO NUMÉRICA
-        # Casos:
-        # 1.234,56 -> 1234.56
-        # 1234,56 -> 1234.56
-        # 1,234.56 -> 1234.56
-        # 1234.56 -> 1234.56
+        # EXTRAÇÃO NUMÉRICA INTELIGENTE
         # =========================================================
-        if "," in texto and "." in texto:
-            if texto.rfind(",") > texto.rfind("."):
-                texto = texto.replace(".", "").replace(",", ".")
-            else:
-                texto = texto.replace(",", "")
-        else:
-            if "," in texto:
-                texto = texto.replace(".", "").replace(",", ".")
-            else:
-                texto = texto.replace(",", "")
+        match = re.search(
+            (
+                r"(-?\d{1,3}"
+                r"(?:[.,]\d{3})*"
+                r"(?:[.,]\d+)?"
+                r"|-?\d+(?:[.,]\d+)?)"
+            ),
+            texto,
+        )
 
+        if not match:
+            raise ValueError(
+                f"Distância inválida: {valor}"
+            )
+
+        numero_str = (
+            match.group(1).strip()
+        )
+
+        # =========================================================
+        # NORMALIZAÇÃO PT-BR / EN-US
+        # =========================================================
+        virgulas = numero_str.count(",")
+        pontos = numero_str.count(".")
+
+        # =========================================================
+        # FORMATO MISTO
+        # =========================================================
+        if virgulas > 0 and pontos > 0:
+
+            ultima_virgula = (
+                numero_str.rfind(",")
+            )
+
+            ultimo_ponto = (
+                numero_str.rfind(".")
+            )
+
+            # PT-BR
+            if ultima_virgula > ultimo_ponto:
+
+                numero_str = (
+                    numero_str.replace(".", "")
+                )
+
+                numero_str = (
+                    numero_str.replace(",", ".")
+                )
+
+            # EN-US
+            else:
+
+                numero_str = (
+                    numero_str.replace(",", "")
+                )
+
+        # =========================================================
+        # SOMENTE VÍRGULA
+        # =========================================================
+        elif virgulas > 0 and pontos == 0:
+
+            partes = numero_str.split(",")
+
+            # decimal
+            if len(partes[-1]) <= 3:
+
+                numero_str = (
+                    numero_str.replace(",", ".")
+                )
+
+            # milhar
+            else:
+
+                numero_str = (
+                    numero_str.replace(",", "")
+                )
+
+        # =========================================================
+        # SOMENTE PONTO
+        # =========================================================
+        elif pontos > 0 and virgulas == 0:
+
+            partes = numero_str.split(".")
+
+            if len(partes) > 2:
+
+                decimal = partes[-1]
+
+                inteiro = "".join(
+                    partes[:-1]
+                )
+
+                numero_str = (
+                    f"{inteiro}.{decimal}"
+                )
+
+        # =========================================================
+        # CONVERSÃO FINAL
+        # =========================================================
         try:
-            dist = float(texto)
-        except Exception:
-            raise ValueError(f"Distância inválida: {valor}")
+
+            dist = float(numero_str)
+
+        except Exception as exc:
+
+            raise ValueError(
+                f"Distância inválida: {valor}"
+            ) from exc
+
+        # =========================================================
+        # VALIDAÇÕES
+        # =========================================================
+        if math.isnan(dist) or math.isinf(dist):
+            raise ValueError(
+                "Distância inválida (NaN/Inf)"
+            )
 
         if dist <= 0:
-            raise ValueError("Distância deve ser positiva")
+            raise ValueError(
+                "Distância deve ser positiva"
+            )
+
+        if dist < 0.5:
+            raise ValueError(
+                f"Distância muito pequena: {dist}"
+            )
+
+        if dist > 100000:
+            raise ValueError(
+                f"Distância excessiva: {dist}"
+            )
 
         return dist
 
@@ -922,8 +1092,14 @@ class MemorialParserService:
             coords = coords_corrigidos
 
         # =========================================================
-        # FECHAMENTO FINAL (mantido)
+        # 🔥 FECHAMENTO FINAL
         # =========================================================
+        coords, erro_fechamento = (
+            MemorialParserService._fechar_anel(
+                coords
+            )
+        )
+
         polygon = Polygon(coords)
 
         # =========================================================

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from datetime import datetime
@@ -2292,12 +2293,82 @@ class OcrPipelineService:
             # =====================================================
             if distancia > LIMITE_ABSOLUTO_SEGMENTO:
 
-                print(
-                    f"⚠️ Segmento {index} excede limite técnico: "
-                    f"{distancia:.2f}m"
-                )
+                # =================================================
+                # 🔥 TENTATIVA DE RECUPERAÇÃO OCR
+                # =================================================
+                #
+                # CASO REAL:
+                #
+                # 299,51  -> OCR -> 29951
+                # 105,22  -> OCR -> 10522
+                #
+                # NÃO podemos simplesmente aceitar valores gigantes,
+                # mas também não podemos invalidar automaticamente.
+                #
+                # Estratégia:
+                #
+                # - tenta dividir por 100
+                # - valida contexto vetorial
+                # - valida explosão estatística
+                #
+                # =================================================
+                distancia_corrigida = distancia / 100.0
 
-                return None
+                recuperado_por_ocr = False
+
+                if (
+                    distancia_corrigida > 0
+                    and distancia_corrigida <= LIMITE_ABSOLUTO_SEGMENTO
+                ):
+
+                    if distancias_processadas:
+
+                        media_distancias = (
+                            sum(distancias_processadas)
+                            / len(distancias_processadas)
+                        )
+
+                        if media_distancias > 0:
+
+                            fator_corrigido = (
+                                distancia_corrigida
+                                / media_distancias
+                            )
+
+                            if fator_corrigido <= 25:
+
+                                print(
+                                    f"⚠️ Segmento {index} "
+                                    f"corrigido automaticamente "
+                                    f"via OCR decimal "
+                                    f"({distancia:.2f}m -> "
+                                    f"{distancia_corrigida:.2f}m)"
+                                )
+
+                                distancia = distancia_corrigida
+                                recuperado_por_ocr = True
+
+                    else:
+
+                        print(
+                            f"⚠️ Segmento {index} "
+                            f"corrigido automaticamente "
+                            f"via OCR decimal "
+                            f"({distancia:.2f}m -> "
+                            f"{distancia_corrigida:.2f}m)"
+                        )
+
+                        distancia = distancia_corrigida
+                        recuperado_por_ocr = True
+
+                if not recuperado_por_ocr:
+
+                    print(
+                        f"⚠️ Segmento {index} excede limite técnico: "
+                        f"{distancia:.2f}m"
+                    )
+
+                    return None
 
             # =====================================================
             # 🔥 CONTROLE ESTATÍSTICO OCR
