@@ -377,6 +377,36 @@ def _normalizar_geojson(valor: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _geojson_tem_geometria_valida(geojson: Any) -> bool:
+    if not isinstance(geojson, dict):
+        return False
+
+    tipo = geojson.get("type")
+
+    if tipo in {"Polygon", "MultiPolygon"}:
+        return isinstance(geojson.get("coordinates"), list) and bool(geojson.get("coordinates"))
+
+    if tipo == "Feature":
+        return _geojson_tem_geometria_valida(geojson.get("geometry"))
+
+    if tipo == "FeatureCollection":
+        features = geojson.get("features")
+        if not isinstance(features, list):
+            return False
+
+        return any(
+            _geojson_tem_geometria_valida(feature)
+            for feature in features
+            if isinstance(feature, dict)
+        )
+
+    geometry = geojson.get("geometry")
+    if isinstance(geometry, dict):
+        return _geojson_tem_geometria_valida(geometry)
+
+    return False
+
+
 def _normalizar_memorial_texto(valor: Any) -> Optional[str]:
     texto = _normalizar_texto(valor)
     if not texto:
@@ -954,17 +984,22 @@ def _resolver_geometria(
     # NORMALIZAÇÃO FINAL DO GEOJSON (CRÍTICO)
     # =========================================================
     if geojson and isinstance(geojson, dict):
-        if geojson.get("type") != "FeatureCollection":
-            if "geometry" in geojson:
-                geojson = {
-                    "type": "FeatureCollection",
-                    "features": [geojson],
-                }
-            else:
-                geojson = {
-                    "type": "FeatureCollection",
-                    "features": [],
-                }
+        tipo_geojson = geojson.get("type")
+
+        if tipo_geojson in {"Polygon", "MultiPolygon", "FeatureCollection"}:
+            pass
+
+        elif tipo_geojson == "Feature":
+            geojson = {
+                "type": "FeatureCollection",
+                "features": [geojson],
+            }
+
+        elif isinstance(geojson.get("geometry"), dict):
+            geojson = {
+                "type": "FeatureCollection",
+                "features": [geojson],
+            }
 
     # =========================================================
     # NENHUMA FONTE
@@ -1380,11 +1415,7 @@ def _calcular_score_qualidade(
     geojson = geometria.get("geojson")
 
     # 🔥 VALIDAÇÃO ROBUSTA DO GEOJSON
-    geojson_valido = False
-    if isinstance(geojson, dict):
-        features = geojson.get("features")
-        if isinstance(features, list) and len(features) > 0:
-            geojson_valido = True
+    geojson_valido = _geojson_tem_geometria_valida(geojson)
 
     # 🔥 AVALIAÇÃO DE GEOMETRIA MAIS INTELIGENTE
     if not segmentos and not memorial_texto and not geojson_valido:

@@ -2275,6 +2275,43 @@ class OcrPipelineService:
 
         # 🔥 VALIDAÇÃO ESTRUTURAL
         tipo = parsed.get("type")
+
+        if tipo == "Feature":
+            geometry = parsed.get("geometry")
+            if not isinstance(geometry, dict):
+                print("⚠️ GeoJSON ignorado: Feature sem geometry válido")
+                return None
+            parsed = geometry
+            tipo = parsed.get("type")
+
+        elif tipo == "FeatureCollection":
+            features = parsed.get("features")
+            if not isinstance(features, list) or not features:
+                print("⚠️ GeoJSON ignorado: FeatureCollection sem features")
+                return None
+
+            geometria_feature = None
+            for feature in features:
+                if not isinstance(feature, dict):
+                    continue
+
+                geometry = feature.get("geometry")
+                if (
+                    isinstance(geometry, dict)
+                    and geometry.get("type") in ["Polygon", "MultiPolygon"]
+                    and isinstance(geometry.get("coordinates"), list)
+                    and geometry.get("coordinates")
+                ):
+                    geometria_feature = geometry
+                    break
+
+            if not geometria_feature:
+                print("⚠️ GeoJSON ignorado: FeatureCollection sem geometria poligonal")
+                return None
+
+            parsed = geometria_feature
+            tipo = parsed.get("type")
+
         coords = parsed.get("coordinates")
 
         if tipo not in ["Polygon", "MultiPolygon"]:
@@ -3068,7 +3105,10 @@ class OcrPipelineService:
                 + (s / 3600)
             )
 
-            if decimal < 0 or decimal >= 360:
+            if decimal == 360:
+                return 0.0
+
+            if decimal < 0 or decimal > 360:
                 raise ValueError(
                     "Ângulo DMS inválido"
                 )
@@ -3108,7 +3148,10 @@ class OcrPipelineService:
                 + (s / 3600)
             )
 
-            if decimal < 0 or decimal >= 360:
+            if decimal == 360:
+                return 0.0
+
+            if decimal < 0 or decimal > 360:
                 raise ValueError(
                     "Ângulo inválido OCR 3 partes"
                 )
@@ -3126,7 +3169,10 @@ class OcrPipelineService:
 
             decimal = g + (m / 60)
 
-            if decimal < 0 or decimal >= 360:
+            if decimal == 360:
+                return 0.0
+
+            if decimal < 0 or decimal > 360:
                 raise ValueError(
                     "Ângulo inválido OCR 2 partes"
                 )
@@ -3142,7 +3188,10 @@ class OcrPipelineService:
                 valor_limpo.replace(",", ".")
             )
 
-            if decimal < 0 or decimal >= 360:
+            if decimal == 360:
+                return 0.0
+
+            if decimal < 0 or decimal > 360:
                 raise ValueError(
                     "Ângulo decimal inválido"
                 )

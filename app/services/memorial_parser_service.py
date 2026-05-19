@@ -929,10 +929,9 @@ class MemorialParserService:
                 )
 
                 if delta_angular > LIMITE_SALTO_ANGULAR:
-                    raise ValueError(
-                        f"Segmento inválido na posição {idx}: "
-                        f"salto angular suspeito "
-                        f"({delta_angular:.2f}°)"
+                    print(
+                        f"Aviso: Segmento {idx} possui salto angular "
+                        f"suspeito ({delta_angular:.2f}°)"
                     )
 
             ultimo_azimute = az_val
