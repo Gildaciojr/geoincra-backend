@@ -733,8 +733,9 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
             continue
 
         # =========================================================
-        # 🔥 AZIMUTE / RUMO — NORMALIZAÇÃO ROBUSTA (NOVO)
+        # 🔥 AZIMUTE / RUMO — NORMALIZAÇÃO OCR-SAFE
         # =========================================================
+
         azimute_raw = _normalizar_texto(
             _coalesce(
                 s.get("azimute_raw"),
@@ -748,24 +749,155 @@ def _resolver_segmentos(dados: Dict[str, Any], warnings: List[str]) -> tuple[Lis
             )
         )
 
-        # 🔥 fallback baseado no tipo (OCR novo)
+        # =========================================================
+        # 🔥 FALLBACK BASEADO NO TIPO
+        # =========================================================
+
         if not azimute_raw:
             tipo = str(s.get("tipo") or "").lower()
 
             if tipo == "azimute_decimal":
-                val = _coalesce(s.get("valor"), s.get("azimute"))
+                val = _coalesce(
+                    s.get("valor"),
+                    s.get("azimute"),
+                )
+
                 if val is not None:
                     azimute_raw = _normalizar_texto(val)
 
             elif tipo == "azimute":
-                val = _coalesce(s.get("rumo"), s.get("valor"))
+                val = _coalesce(
+                    s.get("rumo"),
+                    s.get("valor"),
+                )
+
                 if val:
                     azimute_raw = _normalizar_texto(val)
 
             elif tipo == "cartorio_metros":
-                val = _coalesce(s.get("rumo"), s.get("descricao"))
+                val = _coalesce(
+                    s.get("rumo"),
+                    s.get("descricao"),
+                )
+
                 if val:
                     azimute_raw = _normalizar_texto(val)
+
+        # =========================================================
+        # 🔥 SANITIZAÇÃO OCR GEOMÉTRICA
+        # =========================================================
+
+        if azimute_raw:
+
+            az_original = azimute_raw
+
+            azimute_raw = (
+                azimute_raw
+                .replace("º", "°")
+                .replace("˚", "°")
+                .replace("o", "°")
+                .replace("O", "°")
+                .replace("’", "'")
+                .replace("`", "'")
+                .replace("´", "'")
+                .replace("“", '"')
+                .replace("”", '"')
+            )
+
+            azimute_raw = re.sub(
+                r"\s+",
+                " ",
+                azimute_raw,
+            ).strip()
+
+            # =====================================================
+            # 🔥 OCR COLAPSADO
+            # EX:
+            # 9195040
+            # 905030
+            # 1795959
+            # =====================================================
+
+            somente_numeros = re.sub(
+                r"\D",
+                "",
+                azimute_raw,
+            )
+
+            possui_dms = any(
+                token in azimute_raw
+                for token in ["°", "'", '"']
+            )
+
+            possui_quadrante = bool(
+                re.search(r"[NS].*[EW]", azimute_raw.upper())
+            )
+
+            # =====================================================
+            # 🔥 RECONSTRUÇÃO DMS AUTOMÁTICA
+            # =====================================================
+
+            if (
+                not possui_dms
+                and not possui_quadrante
+                and somente_numeros.isdigit()
+                and len(somente_numeros) in {6, 7}
+            ):
+
+                try:
+
+                    if len(somente_numeros) == 6:
+                        graus = somente_numeros[:2]
+                        minutos = somente_numeros[2:4]
+                        segundos = somente_numeros[4:6]
+
+                    else:
+                        graus = somente_numeros[:3]
+                        minutos = somente_numeros[3:5]
+                        segundos = somente_numeros[5:7]
+
+                    graus_int = int(graus)
+                    minutos_int = int(minutos)
+                    segundos_int = int(segundos)
+
+                    if (
+                        0 <= graus_int <= 360
+                        and 0 <= minutos_int < 60
+                        and 0 <= segundos_int < 60
+                    ):
+                        azimute_raw = (
+                            f"{graus_int}°"
+                            f"{minutos_int}'"
+                            f'{segundos_int}"'
+                        )
+
+                except Exception:
+                    azimute_raw = az_original
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO PREVENTIVA
+            # =====================================================
+
+            try:
+
+                az_decimal = (
+                    MemorialParserService
+                    ._parse_azimute_ou_rumo(azimute_raw)
+                )
+
+                if az_decimal < 0 or az_decimal > 360:
+                    raise ValueError(
+                        "Azimute fora do intervalo válido"
+                    )
+
+            except Exception:
+
+                erros.append(
+                    f"Segmento {i} inválido: "
+                    f"ângulo OCR inválido ({az_original})"
+                )
+
+                continue
 
         # =========================================================
         # DISTÂNCIA

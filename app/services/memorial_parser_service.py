@@ -38,6 +38,35 @@ class MemorialParserService:
             .replace("º", "°")
             .replace("˚", "°")
         )
+    
+    @staticmethod
+    def _validar_componentes_dms(
+        graus: float,
+        minutos: float,
+        segundos: float,
+        limite_graus: float,
+        texto_original: str,
+    ) -> None:
+
+        if graus < 0:
+            raise ValueError(
+                f"Graus negativos inválidos: {texto_original}"
+            )
+
+        if graus > limite_graus:
+            raise ValueError(
+                f"Graus fora do limite permitido: {texto_original}"
+            )
+
+        if minutos < 0 or minutos >= 60:
+            raise ValueError(
+                f"Minutos inválidos no azimute/rumo: {texto_original}"
+            )
+
+        if segundos < 0 or segundos >= 60:
+            raise ValueError(
+                f"Segundos inválidos no azimute/rumo: {texto_original}"
+            )
 
     @staticmethod
     def _dms_para_decimal(
@@ -45,11 +74,18 @@ class MemorialParserService:
         minutos: float,
         segundos: float,
     ) -> float:
-        return graus + (minutos / 60) + (segundos / 3600)
+        return (
+            graus
+            + (minutos / 60)
+            + (segundos / 3600)
+        )
 
     @staticmethod
     def _rumo_para_azimute(rumo: str) -> float:
-        rumo_normalizado = MemorialParserService._normalizar_texto_base(rumo).upper()
+        rumo_normalizado = (
+            MemorialParserService._normalizar_texto_base(rumo)
+            .upper()
+        )
 
         match = re.search(
             r"([NS])\s*"
@@ -69,6 +105,14 @@ class MemorialParserService:
         minutos = float(m or 0)
         segundos = float(s or 0)
 
+        MemorialParserService._validar_componentes_dms(
+            graus=graus,
+            minutos=minutos,
+            segundos=segundos,
+            limite_graus=90,
+            texto_original=rumo,
+        )
+
         angulo = MemorialParserService._dms_para_decimal(
             graus,
             minutos,
@@ -76,22 +120,34 @@ class MemorialParserService:
         )
 
         if angulo < 0 or angulo > 90:
-            raise ValueError(f"Rumo inválido fora do quadrante: {rumo}")
+            raise ValueError(
+                f"Rumo inválido fora do quadrante: {rumo}"
+            )
 
         if ns == "N" and ew == "E":
             return angulo
+
         if ns == "S" and ew == "E":
             return 180 - angulo
+
         if ns == "S" and ew == "W":
             return 180 + angulo
+
         if ns == "N" and ew == "W":
             return 360 - angulo
 
         raise ValueError(f"Rumo inválido: {rumo}")
 
     @staticmethod
-    def _azimute_dms_para_decimal(azimute: str) -> float:
-        azimute_normalizado = MemorialParserService._normalizar_texto_base(azimute)
+    def _azimute_dms_para_decimal(
+        azimute: str,
+    ) -> float:
+
+        azimute_normalizado = (
+            MemorialParserService._normalizar_texto_base(
+                azimute
+            )
+        )
 
         match = re.search(
             r"(\d{1,3})\s*[°]\s*"
@@ -101,84 +157,189 @@ class MemorialParserService:
         )
 
         if not match:
-            raise ValueError(f"Azimute inválido: {azimute}")
+            raise ValueError(
+                f"Azimute inválido: {azimute}"
+            )
 
         g, m, s = match.groups()
 
-        decimal = MemorialParserService._dms_para_decimal(
-            float(g),
-            float(m or 0),
-            float(s or 0),
+        graus = float(g)
+        minutos = float(m or 0)
+        segundos = float(s or 0)
+
+        MemorialParserService._validar_componentes_dms(
+            graus=graus,
+            minutos=minutos,
+            segundos=segundos,
+            limite_graus=360,
+            texto_original=azimute,
+        )
+
+        decimal = (
+            MemorialParserService._dms_para_decimal(
+                graus,
+                minutos,
+                segundos,
+            )
         )
 
         if decimal < 0 or decimal > 360:
-            raise ValueError(f"Azimute fora do intervalo válido: {azimute}")
+            raise ValueError(
+                "Azimute fora do intervalo válido: "
+                f"{azimute}"
+            )
 
         return decimal
 
     @staticmethod
-    def _azimute_decimal_para_float(azimute: str) -> float:
-        texto = MemorialParserService._normalizar_texto_base(azimute)
+    def _azimute_decimal_para_float(
+        azimute: str,
+    ) -> float:
 
-        # limpeza agressiva OCR-safe (sem quebrar casos válidos)
+        texto_original = azimute
+
+        texto = (
+            MemorialParserService._normalizar_texto_base(
+                azimute
+            )
+        )
+
         texto = texto.replace(",", ".")
-        texto = re.sub(r"[^\d.\-]", "", texto)
 
-        if not texto:
-            raise ValueError(f"Azimute decimal inválido: {azimute}")
+        # =====================================================
+        # OCR-SAFE
+        # =====================================================
+
+        texto_limpo = re.sub(
+            r"[^\d.\-]",
+            "",
+            texto,
+        )
+
+        if not texto_limpo:
+            raise ValueError(
+                f"Azimute decimal inválido: "
+                f"{texto_original}"
+            )
+
+        # =====================================================
+        # BLOQUEIO OCR COLAPSADO
+        # Exemplo:
+        # 9195040
+        # 123304520
+        # =====================================================
+
+        if (
+            "." not in texto_limpo
+            and len(texto_limpo) >= 6
+        ):
+            raise ValueError(
+                "Azimute OCR corrompido "
+                f"ou DMS colapsado: {texto_original}"
+            )
 
         try:
-            valor = float(texto)
+            valor = float(texto_limpo)
+
         except Exception:
-            raise ValueError(f"Azimute decimal inválido: {azimute}")
+            raise ValueError(
+                f"Azimute decimal inválido: "
+                f"{texto_original}"
+            )
 
         if valor < 0 or valor > 360:
-            raise ValueError(f"Azimute decimal fora do intervalo válido: {azimute}")
+            raise ValueError(
+                "Azimute decimal fora do "
+                f"intervalo válido: {texto_original}"
+            )
 
         return valor
 
     @staticmethod
-    def _parse_azimute_ou_rumo(valor: str) -> float:
-        texto = MemorialParserService._normalizar_texto_base(valor)
+    def _parse_azimute_ou_rumo(
+        valor: str,
+    ) -> float:
+
+        texto = (
+            MemorialParserService._normalizar_texto_base(
+                valor
+            )
+        )
 
         if not texto:
-            raise ValueError("Azimute/rumo vazio")
+            raise ValueError(
+                "Azimute/rumo vazio"
+            )
 
         texto_upper = texto.upper()
 
-        # =========================================================
-        # 1. PRIMEIRO TENTA RUMO QUADRANTAL
-        # Exemplos aceitos:
-        # N 45°30'20" E
-        # N45°30'20"E
-        # S 12° E
-        # =========================================================
-        if re.search(r"[NS].*[EW]", texto_upper):
+        # =====================================================
+        # OCR CORROMPIDO
+        # =====================================================
+
+        texto_numerico = re.sub(
+            r"[^\d]",
+            "",
+            texto_upper,
+        )
+
+        if (
+            len(texto_numerico) >= 6
+            and "°" not in texto_upper
+            and "." not in texto_upper
+            and "," not in texto_upper
+        ):
+            raise ValueError(
+                "Azimute OCR corrompido "
+                f"ou DMS colapsado: {valor}"
+            )
+
+        # =====================================================
+        # RUMO QUADRANTAL
+        # =====================================================
+
+        if re.search(
+            r"[NS].*[EW]",
+            texto_upper,
+        ):
             try:
-                return MemorialParserService._rumo_para_azimute(texto)
+                return (
+                    MemorialParserService
+                    ._rumo_para_azimute(texto)
+                )
+
             except Exception:
                 pass
 
-        # =========================================================
-        # 2. DEPOIS TENTA AZIMUTE EM DMS
-        # Exemplos:
-        # 123°45'20"
-        # 123°45'
-        # 123° 45 20
-        # =========================================================
-        if re.search(r"\d{1,3}\s*[°]\s*\d{1,2}", texto_upper):
+        # =====================================================
+        # AZIMUTE DMS
+        # =====================================================
+
+        if re.search(
+            r"\d{1,3}\s*[°]\s*\d{1,2}",
+            texto_upper,
+        ):
             try:
-                return MemorialParserService._azimute_dms_para_decimal(texto)
+                return (
+                    MemorialParserService
+                    ._azimute_dms_para_decimal(
+                        texto
+                    )
+                )
+
             except Exception:
                 pass
 
-        # =========================================================
-        # 3. POR ÚLTIMO TENTA DECIMAL PURO
-        # Exemplos:
-        # 123.456789
-        # 123,456789
-        # =========================================================
-        return MemorialParserService._azimute_decimal_para_float(texto)
+        # =====================================================
+        # DECIMAL
+        # =====================================================
+
+        return (
+            MemorialParserService
+            ._azimute_decimal_para_float(
+                texto
+            )
+        )
 
     @staticmethod
     def _parse_distancia(valor: Any) -> float:
@@ -460,24 +621,75 @@ class MemorialParserService:
         vertice_inicial: str | None = None,
         vertice_final: str | None = None,
     ) -> None:
+
         try:
             dist = float(distancia)
+
         except Exception:
+            print(
+                "⚠️ Distância inválida "
+                f"no segmento OCR: {distancia}"
+            )
             return
 
         if dist <= 0:
+            print(
+                "⚠️ Distância não positiva "
+                f"ignorada: {dist}"
+            )
             return
 
         try:
             az = float(azimute)
+
         except Exception:
+            print(
+                "⚠️ Azimute inválido "
+                f"no segmento OCR: {azimute}"
+            )
             return
 
-        # proteção adicional contra valores inválidos
+        # =====================================================
+        # PROTEÇÃO OCR / GEOMETRIA
+        # =====================================================
+
         if az < 0 or az > 360:
+            print(
+                "⚠️ Segmento ignorado por "
+                f"ângulo inválido: {az}"
+            )
             return
 
-        rumo_normalizado = MemorialParserService._normalizar_texto_base(rumo_original)
+        # =====================================================
+        # BLOQUEIO DE OCR COLAPSADO
+        # =====================================================
+
+        rumo_texto = str(rumo_original or "").strip()
+
+        rumo_numerico = re.sub(
+            r"[^\d]",
+            "",
+            rumo_texto,
+        )
+
+        if (
+            len(rumo_numerico) >= 6
+            and "°" not in rumo_texto
+            and "." not in rumo_texto
+            and "," not in rumo_texto
+        ):
+            print(
+                "⚠️ Segmento OCR corrompido "
+                f"ignorado: {rumo_original}"
+            )
+            return
+
+        rumo_normalizado = (
+            MemorialParserService
+            ._normalizar_texto_base(
+                rumo_original
+            )
+        )
 
         segmento: dict[str, Any] = {
             "tipo": tipo,
@@ -489,18 +701,41 @@ class MemorialParserService:
         if ordem is not None:
             try:
                 segmento["ordem"] = int(ordem)
+
             except Exception:
                 segmento["ordem"] = ordem
 
         if vertice_inicial:
-            vi = MemorialParserService._normalizar_texto_base(vertice_inicial)
-            vi = re.sub(r"[^\w.\-_/]", "", vi).upper()
+            vi = (
+                MemorialParserService
+                ._normalizar_texto_base(
+                    vertice_inicial
+                )
+            )
+
+            vi = re.sub(
+                r"[^\w.\-_/]",
+                "",
+                vi,
+            ).upper()
+
             if vi:
                 segmento["vertice_inicial"] = vi
 
         if vertice_final:
-            vf = MemorialParserService._normalizar_texto_base(vertice_final)
-            vf = re.sub(r"[^\w.\-_/]", "", vf).upper()
+            vf = (
+                MemorialParserService
+                ._normalizar_texto_base(
+                    vertice_final
+                )
+            )
+
+            vf = re.sub(
+                r"[^\w.\-_/]",
+                "",
+                vf,
+            ).upper()
+
             if vf:
                 segmento["vertice_final"] = vf
 
@@ -574,7 +809,14 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 1 (rumo): "
+                    f"rumo={rumo} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -599,7 +841,14 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 2 (azimute): "
+                    f"azimute={az_str} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -624,7 +873,14 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 3 (cartorio): "
+                    f"azimute={az_str} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -649,7 +905,15 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 4 "
+                    f"(cartorio_na_distancia): "
+                    f"azimute={az_str} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -674,7 +938,15 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 5 "
+                    f"(cartorio_metros): "
+                    f"azimute={az_str} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -699,7 +971,15 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 6 "
+                    f"(azimute_decimal): "
+                    f"azimute={az_str} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -733,7 +1013,17 @@ class MemorialParserService:
                     vertice_final=v2,
                 )
                 ordem_local += 1
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 7 "
+                    f"(vertices_rumo): "
+                    f"vértice1={v1} | "
+                    f"vértice2={v2} | "
+                    f"rumo={rumo} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -767,7 +1057,17 @@ class MemorialParserService:
                     vertice_final=v2,
                 )
                 ordem_local += 1
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 8 "
+                    f"(vertices_azimute): "
+                    f"vértice1={v1} | "
+                    f"vértice2={v2} | "
+                    f"azimute={azimute_raw} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         # =========================================================
@@ -792,7 +1092,15 @@ class MemorialParserService:
                     azimute=az,
                     distancia=dist,
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    "⚠️ Falha ao processar "
+                    f"segmento PADRÃO 9 "
+                    f"(rumo_solto): "
+                    f"rumo={rumo} | "
+                    f"distancia={distancia} | "
+                    f"erro={str(exc)}"
+                )
                 continue
 
         segmentos_unicos = MemorialParserService._deduplicar_segmentos(segmentos)
