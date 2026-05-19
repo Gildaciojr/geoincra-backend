@@ -27,6 +27,8 @@ from app.services.matricula_analysis_service import MatriculaAnalysisService
 from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
 from app.services.ocr_normalizer import normalizar_dados_ocr
+from app.services.matricula_pdf_service import MatriculaPdfService
+from app.services.matricula_ocr_processor_service import MatriculaOcrProcessorService
 
 
 class OcrPipelineService:
@@ -201,9 +203,8 @@ class OcrPipelineService:
 
                 # ================= MATRÍCULA PDF =================
                 try:
-                    from app.services.matricula_pdf_service import MatriculaPdfService
-                    from app.services.matricula_ocr_processor_service import MatriculaOcrProcessorService
-
+                    
+                    
                     payload = MatriculaOcrProcessorService.gerar_payload_documentos(
                         db=db,
                         matricula_id=matricula.id,
@@ -2384,10 +2385,9 @@ class OcrPipelineService:
         x: float = 0.0
         y: float = 0.0
 
-        # =========================================================
-        # 🔥 CONTROLE VETORIAL
-        # =========================================================
         distancias_processadas: list[float] = []
+        segmentos_invalidos: list[str] = []
+        segmentos_validos: int = 0
 
         minx = 0.0
         miny = 0.0
@@ -2396,18 +2396,18 @@ class OcrPipelineService:
 
         ultimo_azimute: Optional[float] = None
 
-        # =========================================================
-        # 🔥 LIMITES TÉCNICOS
-        # =========================================================
         LIMITE_ABSOLUTO_SEGMENTO = 5000.0
         LIMITE_ENVELOPE = 50000.0
         LIMITE_SALTO_ANGULAR = 170.0
+        LIMITE_INVALIDOS_PERCENTUAL = 0.35
 
         for index, seg in enumerate(segmentos_memorial, start=1):
 
             if not isinstance(seg, dict):
-                print(f"⚠️ Segmento inválido na posição {index}")
-                return None
+                segmentos_invalidos.append(
+                    f"Segmento {index}: estrutura inválida"
+                )
+                continue
 
             angulo_raw = (
                 seg.get("azimute")
@@ -2418,18 +2418,19 @@ class OcrPipelineService:
             distancia_raw = seg.get("distancia")
 
             if angulo_raw is None or distancia_raw is None:
-                print(f"⚠️ Segmento incompleto na posição {index}")
-                return None
+                segmentos_invalidos.append(
+                    f"Segmento {index}: azimute ou distância ausente"
+                )
+                continue
 
             try:
-
                 azimute = OcrPipelineService._parse_angulo_para_graus(
                     str(angulo_raw)
                 )
 
                 if azimute < 0 or azimute > 360:
                     raise ValueError(
-                        "Azimute fora do intervalo válido"
+                        "azimute fora do intervalo válido"
                     )
 
                 distancia = OcrPipelineService._parse_distancia(
@@ -2438,129 +2439,68 @@ class OcrPipelineService:
 
                 if distancia <= 0:
                     raise ValueError(
-                        "Distância inválida"
+                        "distância inválida"
                     )
 
             except Exception as exc:
-
-                print(
-                    f"⚠️ Segmento inválido {index}: {str(exc)}"
+                segmentos_invalidos.append(
+                    f"Segmento {index}: {str(exc)} | "
+                    f"azimute={angulo_raw} | "
+                    f"distancia={distancia_raw}"
                 )
+                continue
 
-                return None
-
-            # =====================================================
-            # 🔥 CONTROLE DE SEGMENTO ABSURDO
-            # =====================================================
             if distancia > LIMITE_ABSOLUTO_SEGMENTO:
-
-                # =================================================
-                # 🔥 TENTATIVA DE RECUPERAÇÃO OCR
-                # =================================================
-                #
-                # CASO REAL:
-                #
-                # 299,51  -> OCR -> 29951
-                # 105,22  -> OCR -> 10522
-                #
-                # NÃO podemos simplesmente aceitar valores gigantes,
-                # mas também não podemos invalidar automaticamente.
-                #
-                # Estratégia:
-                #
-                # - tenta dividir por 100
-                # - valida contexto vetorial
-                # - valida explosão estatística
-                #
-                # =================================================
                 distancia_corrigida = distancia / 100.0
-
                 recuperado_por_ocr = False
 
                 if (
                     distancia_corrigida > 0
                     and distancia_corrigida <= LIMITE_ABSOLUTO_SEGMENTO
                 ):
-
                     if distancias_processadas:
-
                         media_distancias = (
                             sum(distancias_processadas)
                             / len(distancias_processadas)
                         )
 
                         if media_distancias > 0:
-
                             fator_corrigido = (
                                 distancia_corrigida
                                 / media_distancias
                             )
 
                             if fator_corrigido <= 25:
-
-                                print(
-                                    f"⚠️ Segmento {index} "
-                                    f"corrigido automaticamente "
-                                    f"via OCR decimal "
-                                    f"({distancia:.2f}m -> "
-                                    f"{distancia_corrigida:.2f}m)"
-                                )
-
                                 distancia = distancia_corrigida
                                 recuperado_por_ocr = True
-
                     else:
-
-                        print(
-                            f"⚠️ Segmento {index} "
-                            f"corrigido automaticamente "
-                            f"via OCR decimal "
-                            f"({distancia:.2f}m -> "
-                            f"{distancia_corrigida:.2f}m)"
-                        )
-
                         distancia = distancia_corrigida
                         recuperado_por_ocr = True
 
                 if not recuperado_por_ocr:
-
-                    print(
-                        f"⚠️ Segmento {index} excede limite técnico: "
-                        f"{distancia:.2f}m"
+                    segmentos_invalidos.append(
+                        f"Segmento {index}: distância excessiva "
+                        f"({distancia:.2f}m)"
                     )
+                    continue
 
-                    return None
-
-            # =====================================================
-            # 🔥 CONTROLE ESTATÍSTICO OCR
-            # =====================================================
             if distancias_processadas:
-
                 media_distancias = (
                     sum(distancias_processadas)
                     / len(distancias_processadas)
                 )
 
                 if media_distancias > 0:
-
                     fator_explosao = distancia / media_distancias
 
                     if fator_explosao > 25:
-
-                        print(
-                            f"⚠️ Segmento {index} com explosão vetorial "
+                        segmentos_invalidos.append(
+                            f"Segmento {index}: explosão vetorial "
                             f"(x{fator_explosao:.2f})"
                         )
+                        continue
 
-                        return None
-
-            distancias_processadas.append(distancia)
-
-            # =====================================================
-            # 🔥 CONTROLE ANGULAR
-            # =====================================================
             if ultimo_azimute is not None:
-
                 delta_angular = abs(
                     azimute - ultimo_azimute
                 )
@@ -2571,7 +2511,6 @@ class OcrPipelineService:
                 )
 
                 if delta_angular > LIMITE_SALTO_ANGULAR:
-
                     print(
                         f"⚠️ Segmento {index} possui salto angular "
                         f"suspeito ({delta_angular:.2f}°)"
@@ -2584,39 +2523,26 @@ class OcrPipelineService:
             dx: float = distancia * sin(azimute_rad)
             dy: float = distancia * cos(azimute_rad)
 
-            # =====================================================
-            # 🔥 PROTEÇÃO FLOAT
-            # =====================================================
             if (
                 math.isnan(dx)
                 or math.isnan(dy)
                 or math.isinf(dx)
                 or math.isinf(dy)
             ):
-
-                print(
-                    f"⚠️ Segmento {index} gerou deslocamento inválido"
+                segmentos_invalidos.append(
+                    f"Segmento {index}: deslocamento inválido"
                 )
+                continue
 
-                return None
-
-            # =====================================================
-            # 🔥 PROTEÇÃO CONTRA EXPLOSÃO
-            # =====================================================
             if abs(dx) > 1e7 or abs(dy) > 1e7:
-
-                print(
-                    f"⚠️ Segmento {index} gerou deslocamento absurdo"
+                segmentos_invalidos.append(
+                    f"Segmento {index}: deslocamento absurdo"
                 )
-
-                return None
+                continue
 
             novo_x = x + dx
             novo_y = y + dy
 
-            # =====================================================
-            # 🔥 ENVELOPE ESPACIAL
-            # =====================================================
             minx = min(minx, novo_x)
             miny = min(miny, novo_y)
 
@@ -2627,30 +2553,50 @@ class OcrPipelineService:
             spany = abs(maxy - miny)
 
             if spanx > LIMITE_ENVELOPE or spany > LIMITE_ENVELOPE:
-
-                print(
-                    f"⚠️ Envelope geométrico inválido "
+                segmentos_invalidos.append(
+                    f"Segmento {index}: envelope inválido "
                     f"({spanx:.2f} x {spany:.2f})"
                 )
-
-                return None
+                continue
 
             x = novo_x
             y = novo_y
 
             coords.append((x, y))
+            distancias_processadas.append(distancia)
+            segmentos_validos += 1
 
-        if len(coords) < 4:
+        total_segmentos = len(segmentos_memorial)
 
+        if segmentos_invalidos:
             print(
-                "⚠️ Segmentos insuficientes para formar polígono"
+                "⚠️ Segmentos OCR descartados: "
+                f"{len(segmentos_invalidos)}/{total_segmentos}"
             )
 
+            for item in segmentos_invalidos[:10]:
+                print(f"   - {item}")
+
+        if segmentos_validos < 3 or len(coords) < 4:
+            print(
+                "⚠️ Segmentos válidos insuficientes "
+                "para formar polígono"
+            )
             return None
 
-        # =========================================================
-        # 🔥 ERRO DE FECHAMENTO
-        # =========================================================
+        percentual_invalidos = (
+            len(segmentos_invalidos) / total_segmentos
+            if total_segmentos > 0
+            else 1
+        )
+
+        if percentual_invalidos > LIMITE_INVALIDOS_PERCENTUAL:
+            print(
+                "⚠️ Geometria rejeitada: excesso de segmentos "
+                f"inválidos ({percentual_invalidos:.2%})"
+            )
+            return None
+
         erro_fechamento = (
             OcrPipelineService._distancia_entre_pontos(
                 coords[0],
@@ -2663,19 +2609,14 @@ class OcrPipelineService:
         )
 
         if erro_fechamento > limite_fechamento:
-
             print(
                 f"⚠️ Erro de fechamento elevado: "
                 f"{erro_fechamento:.2f}m"
             )
-
             return None
 
         coords = OcrPipelineService._fechar_anel(coords)
 
-        # =========================================================
-        # 🔥 VALIDAÇÃO DE DEGENERAÇÃO
-        # =========================================================
         coords_unicos = [
             (
                 round(p[0], 6),
@@ -2685,65 +2626,44 @@ class OcrPipelineService:
         ]
 
         if len(set(coords_unicos)) < 3:
-
             print(
                 "⚠️ Coordenadas degeneradas "
                 "(polígono inválido)"
             )
-
             return None
 
         polygon = Polygon(coords)
 
-        # =========================================================
-        # 🔥 NÃO ACEITA MULTIPOLYGON OCR
-        # =========================================================
         if not polygon.is_valid:
-
             polygon_corrigido = polygon.buffer(0)
 
             if (
                 polygon_corrigido.is_empty
                 or not polygon_corrigido.is_valid
             ):
-
                 print(
                     "⚠️ Polígono inválido mesmo após correção"
                 )
-
                 return None
 
             if polygon_corrigido.geom_type != "Polygon":
-
                 print(
                     "⚠️ OCR gerou geometria fragmentada "
                     "(MultiPolygon bloqueado)"
                 )
-
                 return None
 
             polygon = polygon_corrigido
 
         if polygon.is_empty:
-
             print("⚠️ Polígono vazio")
-
             return None
 
-        # =========================================================
-        # 🔥 ÁREA DEGENERADA
-        # =========================================================
         if polygon.area <= 0:
-
             print("⚠️ Área geométrica inválida")
-
             return None
 
-        # =========================================================
-        # 🔥 NORMALIZAÇÃO FINAL DO GEOJSON
-        # =========================================================
         try:
-
             from shapely.geometry import mapping
 
             geojson_final = mapping(polygon)
@@ -2755,19 +2675,19 @@ class OcrPipelineService:
                 "possui_georreferenciamento_real": False,
                 "tipo_geometria": "POLIGONO_RECONSTRUIDO",
                 "engine": "OCR_PIPELINE",
-
+                "modo_recuperacao": bool(segmentos_invalidos),
+                "segmentos_recebidos": total_segmentos,
+                "segmentos_validos": segmentos_validos,
+                "segmentos_invalidos": len(segmentos_invalidos),
                 "fechamento_tolerancia_metros": (
                     OcrPipelineService
                     .FECHAMENTO_TOLERANCIA_METROS
                 ),
-
                 "erro_fechamento_metros": round(
                     float(erro_fechamento),
                     6,
                 ),
-
                 "vertices": len(coords) - 1,
-
                 "bbox": {
                     "minx": round(minx, 6),
                     "miny": round(miny, 6),
@@ -2776,20 +2696,16 @@ class OcrPipelineService:
                     "spanx": round(spanx, 6),
                     "spany": round(spany, 6),
                 },
-
                 "estatisticas_segmentos": {
                     "total_segmentos": len(distancias_processadas),
-
                     "distancia_min": round(
                         min(distancias_processadas),
                         6,
                     ),
-
                     "distancia_max": round(
                         max(distancias_processadas),
                         6,
                     ),
-
                     "distancia_media": round(
                         (
                             sum(distancias_processadas)
@@ -2806,12 +2722,10 @@ class OcrPipelineService:
             )
 
         except Exception as exc:
-
             print(
                 "⚠️ Falha ao converter polygon para GeoJSON: "
                 f"{str(exc)}"
             )
-
             return None
         
     @staticmethod
@@ -2827,6 +2741,23 @@ class OcrPipelineService:
         if not texto:
             return None
 
+        texto = re.sub(
+            r"[ \t]+",
+            " ",
+            texto,
+        )
+
+        texto = re.sub(
+            r"\n{3,}",
+            "\n\n",
+            texto,
+        )
+
+        resultado: Optional[dict[str, Any]] = None
+
+        # =========================================================
+        # 🔥 TENTATIVA PRINCIPAL
+        # =========================================================
         try:
 
             resultado = MemorialParserService.gerar_geometria(
@@ -2836,10 +2767,54 @@ class OcrPipelineService:
         except Exception as exc:
 
             print(
-                "⚠️ Falha ao gerar geometria "
-                f"a partir do memorial: {str(exc)}"
+                "⚠️ Falha principal ao gerar geometria "
+                f"do memorial: {str(exc)}"
             )
 
+            # =====================================================
+            # 🔥 FALLBACK OCR TOLERANTE
+            # =====================================================
+            try:
+
+                texto_recuperado = texto
+
+                # ================================================
+                # OCR decimal colapsado
+                # 9195040 -> 91°95'04"
+                # ================================================
+                texto_recuperado = re.sub(
+                    r"\b(\d{2})(\d{2})(\d{2})\b",
+                    r"\1°\2'\3\"",
+                    texto_recuperado,
+                )
+
+                texto_recuperado = re.sub(
+                    r"\b(\d{3})(\d{2})(\d{2})\b",
+                    r"\1°\2'\3\"",
+                    texto_recuperado,
+                )
+
+                resultado = (
+                    MemorialParserService.gerar_geometria(
+                        texto_recuperado
+                    )
+                )
+
+                print(
+                    "⚠️ Memorial recuperado "
+                    "via heurística OCR"
+                )
+
+            except Exception as exc2:
+
+                print(
+                    "⚠️ Fallback memorial falhou: "
+                    f"{str(exc2)}"
+                )
+
+                return None
+
+        if not resultado:
             return None
 
         geojson = resultado.get("geojson")
@@ -2849,12 +2824,18 @@ class OcrPipelineService:
         # =========================================================
         if (
             not isinstance(geojson, dict)
-            or geojson.get("type") not in ["Polygon", "MultiPolygon"]
+            or geojson.get("type")
+            not in ["Polygon", "MultiPolygon"]
             or not isinstance(
                 geojson.get("coordinates"),
                 list,
             )
         ):
+
+            print(
+                "⚠️ GeoJSON do memorial inválido"
+            )
+
             return None
 
         try:
@@ -2882,33 +2863,56 @@ class OcrPipelineService:
             # =====================================================
             if not geom.is_valid:
 
-                geom_corrigida = geom.buffer(0)
+                try:
 
-                if (
-                    geom_corrigida.is_empty
-                    or not geom_corrigida.is_valid
-                ):
+                    geom_corrigida = geom.buffer(0)
+
+                    if (
+                        not geom_corrigida.is_empty
+                        and geom_corrigida.is_valid
+                    ):
+                        geom = geom_corrigida
+
+                except Exception:
+                    pass
+
+            # =====================================================
+            # 🔥 MULTIPOLYGON OCR
+            # =====================================================
+            if geom.geom_type == "MultiPolygon":
+
+                try:
+
+                    geoms = list(geom.geoms)
+
+                    if not geoms:
+
+                        print(
+                            "⚠️ MultiPolygon vazio"
+                        )
+
+                        return None
+
+                    geoms.sort(
+                        key=lambda g: g.area,
+                        reverse=True,
+                    )
+
+                    geom = geoms[0]
 
                     print(
-                        "⚠️ Geometria do memorial "
-                        "permaneceu inválida"
+                        "⚠️ MultiPolygon reduzido "
+                        "para maior polígono"
+                    )
+
+                except Exception:
+
+                    print(
+                        "⚠️ Falha ao recuperar "
+                        "MultiPolygon"
                     )
 
                     return None
-
-                # =================================================
-                # 🔥 BLOQUEIA MULTIPOLYGON
-                # =================================================
-                if geom_corrigida.geom_type != "Polygon":
-
-                    print(
-                        "⚠️ Memorial gerou geometria "
-                        "fragmentada (MultiPolygon)"
-                    )
-
-                    return None
-
-                geom = geom_corrigida
 
             # =====================================================
             # 🔥 SOMENTE POLYGON
@@ -2923,7 +2927,7 @@ class OcrPipelineService:
                 return None
 
             # =====================================================
-            # 🔥 ÁREA DEGENERADA
+            # 🔥 ÁREA INVÁLIDA
             # =====================================================
             if geom.area <= 0:
 
@@ -2935,13 +2939,34 @@ class OcrPipelineService:
                 return None
 
             # =====================================================
-            # 🔥 PADRONIZAÇÃO FINAL
+            # 🔥 EXTERIOR
+            # =====================================================
+            exterior_coords = list(
+                geom.exterior.coords
+            )
+
+            if len(exterior_coords) < 4:
+
+                print(
+                    "⚠️ Polígono do memorial "
+                    "possui vértices insuficientes"
+                )
+
+                return None
+
+            # =====================================================
+            # 🔥 BBOX
+            # =====================================================
+            minx, miny, maxx, maxy = geom.bounds
+
+            spanx = abs(maxx - minx)
+            spany = abs(maxy - miny)
+
+            # =====================================================
+            # 🔥 GEOJSON FINAL
             # =====================================================
             geojson_final = mapping(geom)
 
-            # =====================================================
-            # 🔥 METADATA TÉCNICA
-            # =====================================================
             geojson_final["metadata"] = {
                 "referencial": "LOCAL_CARTESIANO",
                 "origem": "MEMORIAL_DESCRITIVO",
@@ -2949,14 +2974,26 @@ class OcrPipelineService:
                 "possui_georreferenciamento_real": False,
                 "tipo_geometria": "POLIGONO_RECONSTRUIDO",
                 "engine": "OCR_PIPELINE",
+
+                "modo_recuperacao_ocr": True,
+
                 "geom_type": geom.geom_type,
-                "vertices": len(
-                    list(geom.exterior.coords)
-                ) - 1,
+
+                "vertices": len(exterior_coords) - 1,
+
                 "area_modelo": round(
                     float(geom.area),
                     6,
                 ),
+
+                "bbox": {
+                    "minx": round(minx, 6),
+                    "miny": round(miny, 6),
+                    "maxx": round(maxx, 6),
+                    "maxy": round(maxy, 6),
+                    "spanx": round(spanx, 6),
+                    "spany": round(spany, 6),
+                },
             }
 
             return json.dumps(
@@ -3202,18 +3239,130 @@ class OcrPipelineService:
             pass
 
         # =========================================================
-        # 🔥 OCR CORROMPIDO
+        # 🔥 OCR CORROMPIDO — RECUPERAÇÃO CONTROLADA
         # =========================================================
-        #
-        # NÃO tenta mais "adivinhar"
-        # removendo lixo arbitrariamente.
-        #
-        # Isso estava causando:
-        # - explosão geométrica
-        # - azimutes absurdos
-        # - polígonos inválidos
-        #
-        # =========================================================
+
+        numeros = re.sub(
+            r"\D",
+            "",
+            valor_limpo,
+        )
+
+        # =====================================================
+        # FORMATO:
+        # 9195040
+        # -> 91°95'04"
+        # =====================================================
+        if len(numeros) == 7:
+
+            try:
+
+                g = float(numeros[:3])
+                m = float(numeros[3:5])
+                s = float(numeros[5:7])
+
+                # =============================================
+                # OCR frequentemente explode minutos
+                # Ex: 95 -> 59
+                # =============================================
+                if m >= 60:
+
+                    if str(int(m)).startswith("9"):
+                        m = 59
+
+                    else:
+                        raise ValueError(
+                            "Minutos inválidos"
+                        )
+
+                if s >= 60:
+
+                    if str(int(s)).startswith("9"):
+                        s = 59
+
+                    else:
+                        raise ValueError(
+                            "Segundos inválidos"
+                        )
+
+                decimal = (
+                    g
+                    + (m / 60)
+                    + (s / 3600)
+                )
+
+                if decimal == 360:
+                    return 0.0
+
+                if 0 <= decimal <= 360:
+
+                    print(
+                        "⚠️ Azimute OCR recuperado "
+                        f"automaticamente: {valor_original}"
+                    )
+
+                    return decimal
+
+            except Exception:
+                pass
+
+        # =====================================================
+        # FORMATO:
+        # 919504
+        # -> 91°95'04"
+        # =====================================================
+        if len(numeros) == 6:
+
+            try:
+
+                g = float(numeros[:2])
+                m = float(numeros[2:4])
+                s = float(numeros[4:6])
+
+                if m >= 60:
+
+                    if str(int(m)).startswith("9"):
+                        m = 59
+
+                    else:
+                        raise ValueError(
+                            "Minutos inválidos"
+                        )
+
+                if s >= 60:
+
+                    if str(int(s)).startswith("9"):
+                        s = 59
+
+                    else:
+                        raise ValueError(
+                            "Segundos inválidos"
+                        )
+
+                decimal = (
+                    g
+                    + (m / 60)
+                    + (s / 3600)
+                )
+
+                if decimal == 360:
+                    return 0.0
+
+                if 0 <= decimal <= 360:
+
+                    print(
+                        "⚠️ Azimute OCR recuperado "
+                        f"automaticamente: {valor_original}"
+                    )
+
+                    return decimal
+
+            except Exception:
+                pass
+
+        # =====================================================
+        # FALHA FINAL
+        # =====================================================
         raise ValueError(
             f"Ângulo inválido: {valor_original}"
         )
@@ -3387,6 +3536,73 @@ class OcrPipelineService:
                 numero_str = (
                     f"{inteiro}.{decimal}"
                 )
+
+                # =========================================================
+        # 🔥 OCR SEM SEPARADOR DECIMAL
+        # =========================================================
+        #
+        # Exemplos:
+        #
+        # 10522  -> 105.22
+        # 9403   -> 94.03
+        #
+        # Aplicado SOMENTE em valores
+        # absurdamente altos para perímetro rural.
+        #
+        # =========================================================
+        if (
+            "." not in numero_str
+            and "," not in numero_str
+            and numero_str.isdigit()
+        ):
+
+            if len(numero_str) >= 4:
+
+                valor_inteiro = int(numero_str)
+
+                # =============================================
+                # heurística OCR controlada
+                # =============================================
+                if valor_inteiro > 5000:
+
+                    decimal_recuperado = (
+                        f"{numero_str[:-2]}.{numero_str[-2:]}"
+                    )
+
+                    try:
+
+                        valor_teste = float(
+                            decimal_recuperado
+                        )
+
+                        if 0.5 <= valor_teste <= 5000:
+
+                            print(
+                                "⚠️ Distância OCR "
+                                "recuperada automaticamente: "
+                                f"{numero_str} -> "
+                                f"{decimal_recuperado}"
+                            )
+
+                            numero_str = decimal_recuperado
+
+                    except Exception:
+                        pass
+
+        # =========================================================
+        # 🔥 OCR DECIMAL DUPLICADO
+        # =========================================================
+        numero_str = re.sub(
+            r"[.]{2,}",
+            ".",
+            numero_str,
+        )
+
+        numero_str = re.sub(
+            r"[,]{2,}",
+            ",",
+            numero_str,
+        )
 
         # =========================================================
         # CONVERSÃO FINAL

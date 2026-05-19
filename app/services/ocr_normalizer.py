@@ -453,7 +453,12 @@ def _extrair_lote_gleba_de_texto(valor: Any) -> Dict[str, Optional[str]]:
     }
 
 
-def _inferir_tipo_confrontante(nome: Optional[str], descricao: Optional[str], identificacao: Optional[str]) -> Optional[str]:
+def _inferir_tipo_confrontante(
+    nome: Optional[str],
+    descricao: Optional[str],
+    identificacao: Optional[str],
+) -> Optional[str]:
+
     base = " ".join(
         part for part in [nome, descricao, identificacao] if part
     ).lower()
@@ -461,16 +466,23 @@ def _inferir_tipo_confrontante(nome: Optional[str], descricao: Optional[str], id
     if not base:
         return None
 
-    if "estrada" in base or "rodovia" in base or "vicinal" in base:
+    if any(t in base for t in ["estrada", "rodovia", "vicinal", "via municipal"]):
         return "estrada"
-    if "rio" in base or "córrego" in base or "corrego" in base or "ribeirão" in base or "ribeirao" in base:
+
+    if any(t in base for t in ["rio", "córrego", "corrego", "ribeirão", "ribeirao", "curso d'água", "curso dagua"]):
         return "curso_dagua"
-    if "área pública" in base or "area publica" in base or "patrimônio público" in base or "patrimonio publico" in base:
+
+    if any(t in base for t in ["área pública", "area publica", "patrimônio público", "patrimonio publico"]):
         return "area_publica"
+
     if "reserva legal" in base:
         return "reserva_legal"
-    if "lote" in base or "gleba" in base or "fazenda" in base or "sítio" in base or "sitio" in base:
+
+    if any(t in base for t in ["fazenda", "sítio", "sitio", "chácara", "chacara", "lote", "gleba", "quinhão", "quinhao"]):
         return "imovel_rural"
+
+    if any(t in base for t in ["matrícula", "matricula", "transcrição", "transcricao"]):
+        return "imovel_registrado"
 
     return "outro"
 
@@ -1064,9 +1076,21 @@ def _resolver_geometria(
     # =========================================================
     if segmentos_validos and len(segmentos_validos) >= 3:
         try:
-            texto_base = memorial_texto or ""
+            texto_base = (
+                memorial_texto or ""
+            ).strip()
 
-            geometria_gerada = MemorialParserService.gerar_geometria(texto_base)
+            if texto_base:
+
+                geometria_gerada = (
+                    MemorialParserService
+                    .gerar_geometria(
+                        texto_base
+                    )
+                )
+
+            else:
+                geometria_gerada = None
 
             if (
                 geometria_gerada
@@ -1128,6 +1152,13 @@ def _resolver_geometria(
             }
 
         elif isinstance(geojson.get("geometry"), dict):
+
+            geojson = {
+                "type": "Feature",
+                "geometry": geojson.get("geometry"),
+                "properties": geojson.get("properties", {}),
+            }
+
             geojson = {
                 "type": "FeatureCollection",
                 "features": [geojson],
@@ -1159,6 +1190,7 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
     def _extrair_matricula_forte(*valores: Any) -> Optional[str]:
         for valor in valores:
             texto = _normalizar_texto(valor)
+
             if not texto:
                 continue
 
@@ -1166,19 +1198,20 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                 r"(?i)\bmatr[íi]cula\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
                 r"(?i)\bmat\.?\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
                 r"(?i)\bregistro\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\btranscri[cç][aã]o\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\b(?:R|AV)[\-. ]?\d+\s*[\-/]\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
+                r"(?i)\bM[\-. ]?(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})\b",
                 r"(?i)\bsob\s+(?:a\s+)?(?:matr[íi]cula|mat\.?)\s*(?:n[ºo°.]?\s*)?[:\-]?\s*(\d{1,3}(?:[.\-/]\d{3})+|\d{3,8})",
             ]
 
             for pattern in candidatos:
                 match = re.search(pattern, texto)
+
                 if match:
                     matricula = _normalizar_matricula(match.group(1))
-                    if matricula:
-                        return matricula
 
-            matricula = _normalizar_matricula(texto)
-            if matricula and len(_somente_digitos(matricula)) >= 3:
-                return matricula
+                    if matricula and len(_somente_digitos(matricula)) >= 3:
+                        return matricula
 
         return None
 
@@ -1209,8 +1242,16 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
 
         return None, None
 
-    def _limpar_identificacao(valor: Any, nome_ref: Optional[str], descricao_ref: Optional[str]) -> Optional[str]:
-        identificacao = _normalizar_identificacao_generica(valor)
+    def _limpar_identificacao(
+        valor: Any,
+        nome_ref: Optional[str],
+        descricao_ref: Optional[str],
+    ) -> Optional[str]:
+
+        identificacao = _normalizar_identificacao_generica(
+            valor
+        )
+
         if not identificacao:
             return None
 
@@ -1221,6 +1262,40 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             return None
 
         return identificacao
+
+    def _extrair_proprietario_confrontante(
+        texto: Optional[str],
+    ) -> Optional[str]:
+
+        texto_norm = _normalizar_texto(texto)
+
+        if not texto_norm:
+            return None
+
+        patterns = [
+            r"(?i)de propriedade de\s+([^,.;\n]+)",
+            r"(?i)propriet[aá]rio:\s*([^,.;\n]+)",
+            r"(?i)pertencente a\s+([^,.;\n]+)",
+            r"(?i)dom[ií]nio de\s+([^,.;\n]+)",
+        ]
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                texto_norm,
+            )
+
+            if match:
+
+                nome = _normalizar_texto(
+                    match.group(1)
+                )
+
+                if nome and len(nome) >= 3:
+                    return nome
+
+        return None
 
     for i, c in enumerate(confrontantes_raw, start=1):
 
@@ -1318,9 +1393,35 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             descricao_ref=descricao_original,
         )
 
-        extraidos_nome = _extrair_lote_gleba_de_texto(nome)
-        extraidos_descricao = _extrair_lote_gleba_de_texto(descricao_original)
-        extraidos_identificacao = _extrair_lote_gleba_de_texto(identificacao)
+        proprietario_confrontante = (
+            _extrair_proprietario_confrontante(
+                descricao_original
+            )
+        )
+
+        if not identificacao:
+
+            identificacao = (
+                _normalizar_identificacao_generica(
+                    descricao_original
+                )
+            )
+
+        extraidos_nome = (
+            _extrair_lote_gleba_de_texto(nome)
+        )
+
+        extraidos_descricao = (
+            _extrair_lote_gleba_de_texto(
+                descricao_original
+            )
+        )
+
+        extraidos_identificacao = (
+            _extrair_lote_gleba_de_texto(
+                identificacao
+            )
+        )
 
         lote = _normalizar_texto(
             _coalesce(
@@ -1340,48 +1441,103 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
             )
         )
 
+        vinculo_registral = None
+
+        base_registral = " ".join(
+            part
+            for part in [
+                nome,
+                descricao_original,
+                identificacao,
+            ]
+            if part
+        ).lower()
+
+        if "desmembrad" in base_registral:
+            vinculo_registral = "DESMEMBRAMENTO"
+
+        elif "remembrad" in base_registral:
+            vinculo_registral = "REMEMBRAMENTO"
+
+        elif "originad" in base_registral:
+            vinculo_registral = "ORIGEM_MATRICULA"
+
+        elif "parte da matrícula" in base_registral:
+            vinculo_registral = "PARTE_MATRICULA"
+
+        elif "objeto da matrícula" in base_registral:
+            vinculo_registral = "OBJETO_MATRICULA"
+
         tipo = _normalizar_texto_upper_sem_acentos(
             _coalesce(
                 c.get("tipo"),
-                _inferir_tipo_confrontante(nome, descricao_original, identificacao),
+                _inferir_tipo_confrontante(
+                    nome,
+                    descricao_original,
+                    identificacao,
+                ),
             )
         )
 
-        lado_original, lado_normalizado = _extrair_direcao_forte(
-            lado_bruto,
-            descricao_original,
-            identificacao,
+        lado_original, lado_normalizado = (
+            _extrair_direcao_forte(
+                lado_bruto,
+                descricao_original,
+                identificacao,
+            )
         )
 
-        descricao = _limpar_descricao_confrontante(descricao_original)
+        descricao = (
+            _limpar_descricao_confrontante(
+                descricao_original
+            )
+        )
 
         if not descricao:
+
             partes_fallback: List[str] = []
 
             if nome:
                 partes_fallback.append(nome)
 
             if identificacao and identificacao != nome:
-                partes_fallback.append(identificacao)
+                partes_fallback.append(
+                    identificacao
+                )
 
             if matricula_confrontante:
-                partes_fallback.append(f"Matrícula {matricula_confrontante}")
+                partes_fallback.append(
+                    f"Matrícula {matricula_confrontante}"
+                )
 
             if lote:
-                partes_fallback.append(f"Lote {lote}")
+                partes_fallback.append(
+                    f"Lote {lote}"
+                )
 
             if gleba:
-                partes_fallback.append(f"Gleba {gleba}")
+                partes_fallback.append(
+                    f"Gleba {gleba}"
+                )
 
-            descricao = " / ".join(partes_fallback) if partes_fallback else None
+            descricao = (
+                " / ".join(partes_fallback)
+                if partes_fallback
+                else None
+            )
 
         if not identificacao:
-            identificacao = _normalizar_identificacao_generica(
-                _coalesce(
-                    c.get("identificacao_imovel"),
-                    c.get("imovel"),
-                    c.get("nome_imovel"),
-                    descricao_original if not nome else None,
+
+            identificacao = (
+                _normalizar_identificacao_generica(
+                    _coalesce(
+                        c.get("identificacao_imovel"),
+                        c.get("imovel"),
+                        c.get("nome_imovel"),
+                        descricao_original
+                        if not nome
+                        else None,
+                    )
                 )
             )
 
@@ -1406,18 +1562,31 @@ def _resolver_confrontantes(dados: Dict[str, Any], warnings: List[str]) -> List[
                 "matricula": matricula_confrontante,
                 "identificacao": identificacao,
                 "cpf_cnpj": cpf_cnpj,
+                "proprietario_confrontante": (
+                    proprietario_confrontante
+                ),
+
+                "vinculo_registral": (
+                    vinculo_registral
+                ),
                 "tipo": tipo,
                 "lote": lote,
                 "gleba": gleba,
             }
         )
 
-    confrontantes = _deduplicar_confrontantes(confrontantes)
+    confrontantes = _deduplicar_confrontantes(
+        confrontantes
+    )
 
     if not confrontantes:
-        warnings.append("Nenhum confrontante válido identificado")
+        warnings.append(
+            "Nenhum confrontante válido identificado"
+        )
 
     return confrontantes
+
+
 
 def _resolver_historico(
     dados: Dict[str, Any],
@@ -1437,36 +1606,159 @@ def _resolver_historico(
     for i, ato in enumerate(atos_raw, start=1):
 
         if not isinstance(ato, dict):
-            warnings.append(f"Ato {i} ignorado (estrutura inválida)")
+            warnings.append(
+                f"Ato {i} ignorado (estrutura inválida)"
+            )
             continue
 
-        codigo = _normalizar_texto(ato.get("codigo"))
-        tipo = _normalizar_texto_upper_sem_acentos(ato.get("tipo"))
-        numero = _normalizar_texto(ato.get("numero"))
+        texto_original = _normalizar_texto(
+            _coalesce(
+                ato.get("texto_original"),
+                ato.get("descricao"),
+                ato.get("texto"),
+            )
+        )
+
+        codigo = _normalizar_texto(
+            ato.get("codigo")
+        )
+
+        tipo = _normalizar_texto_upper_sem_acentos(
+            ato.get("tipo")
+        )
+
+        numero = _normalizar_texto(
+            ato.get("numero")
+        )
+
+        # =====================================================
+        # 🔥 RECUPERAÇÃO OCR DE CÓDIGO REGISTRAL
+        # =====================================================
+        if not codigo and texto_original:
+
+            match_codigo = re.search(
+                r"(?i)\b(R|AV)[\-. ]?(\d+)\b",
+                texto_original,
+            )
+
+            if match_codigo:
+
+                tipo_extraido = (
+                    match_codigo.group(1)
+                    .upper()
+                )
+
+                numero_extraido = (
+                    match_codigo.group(2)
+                )
+
+                codigo = (
+                    f"{tipo_extraido}-{numero_extraido}"
+                )
+
+                if not tipo:
+                    tipo = tipo_extraido
+
+                if not numero:
+                    numero = numero_extraido
+
+        # =====================================================
+        # 🔥 INFERÊNCIA SEMÂNTICA DE TIPO
+        # =====================================================
+        if not tipo and texto_original:
+
+            texto_lower = texto_original.lower()
+
+            if "averba" in texto_lower:
+                tipo = "AV"
+
+            elif any(
+                token in texto_lower
+                for token in [
+                    "registro",
+                    "compra e venda",
+                    "transfer",
+                    "doa",
+                    "cess",
+                ]
+            ):
+                tipo = "R"
 
         descricao = _normalizar_texto(
             _coalesce(
                 ato.get("descricao"),
-                ato.get("texto_original"),
+                texto_original,
             )
         )
 
-        data = _normalizar_texto(ato.get("data"))
-        protocolo = _normalizar_texto(ato.get("protocolo"))
+        data = _normalizar_texto(
+            ato.get("data")
+        )
 
-        valor = _to_float(ato.get("valor"))
+        protocolo = _normalizar_texto(
+            ato.get("protocolo")
+        )
 
-        envolvidos_raw = ato.get("envolvidos") or []
-        envolvidos: List[Dict[str, Optional[str]]] = []
+        valor = _to_float(
+            ato.get("valor")
+        )
 
+        # =====================================================
+        # 🔥 EXTRAÇÃO OCR-SAFE DE DATA
+        # =====================================================
+        if not data and texto_original:
+
+            match_data = re.search(
+                r"\b(\d{2}/\d{2}/\d{4})\b",
+                texto_original,
+            )
+
+            if match_data:
+                data = match_data.group(1)
+
+        # =====================================================
+        # 🔥 EXTRAÇÃO OCR-SAFE DE PROTOCOLO
+        # =====================================================
+        if not protocolo and texto_original:
+
+            match_protocolo = re.search(
+                r"(?i)\bprotocolo\s*(?:n[ºo°.]?\s*)?[:\-]?\s*([a-z0-9.\-/]+)",
+                texto_original,
+            )
+
+            if match_protocolo:
+                protocolo = (
+                    match_protocolo.group(1)
+                )
+
+        envolvidos_raw = (
+            ato.get("envolvidos")
+            or []
+        )
+
+        envolvidos: List[
+            Dict[str, Optional[str]]
+        ] = []
+
+        # =====================================================
+        # 🔥 ENVOLVIDOS ESTRUTURADOS
+        # =====================================================
         if isinstance(envolvidos_raw, list):
+
             for p in envolvidos_raw:
 
                 if not isinstance(p, dict):
                     continue
 
-                nome = _normalizar_texto(p.get("nome"))
-                cpf_cnpj = _normalizar_cpf_cnpj(p.get("cpf_cnpj"))
+                nome = _normalizar_texto(
+                    p.get("nome")
+                )
+
+                cpf_cnpj = (
+                    _normalizar_cpf_cnpj(
+                        p.get("cpf_cnpj")
+                    )
+                )
 
                 if not nome:
                     continue
@@ -1478,11 +1770,75 @@ def _resolver_historico(
                     }
                 )
 
-        texto_original = _normalizar_texto(ato.get("texto_original"))
+        # =====================================================
+        # 🔥 EXTRAÇÃO AUTOMÁTICA VIA TEXTO
+        # =====================================================
+        if (
+            not envolvidos
+            and texto_original
+        ):
 
-        # 🔒 filtro mínimo
-        if not codigo and not descricao:
-            warnings.append(f"Ato {i} ignorado (sem conteúdo útil)")
+            patterns = [
+                r"(?i)em favor de\s+([^,.;\n]+)",
+                r"(?i)para\s+([^,.;\n]+)",
+                r"(?i)por\s+([^,.;\n]+)",
+                r"(?i)adquirido por\s+([^,.;\n]+)",
+                r"(?i)transmitido a\s+([^,.;\n]+)",
+            ]
+
+            nomes_extraidos: List[str] = []
+
+            for pattern in patterns:
+
+                for match in re.finditer(
+                    pattern,
+                    texto_original,
+                ):
+
+                    nome_extraido = (
+                        _normalizar_texto(
+                            match.group(1)
+                        )
+                    )
+
+                    if (
+                        nome_extraido
+                        and len(nome_extraido) >= 4
+                    ):
+                        nomes_extraidos.append(
+                            nome_extraido
+                        )
+
+            nomes_unicos = []
+
+            for nome_extraido in nomes_extraidos:
+
+                if nome_extraido not in nomes_unicos:
+                    nomes_unicos.append(
+                        nome_extraido
+                    )
+
+            for nome_extraido in nomes_unicos:
+
+                envolvidos.append(
+                    {
+                        "nome": nome_extraido,
+                        "cpf_cnpj": None,
+                    }
+                )
+
+        # =====================================================
+        # 🔥 FILTRO MÍNIMO
+        # =====================================================
+        if (
+            not codigo
+            and not descricao
+            and not texto_original
+        ):
+            warnings.append(
+                f"Ato {i} ignorado "
+                "(sem conteúdo útil)"
+            )
             continue
 
         atos_normalizados.append(
@@ -1664,6 +2020,7 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
      confrontantes=confrontantes,
     )
 
+
     # =========================================================
     # 🔥 AJUSTES AVANÇADOS DE QUALIDADE
     # =========================================================
@@ -1672,9 +2029,11 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     if not resultado.get("area_hectares"):
       score -= 10
 
+
     # confrontantes críticos
     if not confrontantes:
       score -= 15
+
 
     # geometria crítica
     if (
@@ -1684,18 +2043,22 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     ):
      score -= 20
 
+
     # direções incompletas
     if any(not c.get("direcao") for c in confrontantes):
      score -= 5
+
 
     # =========================================================
     # 🔥 NOVO — HISTÓRICO REGISTRAL (CRÍTICO)
     # =========================================================
     historico_atos = historico.get("atos") if isinstance(historico, dict) else []
 
+
     if not historico_atos:
      score -= 10
      warnings.append("Histórico registral não identificado")
+
 
     elif len(historico_atos) < 2:
       score -= 5
@@ -1723,12 +2086,27 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
     # 2. Segmentos inválidos não derrubam se houver memorial_texto ou geojson.
     # 3. Mantém robustez em produção.
     fonte_geometrica = geometria.get("fonte")
-    if erros and not fonte_geometrica:
-        raise ValueError(f"OCR inválido: {erros}")
+    if (
+        erros
+        and not fonte_geometrica
+        and not confrontantes
+        and not historico_atos
+    ):
+        raise ValueError(
+            f"OCR inválido: {erros}"
+        )
     
+
     # 🔥 NOVO — FAIL HARD POR BAIXA QUALIDADE
-    if score < 40:
-        raise ValueError(f"OCR inválido: qualidade muito baixa ({score})")
+    if (
+        score < 25
+        and not geometria.get("fonte")
+        and not confrontantes
+    ):
+        raise ValueError(
+            f"OCR inválido: qualidade muito baixa ({score})"
+        )
+
 
     # OCRStructured exige proprietários não vazios; manter isso explícito
     if not proprietarios:
