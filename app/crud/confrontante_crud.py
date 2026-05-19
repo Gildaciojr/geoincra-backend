@@ -12,11 +12,20 @@ def create_confrontante(db: Session, imovel_id: int, data: ConfrontanteCreate) -
 
     new_item = Confrontante(
         imovel_id=imovel_id,
+        geometria_id=data.geometria_id,
+        matricula_id=data.matricula_id,
         direcao=data.direcao,
+        direcao_normalizada=data.direcao_normalizada,
+        ordem_segmento=data.ordem_segmento,
+        lado_label=data.lado_label,
         nome_confrontante=data.nome_confrontante,
         matricula_confrontante=data.matricula_confrontante,
         descricao=data.descricao,
         identificacao_imovel_confrontante=data.identificacao_imovel_confrontante,
+        observacoes=data.observacoes,
+        tipo=data.tipo,
+        lote=data.lote,
+        gleba=data.gleba,
     )
     db.add(new_item)
     db.commit()

@@ -33,6 +33,10 @@ class MatriculaBase(BaseModel):
     observacoes: Optional[str] = None
     cartorio_id: Optional[int] = None
 
+    origem: Optional[str] = Field(default=None, max_length=50)
+    area_registrada: Optional[float] = None
+    unidade_area: Optional[str] = Field(default=None, max_length=50)
+
 
 # =========================================================
 # CREATE
@@ -61,6 +65,10 @@ class MatriculaUpdate(BaseModel):
     status: Optional[str] = Field(default=None, min_length=2, max_length=50)
     observacoes: Optional[str] = None
     cartorio_id: Optional[int] = None
+
+    origem: Optional[str] = Field(default=None, max_length=50)
+    area_registrada: Optional[float] = None
+    unidade_area: Optional[str] = Field(default=None, max_length=50)
 
 
 # =========================================================

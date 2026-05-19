@@ -33,6 +33,9 @@ def create_matricula(
         arquivo_path=data.arquivo_path,
         status=(data.status or "ATIVA").upper().strip(),
         observacoes=data.observacoes,
+        origem=data.origem,
+        area_registrada=data.area_registrada,
+        unidade_area=data.unidade_area,
     )
 
     db.add(obj)

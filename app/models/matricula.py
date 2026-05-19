@@ -9,6 +9,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Index,
+    Float,
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -82,13 +83,13 @@ class Matricula(Base):
 
     # área registrada oficial
     area_registrada = Column(
-        String(100),
+        Float,
         nullable=True,
     )
 
     # unidade da área registrada
     unidade_area = Column(
-        String(20),
+        String(50),
         nullable=True,
     )
 

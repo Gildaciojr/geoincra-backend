@@ -131,6 +131,14 @@ class MatriculaPdfService:
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
             )
+        
+        def _safe_markup(valor: Any) -> str:
+            if valor is None:
+                return ""
+        
+            texto = " ".join(str(valor).strip().split())
+
+            return texto.replace("&", "&amp;")
 
         def _safe_upper(valor: Any) -> str:
             return _safe_text(valor).upper()
@@ -442,7 +450,7 @@ class MatriculaPdfService:
 
             for t in textos:
                 try:
-                    t_safe = _safe_text(t)
+                    t_safe = _safe_markup(t)
                     if t_safe:
                         textos_validos.append(t_safe)
                 except Exception:
@@ -802,6 +810,18 @@ class MatriculaPdfService:
             else {}
         )
 
+        matricula_principal_obj = (
+            dados.get("matricula_principal")
+            if isinstance(dados.get("matricula_principal"), dict)
+            else {}
+        )
+
+        imovel_principal_obj = (
+                dados.get("imovel_principal")
+                if isinstance(dados.get("imovel_principal"), dict)
+                else {}
+        ) 
+
         numero_matricula = _safe_str(
             dados.get("numero_matricula")
             or matricula_obj.get("numero")
@@ -826,6 +846,16 @@ class MatriculaPdfService:
 
         codigo_cartorio = _safe_str(
             dados.get("codigo_cartorio")
+            or matricula_obj.get("codigo_cartorio")
+            or matricula_principal_obj.get("codigo_cartorio")
+        )
+
+        cartorio_nome = _safe_str(
+            dados.get("cartorio")
+            or dados.get("nome_cartorio")
+            or matricula_obj.get("cartorio")
+            or matricula_principal_obj.get("cartorio")
+            or matricula_principal_obj.get("nome_cartorio")
         )
 
         status = _safe_str(
@@ -839,7 +869,13 @@ class MatriculaPdfService:
         descricao_imovel = _safe_str(
             dados.get("descricao_imovel")
             or (dados.get("imovel") or {}).get("descricao")
+            or imovel_principal_obj.get("descricao")
+            or dados.get("descricao_completa_imovel")
+            or dados.get("identificacao_imovel")
             or dados.get("nome_imovel")
+            or imovel_principal_obj.get("nome")
+
+
         )
 
         municipio = _safe_str(
@@ -971,8 +1007,11 @@ class MatriculaPdfService:
                 Paragraph(folha_fmt, style_bloco),
             ],
             [
-                Paragraph("<b>Código do Cartório</b>", style_bloco_bold),
-                Paragraph(codigo_cartorio_fmt, style_bloco),
+                Paragraph("<b>Cartório</b>", style_bloco_bold),
+                Paragraph(
+                    cartorio_nome or codigo_cartorio_fmt,
+                    style_bloco,
+                ),
                 Paragraph("<b>Status</b>", style_bloco_bold),
                 Paragraph(status_fmt, style_bloco),
             ],
@@ -1001,13 +1040,94 @@ class MatriculaPdfService:
 
         textos_imovel: List[str] = []
 
-        descricao_fmt = descricao_imovel_final or "NÃO INFORMADO"
+        descricao_fmt = (
+            descricao_imovel_final
+            or "NÃO INFORMADO"
+        )
 
-        textos_imovel.append(f"<b>Descrição do imóvel:</b> {descricao_fmt}")
+        nome_imovel_fmt = _safe_str(
+            dados.get("nome_imovel")
+            or imovel_principal_obj.get("nome")
+        )
+
+        cartorio_fmt = (
+            cartorio_nome
+            or codigo_cartorio
+            or "NÃO INFORMADO"
+        )
+
+        matricula_fmt = (
+            numero_matricula
+            or "NÃO INFORMADO"
+        )
+
+        comarca_imovel_fmt = (
+            comarca
+            or "NÃO INFORMADO"
+        )
+
+        livro_fmt_imovel = (
+            livro
+            or "NÃO INFORMADO"
+        )
+
+        folha_fmt_imovel = (
+            folha
+            or "NÃO INFORMADO"
+        )
+
+        ccir_fmt = (
+            _safe_str(
+                imovel_principal_obj.get("ccir")
+            )
+            or "NÃO INFORMADO"
+        )
 
         # =========================================================
-        # ÁREA ORIGINAL (COMO VEIO DO DOCUMENTO)
+        # IDENTIFICAÇÃO PRINCIPAL
         # =========================================================
+
+        if nome_imovel_fmt:
+            textos_imovel.append(
+                f"<b>Nome / Identificação do imóvel:</b> "
+                f"{nome_imovel_fmt}"
+            )
+
+        textos_imovel.append(
+            f"<b>Descrição completa do imóvel:</b> "
+            f"{descricao_fmt}"
+        )
+
+        textos_imovel.append(
+            f"<b>Número da matrícula:</b> "
+            f"{matricula_fmt}"
+        )
+
+        textos_imovel.append(
+            f"<b>Cartório:</b> "
+            f"{cartorio_fmt}"
+        )
+
+        textos_imovel.append(
+            f"<b>Comarca:</b> "
+            f"{comarca_imovel_fmt}"
+        )
+
+        textos_imovel.append(
+            f"<b>Livro/Folha:</b> "
+            f"{livro_fmt_imovel} / {folha_fmt_imovel}"
+        )
+
+        if ccir_fmt != "NÃO INFORMADO":
+            textos_imovel.append(
+                f"<b>CCIR:</b> "
+                f"{ccir_fmt}"
+            )
+
+        # =========================================================
+        # ÁREA ORIGINAL (DOCUMENTO)
+        # =========================================================
+
         if area_total and unidade_area:
             try:
                 valor_original = (
@@ -1016,31 +1136,43 @@ class MatriculaPdfService:
                     .replace(".", ",")
                     .replace("X", ".")
                 )
+
                 textos_imovel.append(
-                    f"<b>Área constante na matrícula:</b> {valor_original} {unidade_area}"
+                    f"<b>Área constante na matrícula:</b> "
+                    f"{valor_original} {unidade_area}"
                 )
+
             except Exception:
                 textos_imovel.append(
-                    "<b>Área constante na matrícula:</b> NÃO INFORMADO"
+                    "<b>Área constante na matrícula:</b> "
+                    "NÃO INFORMADO"
                 )
 
         # =========================================================
-        # ÁREA OFICIAL (PADRONIZADA EM HECTARES)
+        # ÁREA GEOREFERENCIADA
         # =========================================================
+
         if area_formatada:
             textos_imovel.append(
-                f"<b>Área oficial georreferenciada:</b> {area_formatada}"
+                f"<b>Área oficial georreferenciada:</b> "
+                f"{area_formatada}"
             )
 
         # =========================================================
-        # FALLBACK SE NÃO HOUVER DADOS
+        # RENDERIZAÇÃO
         # =========================================================
+
         if textos_imovel:
             _draw_text_box(textos_imovel)
+
         else:
             _draw_text_box(
                 [
-                    "Não foi possível identificar dados técnicos suficientes do imóvel para composição desta seção."
+                    (
+                        "Não foi possível identificar dados "
+                        "técnicos suficientes do imóvel para "
+                        "composição desta seção."
+                    )
                 ]
             )
 

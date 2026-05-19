@@ -1116,6 +1116,11 @@ class MatriculaOcrProcessorService:
             "folha": matricula.folha,
             "comarca": matricula.comarca,
             "codigo_cartorio": matricula.codigo_cartorio,
+            "cartorio": (
+                getattr(matricula, "cartorio", None).nome
+                if getattr(matricula, "cartorio", None)
+                else None
+            ),
             "status": matricula.status,
 
             "numero_matricula": matricula.numero_matricula,
@@ -1129,6 +1134,16 @@ class MatriculaOcrProcessorService:
                 "livro": _safe(matricula.livro),
                 "folha": _safe(matricula.folha),
                 "comarca": _safe(matricula.comarca),
+                "cartorio": (
+                    getattr(matricula, "cartorio", None).nome
+                    if getattr(matricula, "cartorio", None)
+                    else None
+                ),
+                "cartorio_id": getattr(
+                    matricula,
+                    "cartorio_id",
+                    None,
+                ),
                 "codigo_cartorio": _safe(matricula.codigo_cartorio),
                 "status": _safe(matricula.status),
                 "arquivo_path": _safe(matricula.arquivo_path),

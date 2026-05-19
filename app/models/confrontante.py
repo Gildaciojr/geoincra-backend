@@ -109,17 +109,17 @@ class Confrontante(Base):
 
     # 🔥 NOVOS CAMPOS (sem quebrar nada)
     tipo = Column(
-        String(100),
+        String(50),
         nullable=True,
     )
 
     lote = Column(
-        String(100),
+        String(50),
         nullable=True,
     )
 
     gleba = Column(
-        String(100),
+        String(50),
         nullable=True,
     )
 

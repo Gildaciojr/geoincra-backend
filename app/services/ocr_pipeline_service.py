@@ -1010,62 +1010,186 @@ class OcrPipelineService:
             }
 
         # =========================================================
-        # TXT (LISP / COORDENADAS)
+        # TXT (LISP / COORDENADAS / PERÍMETRO)
         # =========================================================
         if geometria:
             try:
                 from app.services.txt_lisp_service import TxtLispService
 
-                txt = TxtLispService.gerar_txt(geometria.geojson)
+                # =====================================================
+                # DADOS AUXILIARES
+                # =====================================================
+                numero_matricula_txt = (
+                    matricula.numero_matricula
+                    if matricula
+                    else None
+                )
+
+                descricao_imovel_txt = (
+                    dados.get("descricao_imovel")
+                    or (
+                        (dados.get("imovel") or {}).get("descricao")
+                        if isinstance(dados.get("imovel"), dict)
+                        else None
+                    )
+                    or getattr(imovel, "descricao", None)
+                    or getattr(geometria, "nome", None)
+                    or (
+                        matricula.numero_matricula
+                        if matricula
+                        else None
+                    )
+                    or getattr(imovel, "nome", None)
+                    or "IMOVEL"
+                )
+
+                # =====================================================
+                # TXT ÚNICO PROFISSIONAL
+                #
+                # Mantém a chave histórica "txt" no resultado, mas o
+                # arquivo passa a consolidar todos os polígonos em um
+                # único TXT no padrão LISP exigido pelo cliente.
+                # =====================================================
+                geometrias_txt = [geometria]
+
+                poligonos_txt: list[dict[str, Any]] = []
+                for index, geom_txt in enumerate(geometrias_txt, start=1):
+                    nome_poligono = (
+                        getattr(geom_txt, "nome", None)
+                        or descricao_imovel_txt
+                        or (
+                            f"Matrícula {numero_matricula_txt}"
+                            if numero_matricula_txt
+                            else None
+                        )
+                        or f"IMOVEL {imovel.id}"
+                    )
+
+                    if numero_matricula_txt and numero_matricula_txt not in str(nome_poligono):
+                        nome_poligono = f"{nome_poligono} - Matrícula {numero_matricula_txt}"
+
+                    if len(geometrias_txt) > 1 and index > 1:
+                        nome_poligono = f"{nome_poligono} - Polígono {index}"
+
+                    poligonos_txt.append(
+                        {
+                            "geojson": geom_txt.geojson,
+                            "nome_poligono": nome_poligono,
+                            "epsg_origem": getattr(geom_txt, "epsg_origem", None) or 4326,
+                            "geometria_id": geom_txt.id,
+                        }
+                    )
+
+                txt = TxtLispService.gerar_txt_lisp(
+                    poligonos=poligonos_txt,
+                )
 
                 path_txt = TxtLispService.salvar_txt(
                     imovel_id=imovel.id,
                     txt=txt,
                 )
 
-                url_txt = OcrPipelineService._build_file_url(base_url, path_txt)
+                url_txt = OcrPipelineService._build_file_url(
+                    base_url,
+                    path_txt,
+                )
 
                 doc_txt = create_documento_tecnico(
                     db=db,
                     imovel_id=imovel.id,
                     data=DocumentoTecnicoCreate(
                         document_group_key="COORDENADAS_TXT",
-                        tipo="TXT Coordenadas",
+                        tipo="TXT Perímetros/LISP",
                         status_tecnico="EM_ANALISE",
+                        conteudo_texto=txt,
                         arquivo_path=path_txt,
                         metadata_json={
                             "geometria_id": geometria.id,
+                            "geometrias_ids": [
+                                item.get("geometria_id")
+                                for item in poligonos_txt
+                            ],
                             "formato": "TXT",
-                            "fonte_geom": fonte_geom,  # 🔥 NOVO
+                            "tipo_exportacao": "PERIMETROS_LISP_CAD",
+                            "nome_poligono": poligonos_txt[0].get("nome_poligono"),
+                            "numero_matricula": numero_matricula_txt,
+                            "total_poligonos": len(poligonos_txt),
+                            "fonte_geom": fonte_geom,
                         },
                         gerado_em=datetime.utcnow(),
                     ),
                 )
 
+                # =====================================================
+                # RESULTADO FINAL
+                # =====================================================
                 result["steps"]["txt"] = {
                     "success": True,
+
+                    # ================================================
+                    # TXT COORDENADAS
+                    # ================================================
                     "arquivo_path": path_txt,
                     "arquivo_url": url_txt,
                     "documento_tecnico_id": doc_txt.id,
-                    "fonte": fonte_geom,  # 🔥 NOVO
-                    "message": f"TXT gerado: {path_txt}",
+
+                    # ================================================
+                    # METADADOS
+                    # ================================================
+                    "nome_poligono": poligonos_txt[0].get("nome_poligono"),
+                    "total_poligonos": len(poligonos_txt),
+                    "numero_matricula": numero_matricula_txt,
+                    "fonte": fonte_geom,
+
+                    "message": (
+                        "TXT único de perímetros/LISP gerado."
+                    ),
                 }
 
-                print(f"✅ TXT gerado: {path_txt}")
+                # Compatibilidade com consumidores antigos:
+                # estes campos continuam existindo, mas apontam para o
+                # mesmo arquivo único.
+                result["steps"]["txt"].update(
+                    {
+                        "arquivo_perimetro_path": path_txt,
+                        "arquivo_perimetro_url": url_txt,
+                        "documento_tecnico_perimetro_id": doc_txt.id,
+                        "arquivo_lisp_path": path_txt,
+                        "arquivo_lisp_url": url_txt,
+                        "documento_tecnico_lisp_id": doc_txt.id,
+                    }
+                )
+
+                print(
+                    f"✅ TXT único perímetros/LISP gerado: {path_txt}"
+                )
 
             except Exception as exc:
                 OcrPipelineService._rollback_safely(db)
+
                 result["steps"]["txt"] = {
                     "success": False,
-                    "message": f"Falha ao gerar TXT: {str(exc)}",
+                    "message": (
+                        f"Falha ao gerar TXT: {str(exc)}"
+                    ),
                 }
-                result["errors"].append(f"TXT: {str(exc)}")
-                print(f"❌ Falha ao gerar TXT: {str(exc)}")
+
+                result["errors"].append(
+                    f"TXT: {str(exc)}"
+                )
+
+                print(
+                    f"❌ Falha ao gerar TXT: {str(exc)}"
+                )
+
         else:
             result["steps"]["txt"] = {
                 "success": False,
                 "skipped": True,
-                "message": "TXT não executado: geometria inexistente.",
+                "message": (
+                    "TXT não executado: "
+                    "geometria inexistente."
+                ),
                 "fonte": fonte_geom,
             }
 

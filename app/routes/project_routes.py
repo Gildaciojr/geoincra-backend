@@ -7,6 +7,7 @@ from app.core.deps import (
     get_current_user_required,
 )
 from app.models.user import User
+from app.models.document import Document
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
@@ -23,6 +24,10 @@ from app.crud.project_crud import (
 )
 
 from app.services.project_dashboard_service import ProjectDashboardService
+from app.services.project_structure_service import (
+    build_project_folder_tree,
+    create_project_structure,
+)
 
 router = APIRouter(prefix="/projects", tags=["Projetos"])
 
@@ -97,6 +102,32 @@ def project_dashboard(
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
     return ProjectDashboardService.obter_diagnostico(db, project_id)
+
+
+# ============================================================
+# 🔒 ÁRVORE DE PASTAS DO PROJETO → leitura segura para frontend
+# ============================================================
+@router.get("/{project_id}/folders")
+def project_folders(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_required),
+):
+    project = get_project(db, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    # Garante a estrutura para projetos antigos sem mover arquivos existentes.
+    create_project_structure(project_id)
+
+    documents = (
+        db.query(Document)
+        .filter(Document.project_id == project_id)
+        .order_by(Document.uploaded_at.desc())
+        .all()
+    )
+
+    return build_project_folder_tree(project_id=project_id, documents=documents)
 
 
 # ============================================================
