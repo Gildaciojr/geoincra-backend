@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session
 from app.crud.documento_tecnico_crud import create_documento_tecnico
 from app.crud.sigef_export_crud import exportar_sigef_csv
 from app.models.document import Document
+from app.services.documento_tecnico_checklist_generator_service import (
+    DocumentoTecnicoChecklistGeneratorService,
+)
+from app.services.documento_tecnico_orquestracao_service import (
+    DocumentoTecnicoOrquestracaoService,
+)
 from app.models.geometria import Geometria
 from app.models.imovel import Imovel
 from app.models.matricula import Matricula
@@ -3013,6 +3019,16 @@ class OcrPipelineService:
                         ),
                     )
 
+                    DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                        db=db,
+                        documento=doc_pdf,
+                    )
+
+                    DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                        db=db,
+                        documento=doc_pdf,
+                    )
+
                     url_pdf = OcrPipelineService._build_file_url(
                         base_url,
                         pdf.get("arquivo_path"),
@@ -3291,6 +3307,16 @@ class OcrPipelineService:
                         },
                         gerado_em=datetime.utcnow(),
                     ),
+                )
+
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_geo,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_geo,
                 )
 
                 # =========================================================
@@ -3709,6 +3735,16 @@ class OcrPipelineService:
                         gerado_em=datetime.utcnow(),
                     ),
                 )
+                
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_memorial,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_memorial,
+                )
 
                 result["steps"]["memorial"] = {
                     "success": True,
@@ -3822,6 +3858,16 @@ class OcrPipelineService:
                     ),
                 )
 
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_croqui,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_croqui,
+                 )
+                
                 result["steps"]["croqui"] = {
                     "success": True,
                     "arquivo_path": path_svg,
@@ -4023,6 +4069,17 @@ class OcrPipelineService:
                         gerado_em=datetime.utcnow(),
                     ),
                 )
+
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_txt,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_txt,
+                )
+                
 
                 # =====================================================
                 # RESULTADO FINAL
@@ -4227,6 +4284,17 @@ class OcrPipelineService:
                     ),
                 )
 
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_dxf,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_dxf,
+                 )
+                
+
                 result["steps"]["dxf"] = {
                     "success": True,
                     "arquivo_path": path_dxf,
@@ -4306,6 +4374,16 @@ class OcrPipelineService:
                         },
                         gerado_em=datetime.utcnow(),
                     ),
+                )
+
+                DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                    db=db,
+                    documento=doc_shp,
+                )
+
+                DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                    db=db,
+                    documento=doc_shp,
                 )
 
                 result["steps"]["shp"] = {
@@ -4389,6 +4467,16 @@ class OcrPipelineService:
                                 gerado_em=datetime.utcnow(),
                             ),
                         )
+                        DocumentoTecnicoChecklistGeneratorService.gerar_checklist_inicial(
+                            db=db,
+                            documento=doc_sigef,
+                        )
+
+                        DocumentoTecnicoOrquestracaoService.processar_evento_documento_tecnico(
+                            db=db,
+                            documento=doc_sigef,
+                        )
+
                         documento_tecnico_id = doc_sigef.id
 
                     result["steps"]["sigef_csv"] = {

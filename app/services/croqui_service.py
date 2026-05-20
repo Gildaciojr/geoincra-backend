@@ -392,23 +392,41 @@ class CroquiService:
         size: int,
         confrontantes: List[Dict[str, Any]],
     ) -> str:
-        
+
         if not confrontantes:
             return ""
-        
-        x = size - CroquiService.RIGHT_INFO_W + 20
-        y = CroquiService.HEADER_H + 300
 
-        altura_base = 42
-        altura_por_item = 52
+        size = float(size)
 
-        altura_total = altura_base + (
-            min(len(confrontantes), 6) * altura_por_item
+        # =========================================================
+        # 🔥 POSICIONAMENTO
+        # =========================================================
+        x = size - CroquiService.RIGHT_INFO_W + 8
+        y = CroquiService.HEADER_H + 285
+
+        # =========================================================
+        # 🔥 DIMENSÕES
+        # =========================================================
+        largura = 240
+
+        altura_header = 34
+        altura_item = 72
+        padding_bottom = 18
+
+        total_itens = min(len(confrontantes), 8)
+
+        altura_total = (
+            altura_header
+            + (total_itens * altura_item)
+            + padding_bottom
         )
 
         linhas = []
 
-        for index, conf in enumerate(confrontantes[:6], start=1):
+        for index, conf in enumerate(
+            confrontantes[:8],
+            start=1,
+        ):
 
             direcao = str(
                 conf.get("direcao")
@@ -417,7 +435,6 @@ class CroquiService:
             ).upper()
 
             nome = str(
-
                 conf.get("texto_resumo")
                 or conf.get("nome")
                 or conf.get("identificacao")
@@ -435,63 +452,59 @@ class CroquiService:
                 or "-"
             )
 
-            item_y = 34 + ((index - 1) * altura_por_item)
+            item_y = 44 + ((index - 1) * altura_item)
 
             linhas.append(
                 f"""
                 <line
-                    x1="10"
-                    y1="{item_y - 8}"
-                    x2="198"
-                    y2="{item_y - 8}"
+                    x1="12"
+                    y1="{item_y - 14}"
+                    x2="{largura - 12}"
+                    y2="{item_y - 14}"
                     stroke="#E2E8F0"
                     stroke-width="1"
                 />
 
                 <text
-                    x="12"
+                    x="14"
                     y="{item_y}"
-                    font-size="10"
+                    font-size="11"
                     font-family="Helvetica, Arial, sans-serif"
                     font-weight="bold"
                     fill="#0F172A"
                 >
-
                     {CroquiService._escape_xml(direcao)}
                 </text>
 
                 <text
-                    x="64"
+                    x="82"
                     y="{item_y}"
-                    font-size="9.5"
+                    font-size="10"
                     font-family="Helvetica, Arial, sans-serif"
                     font-weight="bold"
                     fill="#111827"
                 >
-
-                    {CroquiService._escape_xml(nome[:28])}
+                    {CroquiService._escape_xml(nome[:34])}
                 </text>
 
                 <text
-                    x="64"
-                    y="{item_y + 14}"
-                    font-size="8.5"
+                    x="82"
+                    y="{item_y + 18}"
+                    font-size="9"
                     font-family="Helvetica, Arial, sans-serif"
-                    fill="#475569"
+                    fill="#334155"
                 >
-
-                    Matrícula: {CroquiService._escape_xml(matricula[:20])}
+                    Matrícula: {CroquiService._escape_xml(matricula[:28])}
                 </text>
 
                 <text
-                    x="64"
-                    y="{item_y + 28}"
-                    font-size="8"
+                    x="82"
+                    y="{item_y + 36}"
+                    font-size="8.5"
                     font-family="Helvetica, Arial, sans-serif"
                     fill="#64748B"
                 >
-
-                    {CroquiService._escape_xml(detalhe[:34])}
+                    {CroquiService._escape_xml(detalhe[:42])}
                 </text>
                 """
             )
@@ -502,24 +515,25 @@ class CroquiService:
             <rect
                 x="0"
                 y="0"
-                width="210"
+                width="{largura}"
                 height="{altura_total}"
-                rx="8"
-                ry="8"
+                rx="10"
+                ry="10"
                 fill="#FFFFFF"
                 stroke="#CBD5E1"
+                stroke-width="1.2"
             />
 
             <text
-                x="12"
-                y="20"
-                font-size="13"
+                x="16"
+                y="24"
+                font-size="14"
                 font-family="Helvetica, Arial, sans-serif"
                 font-weight="bold"
                 fill="#0F172A"
             >
                 CONFRONTANTES
-            </text> 
+            </text>
 
             {''.join(linhas)}
 
