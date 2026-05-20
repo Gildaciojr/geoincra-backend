@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Integer,
     String,
@@ -237,45 +238,45 @@ class OcrResult(Base):
     )
 
     possui_geojson = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_memorial = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_confrontantes = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_historico = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_documentos_pessoais = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_dados_sigef = Column(
-        Integer,
+        Boolean     ,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     possui_croqui = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     # =========================================================
