@@ -183,9 +183,7 @@ class OcrService:
             # =================================================
             # PROMPT
             # =================================================
-            categoria=categoria_prompt,
-
-            prompt_id=prompt.id,
+            ocr_prompt_id=prompt.id,
 
             prompt_nome=prompt.nome,
 

@@ -56,6 +56,19 @@ class OcrResult(Base):
         index=True,
     )
 
+    prompt_nome = Column(
+        String(255),
+        nullable=True,
+    )
+
+    prompt_slug = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+ 
+
     # =========================================================
     # EXECUÇÃO OCR
     # =========================================================
@@ -96,6 +109,11 @@ class OcrResult(Base):
             "DADOS_BRUTOS | "
             "MEMORIAL_DESCRITIVO"
         ),
+    )
+
+    pipeline_versao = Column(
+        String(80),
+        nullable=True,
     )
 
     # =========================================================
@@ -146,6 +164,11 @@ class OcrResult(Base):
         Integer,
         nullable=True,
         comment="Score registral/jurídico",
+    )
+
+    score_confianca = Column(
+        Integer,
+        nullable=True,
     )
 
     # =========================================================
@@ -232,6 +255,24 @@ class OcrResult(Base):
     )
 
     possui_historico = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    possui_documentos_pessoais = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    possui_dados_sigef = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    possui_croqui = Column(
         Integer,
         nullable=False,
         default=0,
