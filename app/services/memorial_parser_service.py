@@ -79,7 +79,184 @@ class MemorialParserService:
             + (minutos / 60)
             + (segundos / 3600)
         )
+    
+    @staticmethod
+    def _montar_dms_str(
+        graus: int,
+        minutos: int,
+        segundos: int,
+    ) -> str:
+        return f"{graus}°{minutos:02d}'{segundos:02d}\""
 
+    @staticmethod
+    def _gerar_candidatos_dms_colapsado(
+        valor: Any,
+        *,
+        limite_graus: int = 360,
+    ) -> list[dict[str, Any]]:
+        texto_original = str(valor or "").strip()
+
+        texto_numerico = re.sub(
+            r"[^\d]",
+            "",
+            texto_original,
+        )
+
+        candidatos: list[dict[str, Any]] = []
+
+        if len(texto_numerico) < 4:
+            return candidatos
+
+        # =====================================================
+        # CASO 9195040 -> 91°50'40"
+        # CASO 121830 -> 121°08'30" ou 12°18'30"
+        # =====================================================
+        tamanhos_graus = [3, 2, 1]
+
+        for tamanho_graus in tamanhos_graus:
+            if len(texto_numerico) <= tamanho_graus:
+                continue
+
+            restante = texto_numerico[tamanho_graus:]
+
+            if len(restante) < 2:
+                continue
+
+            graus_txt = texto_numerico[:tamanho_graus]
+
+            try:
+                graus = int(graus_txt)
+            except Exception:
+                continue
+
+            if graus < 0 or graus > limite_graus:
+                continue
+
+            # -------------------------------------------------
+            # DMS COMPLETO: graus + minutos(2) + segundos(2)
+            # -------------------------------------------------
+            if len(restante) >= 4:
+                minutos_txt = restante[:2]
+                segundos_txt = restante[2:4]
+
+                try:
+                    minutos = int(minutos_txt)
+                    segundos = int(segundos_txt)
+                except Exception:
+                    minutos = -1
+                    segundos = -1
+
+                if 0 <= minutos < 60 and 0 <= segundos < 60:
+                    try:
+                        decimal = MemorialParserService._dms_para_decimal(
+                            graus,
+                            minutos,
+                            segundos,
+                        )
+
+                        if 0 <= decimal <= limite_graus:
+                            candidatos.append(
+                                {
+                                    "valor_original": texto_original,
+                                    "valor_corrigido": (
+                                        MemorialParserService._montar_dms_str(
+                                            graus,
+                                            minutos,
+                                            segundos,
+                                        )
+                                    ),
+                                    "graus": graus,
+                                    "minutos": minutos,
+                                    "segundos": segundos,
+                                    "decimal": decimal,
+                                    "tipo_recuperacao": "DMS_COLAPSADO",
+                                    "confianca": 0.92,
+                                }
+                            )
+                    except Exception:
+                        pass
+
+            # -------------------------------------------------
+            # DM: graus + minutos(2)
+            # Ex.: 1218 -> 12°18'
+            # -------------------------------------------------
+            if len(restante) == 2:
+                try:
+                    minutos = int(restante)
+                except Exception:
+                    minutos = -1
+
+                if 0 <= minutos < 60:
+                    try:
+                        decimal = MemorialParserService._dms_para_decimal(
+                            graus,
+                            minutos,
+                            0,
+                        )
+
+                        if 0 <= decimal <= limite_graus:
+                            candidatos.append(
+                                {
+                                    "valor_original": texto_original,
+                                    "valor_corrigido": (
+                                        MemorialParserService._montar_dms_str(
+                                            graus,
+                                            minutos,
+                                            0,
+                                        )
+                                    ),
+                                    "graus": graus,
+                                    "minutos": minutos,
+                                    "segundos": 0,
+                                    "decimal": decimal,
+                                    "tipo_recuperacao": "DM_COLAPSADO",
+                                    "confianca": 0.78,
+                                }
+                            )
+                    except Exception:
+                        pass
+
+        # =====================================================
+        # REMOVE DUPLICADOS POR DECIMAL
+        # =====================================================
+        unicos: list[dict[str, Any]] = []
+        vistos: set[float] = set()
+
+        for candidato in candidatos:
+            decimal = round(float(candidato["decimal"]), 8)
+
+            if decimal in vistos:
+                continue
+
+            vistos.add(decimal)
+            unicos.append(candidato)
+
+        unicos.sort(
+            key=lambda item: (
+                -float(item.get("confianca") or 0),
+                abs(float(item.get("decimal") or 0)),
+            )
+        )
+
+        return unicos
+
+    @staticmethod
+    def _recuperar_azimute_ocr_corrompido(
+        valor: Any,
+    ) -> dict[str, Any] | None:
+        candidatos = (
+            MemorialParserService
+            ._gerar_candidatos_dms_colapsado(
+                valor,
+                limite_graus=360,
+            )
+        )
+
+        if not candidatos:
+            return None
+
+        return candidatos[0]
+                
     @staticmethod
     def _rumo_para_azimute(rumo: str) -> float:
         rumo_normalizado = (
@@ -233,6 +410,15 @@ class MemorialParserService:
             "." not in texto_limpo
             and len(texto_limpo) >= 6
         ):
+            recuperado = (
+                MemorialParserService
+                ._recuperar_azimute_ocr_corrompido(
+                    texto_original
+                )
+            )
+            if recuperado:
+                return float(recuperado["decimal"])
+               
             raise ValueError(
                 "Azimute OCR corrompido "
                 f"ou DMS colapsado: {texto_original}"
@@ -289,6 +475,16 @@ class MemorialParserService:
             and "." not in texto_upper
             and "," not in texto_upper
         ):
+            recuperado = (
+                MemorialParserService
+                ._recuperar_azimute_ocr_corrompido(
+                    valor
+                )
+            )
+
+            if recuperado:
+                return float(recuperado["decimal"])
+
             raise ValueError(
                 "Azimute OCR corrompido "
                 f"ou DMS colapsado: {valor}"

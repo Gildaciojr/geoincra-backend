@@ -5855,6 +5855,50 @@ class OcrPipelineService:
             except Exception:
                  indice_compacidade = 0.0
 
+            # =====================================================
+            # SCORE GEOMÉTRICO
+            # =====================================================
+            score_geometrico = 100.0
+
+            try:
+                penalidade_fechamento = min(
+                    45.0,
+                    float(erro_fechamento) * 4.0,
+                )
+
+                percentual_invalidos = (
+                    len(segmentos_invalidos) / total_segmentos
+                    if total_segmentos > 0
+                    else 1.0
+                )
+
+                penalidade_invalidos = min(
+                    35.0,
+                    percentual_invalidos * 100.0,
+                )
+
+                penalidade_poligono = 0.0
+
+                if not polygon.is_valid:
+                    penalidade_poligono += 20.0
+
+                if polygon.area <= 0:
+                    penalidade_poligono += 40.0
+
+                score_geometrico = max(
+                    0.0,
+                    min(
+                        100.0,
+                        100.0
+                        - penalidade_fechamento
+                        - penalidade_invalidos
+                        - penalidade_poligono,
+                    ),
+                )
+
+            except Exception:
+                score_geometrico = 0.0
+
             geojson_final["metadata"] = {
                 "referencial": "LOCAL_CARTESIANO",
                 "origem": "SEGMENTOS_MEMORIAL",
@@ -5862,7 +5906,15 @@ class OcrPipelineService:
                 "possui_georreferenciamento_real": False,
                 "tipo_geometria": "POLIGONO_RECONSTRUIDO",
                 "engine": "OCR_PIPELINE",
-                "modo_recuperacao": bool(segmentos_invalidos),
+                "score_geometrico": round(
+                    float(score_geometrico),
+                    2,
+                ),
+                "modo_recuperacao": (
+                    "OCR_HEURISTICO"
+                    if segmentos_invalidos
+                    else "PADRAO"
+                ),
                 "segmentos_recebidos": total_segmentos,
                 "segmentos_validos": segmentos_validos,
                 "segmentos_invalidos": len(segmentos_invalidos),
@@ -6183,7 +6235,7 @@ class OcrPipelineService:
                     "MemorialParserService"
                 ),
 
-                "modo_recuperacao_ocr": True,
+                "modo_recuperacao": "OCR_HEURISTICO",
 
                 "memorial_processado": True,
 
