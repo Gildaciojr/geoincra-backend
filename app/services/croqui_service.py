@@ -246,11 +246,11 @@ class CroquiService:
         <g>
             <rect x="0" y="0" width="{size:.2f}" height="{CroquiService.HEADER_H}" fill="#0F172A"/>
             <text x="{size / 2:.2f}" y="34" text-anchor="middle"
-                  font-size="26" font-family="Arial" font-weight="bold" fill="#FFFFFF">
+                  font-size="26" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#FFFFFF">
                   CROQUI DO IMÓVEL
             </text>
             <text x="{size / 2:.2f}" y="62" text-anchor="middle"
-                  font-size="12" font-family="Arial" fill="#CBD5E1">
+                  font-size="12" font-family="Helvetica, Arial, sans-serif" fill="#CBD5E1">
                   Representação gráfica do perímetro gerada automaticamente pelo GeoINCRA
             </text>
         </g>
@@ -264,14 +264,14 @@ class CroquiService:
         return f"""
         <g>
             <rect x="0" y="{size - CroquiService.FOOTER_H:.2f}" width="{size:.2f}" height="{CroquiService.FOOTER_H}" fill="#F8FAFC" stroke="#CBD5E1"/>
-            <text x="40" y="{footer_y:.2f}" font-size="12" font-family="Arial" font-weight="bold" fill="#0F172A">
+            <text x="40" y="{footer_y:.2f}" font-size="12" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#0F172A">
                 Documento técnico gerado automaticamente
             </text>
-            <text x="40" y="{footer_y + 22:.2f}" font-size="11" font-family="Arial" fill="#334155">
+            <text x="40" y="{footer_y + 22:.2f}" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">
                 Este croqui possui finalidade técnica ilustrativa e deve ser interpretado em conjunto com memorial,
                 geometria e demais documentos do processo.
             </text>
-            <text x="40" y="{footer_y + 44:.2f}" font-size="11" font-family="Arial" fill="#334155">
+            <text x="40" y="{footer_y + 44:.2f}" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">
                 GeoINCRA • Pipeline OCR + IA + Geometria + Documentação Técnica
             </text>
         </g>
@@ -288,7 +288,7 @@ class CroquiService:
         <g transform="translate({x:.2f},{y:.2f})">
           <line x1="0" y1="45" x2="0" y2="0" stroke="#0F172A" stroke-width="4"/>
           <polygon points="0,-14 -11,8 11,8" fill="#0F172A"/>
-          <text x="0" y="68" text-anchor="middle" font-size="18" font-family="Arial" font-weight="bold" fill="#0F172A">N</text>
+          <text x="0" y="68" text-anchor="middle" font-size="18" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#0F172A">N</text>
         </g>
         """
 
@@ -318,9 +318,9 @@ class CroquiService:
             <line x1="{largura_px/2:.2f}" y1="-7" x2="{largura_px/2:.2f}" y2="7" stroke="#111827" stroke-width="2"/>
             <line x1="{largura_px:.2f}" y1="-7" x2="{largura_px:.2f}" y2="7" stroke="#111827" stroke-width="2"/>
 
-            <text x="0" y="22" font-size="11" font-family="Arial" fill="#111827">0</text>
-            <text x="{(largura_px/2)-10:.2f}" y="22" font-size="11" font-family="Arial" fill="#111827">{int(escolhido/2)}</text>
-            <text x="{largura_px-5:.2f}" y="22" font-size="11" font-family="Arial" fill="#111827">{escolhido} m</text>
+            <text x="0" y="22" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">0</text>
+            <text x="{(largura_px/2)-10:.2f}" y="22" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">{int(escolhido/2)}</text>
+            <text x="{largura_px-5:.2f}" y="22" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">{escolhido} m</text>
         </g>
         """
 
@@ -334,18 +334,18 @@ class CroquiService:
         return f"""
         <g transform="translate({x:.2f},{y:.2f})">
             <rect x="0" y="0" width="210" height="115" rx="8" ry="8" fill="#FFFFFF" stroke="#CBD5E1"/>
-            <text x="12" y="20" font-size="13" font-family="Arial" font-weight="bold" fill="#0F172A">LEGENDA</text>
+            <text x="12" y="20" font-size="13" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#0F172A">LEGENDA</text>
 
             <circle cx="18" cy="40" r="4" fill="#111827"/>
-            <text x="32" y="44" font-size="11" font-family="Arial" fill="#111827">Vértices do perímetro</text>
+            <text x="32" y="44" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">Vértices do perímetro</text>
 
             <line x1="12" y1="62" x2="30" y2="62" stroke="#0F172A" stroke-width="3"/>
-            <text x="36" y="66" font-size="11" font-family="Arial" fill="#111827">Perímetro do imóvel</text>
+            <text x="36" y="66" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">Perímetro do imóvel</text>
 
             <line x1="12" y1="84" x2="30" y2="84" stroke="#E5E7EB" stroke-opacity="0.35" stroke-width="2"/>
-            <text x="36" y="88" font-size="11" font-family="Arial" fill="#111827">Malha de referência</text>
+            <text x="36" y="88" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">Malha de referência</text>
 
-            <text x="12" y="106" font-size="11" font-family="Arial" fill="#111827">N = Norte</text>
+            <text x="12" y="106" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#111827">N = Norte</text>
         </g>
         """
 
@@ -366,40 +366,424 @@ class CroquiService:
         return f"""
         <g transform="translate({x:.2f},{y:.2f})">
             <rect x="0" y="0" width="210" height="165" rx="8" ry="8" fill="#FFFFFF" stroke="#CBD5E1"/>
-            <text x="12" y="20" font-size="13" font-family="Arial" font-weight="bold" fill="#0F172A">QUADRO TÉCNICO</text>
+            <text x="12" y="20" font-size="13" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#0F172A">QUADRO TÉCNICO</text>
 
-            <text x="12" y="44" font-size="11" font-family="Arial" fill="#334155">Área (m²):</text>
-            <text x="198" y="44" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">{CroquiService._format_num(area_m2, 2)}</text>
+            <text x="12" y="44" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">Área (m²):</text>
+            <text x="198" y="44" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#111827">{CroquiService._format_num(area_m2, 2)}</text>
 
-            <text x="12" y="66" font-size="11" font-family="Arial" fill="#334155">Área (ha):</text>
-            <text x="198" y="66" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">{CroquiService._format_num(area_ha, 4)}</text>
+            <text x="12" y="66" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">Área (ha):</text>
+            <text x="198" y="66" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#111827">{CroquiService._format_num(area_ha, 4)}</text>
 
-            <text x="12" y="88" font-size="11" font-family="Arial" fill="#334155">Perímetro (m):</text>
-            <text x="198" y="88" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">{CroquiService._format_num(perimetro_m, 3)}</text>
+            <text x="12" y="88" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">Perímetro (m):</text>
+            <text x="198" y="88" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif " font-weight="bold" fill="#111827">{CroquiService._format_num(perimetro_m, 3)}</text>
 
-            <text x="12" y="110" font-size="11" font-family="Arial" fill="#334155">Vértices:</text>
-            <text x="198" y="110" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">{total_vertices}</text>
+            <text x="12" y="110" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">Vértices:</text>
+            <text x="198" y="110" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#111827">{total_vertices}</text>
 
-            <text x="12" y="132" font-size="11" font-family="Arial" fill="#334155">Escala gráfica aprox.:</text>
-            <text x="198" y="132" text-anchor="end" font-size="11" font-family="Arial" font-weight="bold" fill="#111827">1:{int(max(1, escala_aprox or 1))}</text>
+            <text x="12" y="132" font-size="11" font-family="Helvetica, Arial, sans-serif" fill="#334155">Escala gráfica aprox.:</text>
+            <text x="198" y="132" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif" font-weight="bold" fill="#111827">1:{int(max(1, escala_aprox or 1))}</text>
 
-            <text x="12" y="154" font-size="10" font-family="Arial" fill="#64748B">Croqui não substitui planta topográfica oficial.</text>
+            <text x="12" y="154" font-size="10" font-family="Helvetica, Arial, sans-serif" fill="#64748B">Croqui não substitui planta topográfica oficial.</text>
         </g>
         """
+    
+    @staticmethod
+    def _render_quadro_confrontantes(
+        size: int,
+        confrontantes: List[Dict[str, Any]],
+    ) -> str:
+        
+        if not confrontantes:
+            return ""
+        
+        x = size - CroquiService.RIGHT_INFO_W + 20
+        y = CroquiService.HEADER_H + 300
 
+        altura_base = 42
+        altura_por_item = 52
+
+        altura_total = altura_base + (
+            min(len(confrontantes), 6) * altura_por_item
+        )
+
+        linhas = []
+
+        for index, conf in enumerate(confrontantes[:6], start=1):
+
+            direcao = str(
+                conf.get("direcao")
+                or conf.get("lado")
+                or "-"
+            ).upper()
+
+            nome = str(
+
+                conf.get("texto_resumo")
+                or conf.get("nome")
+                or conf.get("identificacao")
+                or "NÃO IDENTIFICADO"
+            )
+
+            matricula = str(
+                conf.get("matricula")
+                or "-"
+            )
+
+            detalhe = str(
+                conf.get("descricao")
+                or conf.get("tipo")
+                or "-"
+            )
+
+            item_y = 34 + ((index - 1) * altura_por_item)
+
+            linhas.append(
+                f"""
+                <line
+                    x1="10"
+                    y1="{item_y - 8}"
+                    x2="198"
+                    y2="{item_y - 8}"
+                    stroke="#E2E8F0"
+                    stroke-width="1"
+                />
+
+                <text
+                    x="12"
+                    y="{item_y}"
+                    font-size="10"
+                    font-family="Helvetica, Arial, sans-serif"
+                    font-weight="bold"
+                    fill="#0F172A"
+                >
+
+                    {CroquiService._escape_xml(direcao)}
+                </text>
+
+                <text
+                    x="64"
+                    y="{item_y}"
+                    font-size="9.5"
+                    font-family="Helvetica, Arial, sans-serif"
+                    font-weight="bold"
+                    fill="#111827"
+                >
+
+                    {CroquiService._escape_xml(nome[:28])}
+                </text>
+
+                <text
+                    x="64"
+                    y="{item_y + 14}"
+                    font-size="8.5"
+                    font-family="Helvetica, Arial, sans-serif"
+                    fill="#475569"
+                >
+
+                    Matrícula: {CroquiService._escape_xml(matricula[:20])}
+                </text>
+
+                <text
+                    x="64"
+                    y="{item_y + 28}"
+                    font-size="8"
+                    font-family="Helvetica, Arial, sans-serif"
+                    fill="#64748B"
+                >
+
+                    {CroquiService._escape_xml(detalhe[:34])}
+                </text>
+                """
+            )
+
+        return f"""
+        <g transform="translate({x:.2f},{y:.2f})">
+
+            <rect
+                x="0"
+                y="0"
+                width="210"
+                height="{altura_total}"
+                rx="8"
+                ry="8"
+                fill="#FFFFFF"
+                stroke="#CBD5E1"
+            />
+
+            <text
+                x="12"
+                y="20"
+                font-size="13"
+                font-family="Helvetica, Arial, sans-serif"
+                font-weight="bold"
+                fill="#0F172A"
+            >
+                CONFRONTANTES
+            </text> 
+
+            {''.join(linhas)}
+
+        </g>
+        """
+    
+    @staticmethod
+    def _resolver_confrontantes_por_segmento(
+        segmentos: List[Dict[str, Any]],
+        confrontantes: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+
+        if not segmentos:
+            return []
+
+        # =========================================================
+        # 🔥 FALLBACK SEM CONFRONTANTES
+        # =========================================================
+        if not confrontantes:
+
+            return [
+                {
+                    "segmento": segmento,
+                    "segmento_index": index,
+
+                    "direcao": None,
+
+                    "confrontante": None,
+                }
+                for index, segmento in enumerate(segmentos)
+            ]
+
+        # =========================================================
+        # 🔥 NORMALIZAÇÃO POR ORDEM DE SEGMENTO
+        # =========================================================
+        confrontantes_por_ordem: Dict[
+            int,
+            Dict[str, Any],
+        ] = {}
+
+        confrontantes_sem_ordem: List[
+            Dict[str, Any]
+        ] = []
+
+        for conf in confrontantes:
+
+            if not isinstance(conf, dict):
+                continue
+
+            ordem = conf.get(
+                "ordem_segmento"
+            )
+
+            try:
+
+                if ordem is not None:
+
+                    ordem_int = int(ordem)
+
+                    if ordem_int > 0:
+
+                        confrontantes_por_ordem[
+                            ordem_int
+                        ] = conf
+
+                        continue
+
+            except Exception:
+                pass
+
+            confrontantes_sem_ordem.append(conf)
+
+        # =========================================================
+        # 🔥 FALLBACK LEGADO
+        # =========================================================
+        #
+        # Mantém compatibilidade:
+        # - OCR antigo
+        # - pipelines antigos
+        # - confrontantes sem persistência espacial
+        #
+        # =========================================================
+        mapa_direcao = {
+            "N": "NORTE",
+            "S": "SUL",
+            "L": "LESTE",
+            "E": "LESTE",
+            "O": "OESTE",
+            "W": "OESTE",
+        }
+
+        confrontantes_por_direcao: Dict[
+            str,
+            Dict[str, Any],
+        ] = {}
+
+        for conf in confrontantes_sem_ordem:
+
+            direcao = str(
+                conf.get("direcao")
+                or conf.get("lado")
+                or ""
+            ).strip().upper()
+
+            direcao = mapa_direcao.get(
+                direcao,
+                direcao,
+            )
+
+            if direcao:
+
+                confrontantes_por_direcao[
+                    direcao
+                ] = conf
+
+        # =========================================================
+        # 🔥 RESOLUÇÃO FINAL
+        # =========================================================
+        confrontantes_normalizados = []
+
+        for index, segmento in enumerate(
+            segmentos,
+            start=1,
+        ):
+
+            confrontante = (
+                confrontantes_por_ordem.get(
+                    index
+                )
+            )
+
+            direcao_detectada = None
+
+            # =====================================================
+            # 🔥 FALLBACK LEGADO
+            # =====================================================
+            if confrontante is None:
+
+                azimute = str(
+                    segmento.get(
+                        "azimute_raw"
+                    )
+                    or ""
+                ).upper()
+
+                if any(
+                    x in azimute
+                    for x in [
+                        "N",
+                        "NORTE",
+                    ]
+                ):
+
+                    direcao_detectada = (
+                        "NORTE"
+                    )
+
+                elif any(
+                    x in azimute
+                    for x in [
+                        "S",
+                        "SUL",
+                    ]
+                ):
+
+                    direcao_detectada = (
+                        "SUL"
+                    )
+
+                elif any(
+                    x in azimute
+                    for x in [
+                        "L",
+                        "LESTE",
+                        "E",
+                    ]
+                ):
+
+                    direcao_detectada = (
+                        "LESTE"
+                    )
+
+                elif any(
+                    x in azimute
+                    for x in [
+                        "O",
+                        "OESTE",
+                        "W",
+                    ]
+                ):
+
+                    direcao_detectada = (
+                        "OESTE"
+                    )
+
+                confrontante = (
+                    confrontantes_por_direcao.get(
+                        direcao_detectada
+                    )
+                )
+
+            # =====================================================
+            # 🔥 DIREÇÃO REAL DO CONFRONTANTE
+            # =====================================================
+            if confrontante:
+
+                direcao_detectada = str(
+                    confrontante.get(
+                        "direcao"
+                    )
+                    or confrontante.get(
+                        "lado"
+                    )
+                    or ""
+                ).strip().upper()
+
+            confrontantes_normalizados.append(
+                {
+                    "segmento": segmento,
+
+                    "segmento_index": (
+                        index
+                    ),
+
+                    "direcao": (
+                        direcao_detectada
+                    ),
+
+                    "confrontante": (
+                        confrontante
+                    ),
+                }
+            )
+
+        return confrontantes_normalizados
+    
     @staticmethod
     def _render_segment_labels(
         norm: List[Tuple[float, float]],
-        geojson: Any
+        geojson: Any,
+        confrontantes: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
 
         geojson_normalizado = CroquiService._normalizar_geojson(geojson)
 
         segmentos = GeometriaService.extract_segmentos(geojson_normalizado)
+    
+        confrontantes_segmentados = (
+            CroquiService._resolver_confrontantes_por_segmento(
+                segmentos=segmentos,
+                confrontantes=confrontantes or [],
+            )
+        )
 
         labels = []
 
         for i, seg in enumerate(segmentos):
+
+            confrontante_info = None
+
+            if i < len(confrontantes_segmentados):
+                confrontante_info = (
+                    confrontantes_segmentados[i]
+                ).get("confrontante")
 
             if i >= len(norm) - 1:
                 continue
@@ -424,7 +808,7 @@ class CroquiService:
             # =========================================================
             # 🔥 DESLOCAMENTO INTELIGENTE (CRÍTICO)
             # =========================================================
-            offset_base = 28.0
+            offset_base = 38.0
 
             # evita sobreposição com confrontantes (alternância)
             if i % 2 == 0:
@@ -436,19 +820,81 @@ class CroquiService:
             py = my + (ny * offset)
 
             # =========================================================
-            # 🔥 TEXTO
+            # 🔥 DISTÂNCIA / AZIMUTE
             # =========================================================
-            dist = float(seg.get("distancia") or 0)
-            az = float(seg.get("azimute_graus") or 0)
+            #
+            # Prioridade:
+            #
+            # 1) confrontante persistido
+            # 2) segmento geométrico
+            # 3) fallback seguro
+            #
+            # =========================================================
+            dist = None
+            az = None
 
-            texto_dist = f"{CroquiService._format_num(dist, 2)} m"
+            if confrontante_info:
+
+                try:
+
+                    dist = float(
+                        confrontante_info.get(
+                            "distancia_metros"
+                        )
+                    )
+
+                except Exception:
+                    dist = None
+
+                try:
+
+                    az = float(
+                        confrontante_info.get(
+                            "azimute"
+                        )
+                    )
+
+                except Exception:
+                    az = None
+
+            # =========================================================
+            # 🔥 FALLBACK GEOMÉTRICO
+            # =========================================================
+            if dist is None:
+
+                try:
+
+                    dist = float(
+                        seg.get("distancia")
+                        or 0
+                    )
+
+                except Exception:
+                    dist = 0.0
+
+            if az is None:
+
+                try:
+
+                    az = float(
+                        seg.get("azimute_graus")
+                        or 0
+                    )
+
+                except Exception:
+                    az = 0.0
+
+            texto_dist = (
+                f"{CroquiService._format_num(dist, 2)} m"
+            )
+
             texto_az = f"{az:.1f}°"
 
             # =========================================================
             # 🔥 TAMANHO DINÂMICO DO BOX
             # =========================================================
-            largura = 92
-            altura = 34
+            largura = 108 if confrontante_info else 92
+            altura = 56 if confrontante_info else 48
 
             # =========================================================
             # 🔥 AJUSTE DE BORDAS DO CANVAS
@@ -498,10 +944,10 @@ class CroquiService:
 
                 <text
                     x="{px:.2f}"
-                    y="{py - 4:.2f}"
+                    y="{py - 10:.2f}"
                     text-anchor="middle"
                     font-size="10.5"
-                    font-family="Arial"
+                    font-family="Helvetica, Arial, sans-serif"
                     font-weight="bold"
                     fill="#0F172A"
                 >
@@ -510,14 +956,47 @@ class CroquiService:
 
                 <text
                     x="{px:.2f}"
-                    y="{py + 10:.2f}"
+                    y="{py + 4:.2f}"
                     text-anchor="middle"
                     font-size="9"
-                    font-family="Arial"
+                    font-family="Helvetica, Arial, sans-serif"
                     fill="#475569"
                 >
                     {texto_az}
                 </text>
+
+                {
+                    f'''
+                    <text
+                        x="{px:.2f}"
+                        y="{py + 18:.2f}"
+                        text-anchor="middle"
+                        font-size="8.2"
+                        font-family="Helvetica, Arial, sans-serif"
+                        font-weight="bold"
+                        fill="#1D4ED8"
+                    >
+                        {CroquiService._escape_xml(
+                            str(
+                                confrontante_info.get(
+                                    "texto_resumo"
+                                )
+                                or confrontante_info.get(
+                                    "nome"
+                                )
+                                or confrontante_info.get(
+                                    "identificacao"
+                                )
+                                or ""
+
+                            )[:28]
+                        )}
+                    </text>
+                    '''
+                    if confrontante_info
+                    else ""
+                }
+
             </g>
                 '''
             )
@@ -607,7 +1086,7 @@ class CroquiService:
                     x="{px:.2f}"
                     y="{py:.2f}"
                     font-size="11.5"
-                    font-family="Arial"
+                    font-family="Helvetica, Arial, sans-serif"
                     font-weight="bold"
                     fill="#0F172A"
                     text-anchor="middle"
@@ -843,7 +1322,7 @@ class CroquiService:
                 <text
                     text-anchor="middle"
                     font-size="10"
-                    font-family="Arial"
+                    font-family="Helvetica, Arial, sans-serif"
                     font-weight="bold"
                     fill="#7C2D12"
                     paint-order="stroke"
@@ -1109,6 +1588,14 @@ class CroquiService:
         segmentos_svg = CroquiService._render_segment_labels(
             norm_visual,
             geojson_normalizado,
+            confrontantes=confrontantes or [],
+        )
+
+        quadro_confrontantes = (
+            CroquiService._render_quadro_confrontantes(
+                size=size,
+                confrontantes=confrontantes or [],
+            )
         )
 
         vertices_svg = CroquiService._render_vertices(norm_visual)
@@ -1140,7 +1627,7 @@ class CroquiService:
       x="{draw_bounds['left'] + 28:.2f}"
       y="{draw_bounds['top'] + 36:.2f}"
       font-size="11"
-      font-family="Arial"
+      font-family="Helvetica, Arial, sans-serif"
       font-weight="bold"
       fill="#92400E"
     >
@@ -1194,6 +1681,8 @@ class CroquiService:
   {north}
 
   {quadro_tecnico}
+
+  {quadro_confrontantes}
 
   {legenda}
 

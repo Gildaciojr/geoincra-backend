@@ -39,10 +39,14 @@ class ConfrontanteOutputAdapter:
 
             # 🔥 fallback inteligente REAL (nível técnico)
             texto_base = (
-                nome
+                descricao
+                or nome
                 or identificacao
-                or descricao
-                or (f"MATRÍCULA {matricula}" if matricula else None)
+                or (
+                    f"MATRÍCULA {matricula}"
+                    if matricula
+                    else None
+                )
                 or "CONFRONTANTE NÃO IDENTIFICADO"
             )
 
@@ -54,12 +58,23 @@ class ConfrontanteOutputAdapter:
                 "lado": c.lado_label,
                 "lado_normalizado": c.direcao_normalizada,
                 "direcao": c.direcao_normalizada,
+                "azimute": getattr(
+                    c,
+                    "azimute",
+                    None,
+                ),
+
+                "distancia_metros": getattr(
+                    c,
+                    "distancia_metros",
+                    None,
+                ),
 
                 # =====================================================
                 # IDENTIFICAÇÃO
                 # =====================================================
                 "nome": nome,
-                "descricao": descricao or texto_base,
+                "descricao": descricao,
                 "identificacao": identificacao,
                 "matricula": matricula,
 
@@ -73,6 +88,17 @@ class ConfrontanteOutputAdapter:
                 # TIPO
                 # =====================================================
                 "tipo": getattr(c, "tipo", None),
+                "observacoes": (
+                    ConfrontanteOutputAdapter
+                    ._safe_text(
+                        getattr(
+                            c,
+                            "observacoes",
+                            None,
+                        )
+                    )
+                ),
+
 
                 # =====================================================
                 # TEXTO FINAL CONSOLIDADO

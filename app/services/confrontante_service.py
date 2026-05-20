@@ -918,31 +918,72 @@ class ConfrontanteService:
 
             segmento = ConfrontanteService._selecionar_segmento(
                 segmentos_disponiveis=segmentos,
-                direcao_normalizada=item.get("direcao_normalizada"),
+                direcao_normalizada=item.get(
+                    "direcao_normalizada"
+                ),
                 usados=usados,
             )
 
             ordem_segmento = None
             lado_label = None
-            direcao_normalizada = item.get("direcao_normalizada")
+
+            distancia_metros = None
+            azimute = None
+
+            direcao_normalizada = item.get(
+                "direcao_normalizada"
+            )
 
             if segmento:
-                ordem_segmento = segmento["ordem_segmento"]
-                lado_label = segmento["lado_label"]
+
+                ordem_segmento = (
+                    segmento["ordem_segmento"]
+                )
+
+                lado_label = (
+                    segmento["lado_label"]
+                )
+
+                distancia_metros = float(
+                    segmento.get(
+                        "comprimento"
+                    )
+                    or 0
+                )
+
+                azimute = item.get(
+                    "azimute"
+                )
 
                 if not direcao_normalizada:
-                    direcao_normalizada = segmento["direcao_normalizada"]
+                    direcao_normalizada = (
+                        segmento[
+                            "direcao_normalizada"
+                        ]
+                    )
 
-                usados.add(segmento["ordem_segmento"])
+                usados.add(
+                    segmento["ordem_segmento"]
+                )
 
             if not direcao_normalizada:
                 direcao_normalizada = "N"
 
-            nome_confrontante = item.get("nome_confrontante")
-            if nome_confrontante:
-                nome_confrontante = nome_confrontante.strip().upper()
+            nome_confrontante = item.get(
+                "nome_confrontante"
+            )
 
-            observacoes_texto = _enriquecer_observacoes(item)
+            if nome_confrontante:
+                nome_confrontante = (
+                    nome_confrontante
+                    .strip()
+                    .upper()
+                )
+            
+            observacoes_texto = (
+                _enriquecer_observacoes(item)
+            )
+
 
             existente = _localizar_existente(
                 item=item,
@@ -978,6 +1019,39 @@ class ConfrontanteService:
                     item.get("descricao"),
                 )
 
+                existente.tipo = _merge_texto(
+                    getattr(
+                        existente,
+                        "tipo",
+                        None,
+                    ),
+                    item.get("tipo"),
+                )
+
+                existente.lote = _merge_texto(
+                    getattr(
+                        existente,
+                        "lote",
+                        None,
+                    ),
+                    item.get("lote"),
+                )
+
+                existente.gleba = _merge_texto(
+                    getattr(
+                        existente,
+                        "gleba",
+                        None,
+                    ),
+                    item.get("gleba"),
+                )
+
+                existente.distancia_metros = (
+                    distancia_metros
+                )
+
+                existente.azimute = azimute
+
                 existente.observacoes = observacoes_texto
 
                 persistidos.append(existente)
@@ -994,7 +1068,14 @@ class ConfrontanteService:
                 matricula_confrontante=item.get("matricula_confrontante"),
                 identificacao_imovel_confrontante=item.get("identificacao_imovel_confrontante"),
                 descricao=item.get("descricao"),
+                tipo=item.get("tipo"),
+                lote=item.get("lote"),
+                gleba=item.get("gleba"),
                 observacoes=observacoes_texto,
+                distancia_metros=(
+                    distancia_metros
+                ),
+                azimute=azimute,
             )
 
             db.add(novo)

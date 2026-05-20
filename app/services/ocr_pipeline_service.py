@@ -18,11 +18,13 @@ from app.models.document import Document
 from app.models.geometria import Geometria
 from app.models.imovel import Imovel
 from app.models.matricula import Matricula
+from app.models.confrontante import Confrontante
 from app.schemas.documento_tecnico import DocumentoTecnicoCreate
 from app.schemas.ocr_result_structured import OCRStructured
 from app.schemas.sigef_export import SigefCsvExportRequest
 from app.services.cad_export_service import CadExportService
 from app.services.croqui_service import CroquiService
+from app.services.confrontante_service import ConfrontanteService
 from app.services.geometria_service import GeometriaService
 from app.services.matricula_analysis_service import MatriculaAnalysisService
 from app.services.memorial_parser_service import MemorialParserService
@@ -2258,16 +2260,104 @@ class OcrPipelineService:
                     confrontantes_normalizados
                 ),
 
-                "payload_original": (
-                    OcrPipelineService._json_safe(
-                        dados
-                    )
-                ),
-            }
+                "payload_original": {
+                    "qualidade": (
+                        OcrPipelineService._json_safe(
+                            dados.get("qualidade")
+                        )
+                    ),
 
+                    "categoria": (
+                        prompt_categoria
+                    ),
+                },
+            }
+                    
             total_confrontantes = len(
                 confrontantes_normalizados
             )
+
+            # =====================================================
+            # 🔥 PERSISTÊNCIA DOS CONFRONTANTES
+            # =====================================================
+            geometria = (
+                db.query(Geometria)
+                .filter(
+                    Geometria.imovel_id == imovel.id
+                )
+                .order_by(
+                    Geometria.id.desc()
+                )
+                .first()
+            )
+
+            confrontantes_db = []
+            if (
+                geometria
+                and confrontantes_normalizados
+            ):
+                
+                confrontantes_db = (
+                    ConfrontanteService
+                    .processar_confrontantes(
+                        db=db,
+                        imovel=imovel,
+                        geometria=geometria,
+                        confrontantes_ocr=(
+                            confrontantes_normalizados
+                        ),
+                    )
+                )
+
+                print(
+                    "✅ Confrontantes persistidos "
+                    f"via pipeline croqui: "
+                    f"{len(confrontantes_db)}"
+                )
+
+            # =====================================================
+            # 🔥 VINCULAÇÃO ESPACIAL
+            # =====================================================
+            if (
+                geometria
+                and geometria.segmentos
+            ):
+                segmentos_ordenados = sorted(
+                    geometria.segmentos,
+                    key=lambda s: s.indice,
+                )
+
+                for idx, confrontante_db in enumerate(
+                    confrontantes_db
+                ):
+                    
+                    if idx >= len(segmentos_ordenados):
+                        break
+
+                    segmento = segmentos_ordenados[idx]
+
+                    confrontante_db.ordem_segmento = (
+                        segmento.indice
+                    )
+
+                    confrontante_db.azimute = (
+                        segmento.azimute
+                    )
+
+                    confrontante_db.distancia_metros = (
+                        segmento.distancia
+                    )
+
+                db.commit()
+
+                for confrontante_db in confrontantes_db:
+                    db.refresh(confrontante_db)
+
+                print(
+                    "✅ Confrontantes vinculados "
+                    "espacialmente no pipeline croqui."
+                )
+
 
             lados_unicos = sorted(
                 list(set(lados_detectados))
@@ -2276,27 +2366,18 @@ class OcrPipelineService:
             # =====================================================
             # 🔥 EXPORTAÇÃO JSON
             # =====================================================
-            json_bytes = json.dumps(
-                payload_json,
-                ensure_ascii=False,
-                indent=2,
-            ).encode("utf-8")
-
-            json_filename = (
-                f"ocr_confrontantes_"
-                f"{document_id}_"
-                f"{int(datetime.utcnow().timestamp())}.json"
-            )
-
             arquivo_json = (
                 OcrPipelineService
-                ._salvar_arquivo_pipeline(
-                    project_id=doc.project_id,
-                    folder_relative=(
-                        "2_dados_imoveis_confrontantes"
-                    ),
-                    filename=json_filename,
-                    content=json_bytes,
+                ._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="confrontantes_croqui",
+                    nome_base="confrontantes_ocr",
+                    extensao="json",
+                    conteudo=json.dumps(
+                        payload_json,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
                 )
             )
 
@@ -2398,120 +2479,16 @@ class OcrPipelineService:
                 linhas_relatorio
             )
 
-            txt_filename = (
-                f"relatorio_confrontantes_"
-                f"{document_id}_"
-                f"{int(datetime.utcnow().timestamp())}.txt"
-            )
-
             arquivo_txt = (
                 OcrPipelineService
-                ._salvar_arquivo_pipeline(
-                    project_id=doc.project_id,
-                    folder_relative=(
-                        "2_dados_imoveis_confrontantes"
-                    ),
-                    filename=txt_filename,
-                    content=relatorio_txt.encode(
-                        "utf-8"
-                    ),
+                ._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="confrontantes_croqui",
+                    nome_base="confrontantes_ocr",
+                    extensao="txt",
+                    conteudo=relatorio_txt,
                 )
             )
-
-            # =====================================================
-            # 🔥 DOCUMENTOS DO FRONTEND
-            # =====================================================
-            documento_json = (
-                OcrPipelineService
-                ._registrar_documento_pipeline(
-                    db=db,
-                    project_id=doc.project_id,
-                    doc_type=(
-                        "OCR_CONFRONTANTES_JSON"
-                    ),
-                    stored_filename=(
-                        arquivo_json[
-                            "stored_filename"
-                        ]
-                    ),
-                    original_filename=(
-                        json_filename
-                    ),
-                    file_path=(
-                        arquivo_json[
-                            "relative_path"
-                        ]
-                    ),
-                    content_type=(
-                        "application/json"
-                    ),
-                    description=(
-                        "OCR estruturado "
-                        "de confrontantes."
-                    ),
-                )
-            )
-
-            documento_txt = (
-                OcrPipelineService
-                ._registrar_documento_pipeline(
-                    db=db,
-                    project_id=doc.project_id,
-                    doc_type=(
-                        "OCR_CONFRONTANTES_RELATORIO"
-                    ),
-                    stored_filename=(
-                        arquivo_txt[
-                            "stored_filename"
-                        ]
-                    ),
-                    original_filename=(
-                        txt_filename
-                    ),
-                    file_path=(
-                        arquivo_txt[
-                            "relative_path"
-                        ]
-                    ),
-                    content_type=(
-                        "text/plain"
-                    ),
-                    description=(
-                        "Relatório textual "
-                        "de confrontantes."
-                    ),
-                )
-            )
-
-            # =====================================================
-            # 🔥 WARNING OCR
-            # =====================================================
-            if score_ocr < 60:
-
-                warnings = result.get("warnings")
-
-                if not isinstance(warnings, list):
-                    warnings = []
-                    result["warnings"] = warnings
-
-                warnings.append(
-                    (
-                        "OCR com score reduzido "
-                        f"(score={score_ocr})."
-                    )
-                )
-
-            if total_confrontantes == 0:
-
-                warnings = result.get("warnings")
-
-                if not isinstance(warnings, list):
-                    warnings = []
-                    result["warnings"] = warnings
-
-                warnings.append(
-                    "Nenhum confrontante válido detectado."
-                )
 
             # =====================================================
             # 🔥 DOCUMENTO TÉCNICO
@@ -2541,9 +2518,9 @@ class OcrPipelineService:
                     ),
 
                     arquivo_path=(
-                        arquivo_json[
-                            "relative_path"
-                        ]
+                        arquivo_json.get(
+                            "arquivo_path"
+                        )
                     ),
 
                     metadata_json={
@@ -2594,61 +2571,10 @@ class OcrPipelineService:
                         ),
 
                         "arquivos_gerados": {
-                            "json": {
-                                "document_id": (
-                                    documento_json.id
-                                ),
-
-                                "stored_filename": (
-                                    arquivo_json[
-                                        "stored_filename"
-                                    ]
-                                ),
-
-                                "relative_path": (
-                                    arquivo_json[
-                                        "relative_path"
-                                    ]
-                                ),
-
-                                "content_type": (
-                                    "application/json"
-                                ),
-                            },
-
-                            "txt": {
-                                "document_id": (
-                                    documento_txt.id
-                                ),
-
-                                "stored_filename": (
-                                    arquivo_txt[
-                                        "stored_filename"
-                                    ]
-                                ),
-
-                                "relative_path": (
-                                    arquivo_txt[
-                                        "relative_path"
-                                    ]
-                                ),
-
-                                "content_type": (
-                                    "text/plain"
-                                ),
-                            },
-                        },
-
-                        "frontend_outputs": {
-                            "json_document_id": (
-                                documento_json.id
-                            ),
-
-                            "txt_document_id": (
-                                documento_txt.id
-                            ),
-                        },
-
+                            "json": arquivo_json,
+                            "txt": arquivo_txt,
+                       },
+                            
                         "persistido_em": (
                             datetime.utcnow().isoformat()
                         ),
@@ -2719,22 +2645,26 @@ class OcrPipelineService:
 
                     "arquivo_json_path": (
                         arquivo_json.get(
-                            "relative_path"
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_json_url": (
+                        arquivo_json.get(
+                            "arquivo_url"
                         )
                     ),
 
                     "arquivo_txt_path": (
                         arquivo_txt.get(
-                            "relative_path"
+                            "arquivo_path"
                         )
                     ),
 
-                    "documento_json_id": (
-                        documento_json.id
-                    ),
-
-                    "documento_txt_id": (
-                        documento_txt.id
+                    "arquivo_txt_url": (
+                        arquivo_txt.get(
+                            "arquivo_url"
+                        )
                     ),
 
                     "arquivos_gerados": {
@@ -2813,16 +2743,6 @@ class OcrPipelineService:
                     "txt": arquivo_txt,
                 },
 
-                "frontend_documents": {
-                    "json_document_id": (
-                        documento_json.id
-                    ),
-
-                    "txt_document_id": (
-                        documento_txt.id
-                    ),
-                },
-
                 "pipeline_processado": True,
             }
 
@@ -2856,25 +2776,15 @@ class OcrPipelineService:
 
                 "arquivo_json_gerado": bool(
                     arquivo_json.get(
-                        "relative_path"
+                        "arquivo_path"
                     )
                 ),
 
                 "arquivo_txt_gerado": bool(
                     arquivo_txt.get(
-                        "relative_path"
+                        "arquivo_path"
                     )
                 ),
-
-                "documentos_frontend_gerados": {
-                    "json": (
-                        documento_json.id
-                    ),
-
-                    "txt": (
-                        documento_txt.id
-                    ),
-                },
 
                 "pipeline_processado": True,
             }
@@ -2929,22 +2839,14 @@ class OcrPipelineService:
 
                 "arquivo_json_gerado": bool(
                     arquivo_json.get(
-                        "relative_path"
+                        "arquivo_path"
                     )
                 ),
 
                 "arquivo_txt_gerado": bool(
                     arquivo_txt.get(
-                        "relative_path"
+                        "arquivo_path"
                     )
-                ),
-
-                "documento_json_id": (
-                    documento_json.id
-                ),
-
-                "documento_txt_id": (
-                    documento_txt.id
                 ),
 
                 "pipeline_processado": True,
@@ -3535,65 +3437,157 @@ class OcrPipelineService:
                     )
 
             if confrontantes_processados:
-                confrontantes = ConfrontanteService.processar_confrontantes(
-                    db=db,
-                    imovel=imovel,
-                    geometria=geometria,
-                    confrontantes_ocr=confrontantes_processados,
+
+                confrontantes = (
+                    ConfrontanteService.processar_confrontantes(
+                        db=db,
+                        imovel=imovel,
+                        geometria=geometria,
+                        confrontantes_ocr=confrontantes_processados,
+                    )
                 )
 
-                print(f"✅ Confrontantes processados: {len(confrontantes)}")
+                print(
+                    f"✅ Confrontantes processados: "
+                    f"{len(confrontantes)}"
+                )
 
                 try:
+
                     confrontantes_db = (
                         db.query(Confrontante)
-                        .filter(Confrontante.imovel_id == imovel.id)
+                        .filter(
+                            Confrontante.imovel_id == imovel.id
+                        )
                         .all()
                     ) or []
 
-                    print(f"📦 Confrontantes carregados do banco: {len(confrontantes_db)}")
+                    print(
+                        f"📦 Confrontantes carregados "
+                        f"do banco: "
+                        f"{len(confrontantes_db)}"
+                    )
+
+                    # =========================================================
+                    # 🔥 VINCULAÇÃO ESPACIAL DOS CONFRONTANTES
+                    # =========================================================
+                    if (
+                        geometria
+                        and geometria.segmentos
+                    ):
+
+                        segmentos_ordenados = sorted(
+                            geometria.segmentos,
+                            key=lambda s: s.indice,
+                        )
+
+                        for idx, confrontante_db in enumerate(
+                            confrontantes_db
+                        ):
+
+                            if idx >= len(
+                                segmentos_ordenados
+                            ):
+                                break
+
+                            segmento = (
+                                segmentos_ordenados[idx]
+                            )
+
+                            confrontante_db.ordem_segmento = (
+                                segmento.indice
+                            )
+
+                            confrontante_db.azimute = (
+                                segmento.azimute
+                            )
+
+                            confrontante_db.distancia_metros = (
+                                segmento.distancia
+                            )
+
+                        db.commit()
+
+                        for confrontante_db in confrontantes_db:
+                            db.refresh(confrontante_db)
+
+                        print(
+                            "✅ Confrontantes vinculados "
+                            "aos segmentos geométricos."
+                        )
 
                 except Exception as exc_db:
+
                     confrontantes_db = []
-                    print(f"⚠️ Falha ao carregar confrontantes do banco: {str(exc_db)}")
+
+                    print(
+                        "⚠️ Falha ao carregar "
+                        "confrontantes do banco: "
+                        f"{str(exc_db)}"
+                    )
 
                 result["steps"]["confrontantes"] = {
                     "success": True,
-                    "total": len(confrontantes),
-                    "normalizados": len(confrontantes_processados),
-                    "persistidos": len(confrontantes_db),
-                    "fonte_geom": fonte_geom,
+
+                    "total": (
+                        len(confrontantes)
+                    ),
+
+                    "normalizados": (
+                        len(
+                            confrontantes_processados
+                        )
+                    ),
+
+                    "persistidos": (
+                        len(confrontantes_db)
+                    ),
+
+                    "segmentos_vinculados": (
+                        len(
+                            [
+                                c for c in confrontantes_db
+                                if getattr(
+                                    c,
+                                    "ordem_segmento",
+                                    None,
+                                ) is not None
+                            ]
+                        )
+                    ),
+
+                    "fonte_geom": (
+                        fonte_geom
+                    ),
                 }
 
             else:
+
                 confrontantes_db = []
 
                 result["steps"]["confrontantes"] = {
                     "success": False,
+
                     "total": 0,
+
                     "normalizados": 0,
+
                     "persistidos": 0,
-                    "message": "Nenhum confrontante válido após normalização.",
-                    "fonte_geom": fonte_geom,
+
+                    "message": (
+                        "Nenhum confrontante válido "
+                        "após normalização."
+                    ),
+
+                    "fonte_geom": (
+                        fonte_geom
+                    ),
                 }
 
-                print("⚠️ Nenhum confrontante válido após normalização")
-
-        except Exception as exc:
-            OcrPipelineService._rollback_safely(db)
-
-            confrontantes_db = []
-
-            result["steps"]["confrontantes"] = {
-                "success": False,
-                "message": f"Falha ao processar confrontantes: {str(exc)}",
-                "fonte_geom": fonte_geom,
-            }
-
-            result["errors"].append(f"Confrontantes: {str(exc)}")
-
-            print(f"❌ Falha confrontantes: {str(exc)}")
-
+                print(
+                    "⚠️ Nenhum confrontante "
+                    "válido após normalização"
+                )
         # ================= MEMORIAL =================
         if geometria:
             try:
