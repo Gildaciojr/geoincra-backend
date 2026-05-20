@@ -1636,7 +1636,7 @@ class CroquiService:
   </g>
 """
 
-    svg = f"""<?xml version="1.0" encoding="UTF-8"?>
+        svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
 
   <rect x="0" y="0" width="{size}" height="{size}" fill="#FFFFFF"/>
@@ -1692,4 +1692,5 @@ class CroquiService:
 
 </svg>
 """
+
         return svg
