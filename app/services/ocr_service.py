@@ -29,11 +29,59 @@ class OcrService:
     # CATEGORIAS OCR SUPORTADAS
     # =========================================================
     CATEGORIAS_SUPORTADAS = {
+
+        # =====================================================
+        # MATRÍCULA
+        # =====================================================
         "MATRICULA",
+        "MATRICULA_IMOVEL",
+        "ANALISE_MATRICULA",
+        "ANALISE_MATRICULA_COMPLETA",
+        "ANALISE_DE_MATRICULA_DE_IMOVEL",
+        "ANALISE_TECNICA_COMPLETA_DE_MATRICULA",
+
+        # =====================================================
+        # DOCUMENTO PESSOAL
+        # =====================================================
         "DOCUMENTO_PESSOAL",
+        "DOCUMENTOS_PESSOAIS",
+        "EXTRACAO_DOCUMENTOS_PESSOAIS",
+        "EXTRACAO_DE_DOCUMENTOS_PESSOAIS",
+        "RG_CPF_CNH",
+
+        # =====================================================
+        # FICHA SIG
+        # =====================================================
         "FICHA_CADASTRAL_SIG",
+        "FICHA_IMOVEL_SIG",
+        "FICHA_CADASTRAL_DE_IMOVEL_SIG",
+        "FICHA_CADASTRAL_IMOVEL_SIG",
+        "SIG",
+        "CADASTRO_SIG",
+        "CADASTRO_IMOVEL_SIG"
+
+        # =====================================================
+        # CONFRONTANTES
+        # =====================================================
         "CONFRONTANTES_CROQUI",
+        "INSERCAO_CONFRONTANTES_CROQUI",
+        "INSERCAO_DE_CONFRONTANTES_NO_CROQUI",
+        "INSERIR_CONFRONTANTES_NO_CROQUI",
+        "CROQUI_CONFRONTANTES",
+
+        # =====================================================
+        # DADOS BRUTOS
+        # =====================================================
         "DADOS_BRUTOS",
+        "DADOS_BRUTOS_COMPLETO",
+        "DADOS_BRUTOS_DE_DOCUMENTOS",
+        "DADOS_BRUTOS_DO_DOCUMENTO",
+        "EXTRACAO_DADOS_BRUTOS",
+        "EXTRACAO_BRUTA",
+
+        # =====================================================
+        # MEMORIAL DESCRITIVO
+        # =====================================================
         "MEMORIAL_DESCRITIVO",
     }
 

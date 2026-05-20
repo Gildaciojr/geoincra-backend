@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 from app.models.automation_job import AutomationJob
 from app.models.ocr_prompt import OcrPrompt
 from app.models.ocr_result import OcrResult
-
+from app.services.ocr_pipeline_service import (
+    OcrPipelineService,
+)
 
 # =========================================================
 # PIPELINES OCR
@@ -59,20 +61,76 @@ def _resolver_pipeline(
     categoria: str,
 ) -> Dict[str, Any]:
 
-    categoria_upper = (
-        str(categoria or "")
-        .strip()
-        .upper()
+    categoria_normalizada = (
+        OcrPipelineService._normalizar_categoria(
+            categoria
+        )
     )
 
-    return PIPELINES_OCR.get(
-        categoria_upper,
-        {
-            "parser": "GenericOCRParser",
-            "normalizador": "normalizar_documento_generico",
-            "prioridade": "LOW",
-        },
-    )
+    categorias_matricula = {
+        "matricula",
+        "matricula_imovel",
+        "analise_matricula",
+        "analise_matricula_completa",
+        "analise_de_matricula_de_imovel",
+        "analise_tecnica_completa_de_matricula",
+    }
+
+    categorias_documentos = {
+        "documento_pessoal",
+        "documentos_pessoais",
+        "extracao_documentos_pessoais",
+        "extracao_de_documentos_pessoais",
+        "rg_cpf_cnh",
+    }
+
+    categorias_sig = {
+        "ficha_cadastral_sig",
+        "ficha_imovel_sig",
+        "ficha_cadastral_de_imovel_sig",
+        "ficha_cadastral_imovel_sig",
+        "sig",
+        "cadastro_sig",
+        "cadastro_imovel_sig",
+    }
+
+    categorias_confrontantes = {
+        "confrontantes_croqui",
+        "insercao_confrontantes_croqui",
+        "insercao_de_confrontantes_no_croqui",
+        "inserir_confrontantes_no_croqui",
+        "croqui_confrontantes",
+    }
+
+    categorias_dados_brutos = {
+        "dados_brutos",
+        "dados_brutos_completo",
+        "dados_brutos_de_documentos",
+        "dados_brutos_do_documento",
+        "extracao_dados_brutos",
+        "extracao_bruta",
+    }
+
+    if categoria_normalizada in categorias_matricula:
+        return PIPELINES_OCR["MATRICULA"]
+
+    if categoria_normalizada in categorias_documentos:
+        return PIPELINES_OCR["DOCUMENTO_PESSOAL"]
+
+    if categoria_normalizada in categorias_sig:
+        return PIPELINES_OCR["FICHA_CADASTRAL_SIG"]
+
+    if categoria_normalizada in categorias_confrontantes:
+        return PIPELINES_OCR["CONFRONTANTES_CROQUI"]
+
+    if categoria_normalizada in categorias_dados_brutos:
+        return PIPELINES_OCR["DADOS_BRUTOS"]
+
+    return {
+        "parser": "GenericOCRParser",
+        "normalizador": "normalizar_documento_generico",
+        "prioridade": "LOW",
+    }
 
 
 # =========================================================
@@ -121,9 +179,9 @@ def create_ocr_job(
         )
 
     categoria = (
-        str(prompt.categoria or "")
-        .strip()
-        .upper()
+        OcrPipelineService._normalizar_categoria(
+            prompt.categoria or ""
+        )
     )
 
     # =====================================================
