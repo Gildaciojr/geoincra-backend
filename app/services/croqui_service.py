@@ -924,6 +924,36 @@ class CroquiService:
                 />
             '''
 
+            # =========================================================
+            # 🔥 BLOCO CONFRONTANTE (SEPARADO DA F-STRING)
+            # =========================================================
+            confrontante_texto = ""
+
+            if confrontante_info:
+
+                confrontante_nome = CroquiService._escape_xml(
+                    str(
+                        confrontante_info.get("texto_resumo")
+                        or confrontante_info.get("nome")
+                        or confrontante_info.get("identificacao")
+                        or ""
+                    )[:28]
+                )
+
+                confrontante_texto = f'''
+                    <text
+                        x="{px:.2f}"
+                        y="{py + 18:.2f}"
+                        text-anchor="middle"
+                        font-size="8.2"
+                        font-family="Helvetica, Arial, sans-serif"
+                        font-weight="bold"
+                        fill="#1D4ED8"
+                    >
+                        {confrontante_nome}
+                    </text>
+                '''
+
             labels.append(
                 f'''
             <g>
@@ -965,37 +995,7 @@ class CroquiService:
                     {texto_az}
                 </text>
 
-                {
-                    f'''
-                    <text
-                        x="{px:.2f}"
-                        y="{py + 18:.2f}"
-                        text-anchor="middle"
-                        font-size="8.2"
-                        font-family="Helvetica, Arial, sans-serif"
-                        font-weight="bold"
-                        fill="#1D4ED8"
-                    >
-                        {CroquiService._escape_xml(
-                            str(
-                                confrontante_info.get(
-                                    "texto_resumo"
-                                )
-                                or confrontante_info.get(
-                                    "nome"
-                                )
-                                or confrontante_info.get(
-                                    "identificacao"
-                                )
-                                or ""
-
-                            )[:28]
-                        )}
-                    </text>
-                    '''
-                    if confrontante_info
-                    else ""
-                }
+                {confrontante_texto}
 
             </g>
                 '''
@@ -1636,7 +1636,7 @@ class CroquiService:
   </g>
 """
 
-        svg = f"""<?xml version="1.0" encoding="UTF-8"?>
+    svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
 
   <rect x="0" y="0" width="{size}" height="{size}" fill="#FFFFFF"/>
