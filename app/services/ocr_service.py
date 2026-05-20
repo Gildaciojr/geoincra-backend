@@ -267,27 +267,33 @@ class OcrService:
             # =================================================
             # FLAGS
             # =================================================
-            possui_geojson=False,
+            possui_geojson=0,
 
-            possui_memorial=False,
+            possui_memorial=0,
 
-            possui_confrontantes=False,
+            possui_confrontantes=0,
 
-            possui_historico=False,
+            possui_historico=0,
 
             possui_documentos_pessoais=(
-                categoria_prompt
+                1
+                if categoria_prompt
                 == "DOCUMENTO_PESSOAL"
+                else 0
             ),
 
             possui_dados_sigef=(
-                categoria_prompt
+                1
+                if categoria_prompt
                 == "FICHA_CADASTRAL_SIG"
+                else 0
             ),
 
             possui_croqui=(
-                categoria_prompt
+                1
+                if categoria_prompt
                 == "CONFRONTANTES_CROQUI"
+                else 0
             ),
 
             # =================================================
