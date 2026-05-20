@@ -171,7 +171,7 @@ class DocumentoTecnico(Base):
     imovel = relationship(
         "Imovel",
         lazy="joined",
-        backref="documentos_tecnicos",
+        back_populates="documentos_tecnicos",
     )
 
     documento_origem = relationship(
