@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -76,21 +77,20 @@ class Geometria(Base):
     perimetro_m = Column(Float, nullable=True)
 
     reconstruido_por_ocr = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     modo_recuperacao = Column(
-        Integer,
-        nullable=False,
-        default=0,
+        String(120),
+        nullable=True,
     )
 
     possui_georreferenciamento_real = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=1,
+        default=True,
     )
 
     nome = Column(String(120), nullable=True)

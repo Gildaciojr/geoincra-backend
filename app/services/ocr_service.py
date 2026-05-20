@@ -58,7 +58,7 @@ class OcrService:
         "FICHA_CADASTRAL_IMOVEL_SIG",
         "SIG",
         "CADASTRO_SIG",
-        "CADASTRO_IMOVEL_SIG"
+        "CADASTRO_IMOVEL_SIG",
 
         # =====================================================
         # CONFRONTANTES
