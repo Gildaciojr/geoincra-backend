@@ -3588,6 +3588,35 @@ class OcrPipelineService:
                     "⚠️ Nenhum confrontante "
                     "válido após normalização"
                 )
+
+        except Exception as exc:
+
+            OcrPipelineService._rollback_safely(db)
+
+            confrontantes_db = []
+
+            result["steps"]["confrontantes"] = {
+                "success": False,
+
+                "message": (
+                    "Falha no processamento "
+                    f"de confrontantes: {str(exc)}"
+                ),
+
+                "fonte_geom": (
+                    fonte_geom
+                ),
+            }
+
+            result["errors"].append(
+                f"Confrontantes: {str(exc)}"
+            )
+
+            print(
+                "❌ Falha no processamento "
+                f"de confrontantes: {str(exc)}"
+            )
+
         # ================= MEMORIAL =================
         if geometria:
             try:
