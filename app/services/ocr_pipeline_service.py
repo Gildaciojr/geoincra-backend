@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import logging
 from datetime import datetime
 from math import cos, radians, sin, sqrt
 from typing import Any, Optional
@@ -29,6 +30,8 @@ from app.services.memorial_service import MemorialService
 from app.services.ocr_normalizer import normalizar_dados_ocr
 from app.services.matricula_pdf_service import MatriculaPdfService
 from app.services.matricula_ocr_processor_service import MatriculaOcrProcessorService
+
+logger = logging.getLogger(__name__)
 
 
 class OcrPipelineService:
@@ -58,6 +61,77 @@ class OcrPipelineService:
         if not path_value:
             return None
         return f"{base_url}/{path_value.replace('app/', '')}"
+    
+    @staticmethod
+    def _salvar_arquivo_pipeline_ocr(
+        imovel_id: int,
+        pipeline: str,
+        nome_base: str,
+        extensao: str,
+        conteudo: str,
+    ) -> dict[str, str]:
+
+        if not imovel_id:
+            raise ValueError("imovel_id inválido para salvar arquivo OCR.")
+
+        if not conteudo:
+            raise ValueError("Conteúdo vazio para salvar arquivo OCR.")
+
+        pipeline_slug = (
+            str(pipeline or "ocr")
+            .strip()
+            .lower()
+            .replace(" ", "_")
+        )
+
+        nome_slug = (
+            str(nome_base or "documento")
+            .strip()
+            .lower()
+            .replace(" ", "_")
+        )
+
+        extensao_limpa = (
+            str(extensao or "txt")
+            .strip()
+            .lower()
+            .lstrip(".")
+        )
+
+        ts = int(datetime.utcnow().timestamp())
+
+        folder = (
+            f"app/uploads/imoveis/"
+            f"{imovel_id}/ocr/{pipeline_slug}"
+        )
+
+        os.makedirs(folder, exist_ok=True)
+
+        filename = f"{nome_slug}_{ts}.{extensao_limpa}"
+
+        path = f"{folder}/{filename}"
+
+        with open(path, "w", encoding="utf-8") as arquivo:
+            arquivo.write(conteudo)
+
+        return {
+            "arquivo_path": path,
+            "arquivo_url": OcrPipelineService._build_file_url(
+                "https://geoincra.escriturafacil.com",
+                path,
+            ),
+        }
+
+    @staticmethod
+    def _formatar_json_legivel(
+        dados: object,
+    ) -> str:
+
+        return json.dumps(
+            OcrPipelineService._json_safe(dados),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     @staticmethod
     def executar_pipeline(
@@ -65,13 +139,14 @@ class OcrPipelineService:
         document_id: int,
         ocr_result_id: int | None,
         prompt_categoria: str,
-        dados_extraidos: dict[str, Any],
-    ) -> dict[str, Any]:
-        result: dict[str, Any] = {
+        dados_extraidos: dict[str, object],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
             "success": False,
             "document_id": document_id,
             "ocr_result_id": ocr_result_id,
             "categoria": prompt_categoria,
+            "pipeline": None,
             "steps": {},
             "errors": [],
         }
@@ -81,24 +156,16 @@ class OcrPipelineService:
             return result
 
         categoria = OcrPipelineService._normalizar_categoria(prompt_categoria)
+        pipeline = OcrPipelineService._resolver_pipeline_por_categoria(categoria)
 
-        categorias_matricula = [
-            "matricula_imovel",
-            "analise_matricula_completa",
-            "analise_matricula",
-            "analise de matricula de imovel",
-            "analise tecnica completa de matricula",
-            "análise de matrícula de imóvel",
-            "análise técnica completa de matrícula",
-        ]
+        if not pipeline:
+            result["errors"].append(
+                f"Pipeline sem tratamento para categoria: {prompt_categoria}"
+            )
+            return result
 
-        categorias_matricula_normalizadas = [
-            OcrPipelineService._normalizar_categoria(item)
-            for item in categorias_matricula
-        ]
-
-        if categoria in categorias_matricula_normalizadas:
-            dados_normalizados: dict[str, Any] = normalizar_dados_ocr(dados_extraidos)
+        if pipeline == "MATRICULA_COMPLETA":
+            dados_normalizados = normalizar_dados_ocr(dados_extraidos)
 
             try:
                 OCRStructured(**dados_normalizados)
@@ -108,6 +175,7 @@ class OcrPipelineService:
                     "document_id": document_id,
                     "ocr_result_id": ocr_result_id,
                     "categoria": prompt_categoria,
+                    "pipeline": pipeline,
                     "steps": {},
                     "errors": [f"OCR inválido estruturalmente: {str(exc)}"],
                 }
@@ -119,18 +187,2830 @@ class OcrPipelineService:
                 dados=dados_normalizados,
             )
 
+        if pipeline == "DADOS_BRUTOS_COMPLETO":
+            return OcrPipelineService._pipeline_dados_brutos(
+                db=db,
+                document_id=document_id,
+                ocr_result_id=ocr_result_id,
+                prompt_categoria=prompt_categoria,
+                dados=dados_extraidos,
+            )
+
+        if pipeline == "DOCUMENTOS_PESSOAIS":
+            return OcrPipelineService._pipeline_documentos_pessoais(
+                db=db,
+                document_id=document_id,
+                ocr_result_id=ocr_result_id,
+                prompt_categoria=prompt_categoria,
+                dados=dados_extraidos,
+            )
+
+        if pipeline == "FICHA_CADASTRAL_SIG":
+            return OcrPipelineService._pipeline_ficha_cadastral_sig(
+                db=db,
+                document_id=document_id,
+                ocr_result_id=ocr_result_id,
+                prompt_categoria=prompt_categoria,
+                dados=dados_extraidos,
+            )
+
+        if pipeline == "CONFRONTANTES_CROQUI":
+            return OcrPipelineService._pipeline_confrontantes_croqui(
+                db=db,
+                document_id=document_id,
+                ocr_result_id=ocr_result_id,
+                prompt_categoria=prompt_categoria,
+                dados=dados_extraidos,
+            )
+
         result["errors"].append(
-            f"Pipeline sem tratamento para categoria: {prompt_categoria}"
+            f"Pipeline resolvido, mas sem executor interno: {pipeline}"
         )
         return result
 
     @staticmethod
     def _normalizar_categoria(texto: str) -> str:
         mapa = str.maketrans(
-            "áàãâäéèêëíìîïóòõôöúùûüç",
-            "aaaaaeeeeiiiiooooouuuuc",
+            "áàãâäéèêëíìîïóòõôöúùûüçÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ",
+            "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC",
         )
-        return texto.lower().strip().translate(mapa)
+
+        texto_normalizado = str(texto or "").strip().translate(mapa).lower()
+        texto_normalizado = re.sub(r"[^a-z0-9]+", "_", texto_normalizado)
+        texto_normalizado = re.sub(r"_+", "_", texto_normalizado).strip("_")
+
+        return texto_normalizado
+
+    @staticmethod
+    def _resolver_pipeline_por_categoria(categoria: str) -> str | None:
+        categorias_matricula = {
+            "matricula_imovel",
+            "analise_matricula",
+            "analise_matricula_completa",
+            "analise_de_matricula_de_imovel",
+            "analise_tecnica_completa_de_matricula",
+        }
+
+        categorias_dados_brutos = {
+            "dados_brutos",
+            "dados_brutos_completo",
+            "dados_brutos_de_documentos",
+            "dados_brutos_do_documento",
+            "extracao_dados_brutos",
+            "extracao_bruta",
+        }
+
+        categorias_documentos_pessoais = {
+            "documento_pessoal",
+            "documentos_pessoais",
+            "extracao_documentos_pessoais",
+            "extracao_de_documentos_pessoais",
+            "rg_cpf_cnh",
+        }
+
+        categorias_sig = {
+            "ficha_cadastral_sig",
+            "ficha_cadastral_de_imovel_sig",
+            "ficha_cadastral_imovel_sig",
+            "sig",
+            "cadastro_sig",
+            "cadastro_imovel_sig",
+        }
+
+        categorias_confrontantes_croqui = {
+            "confrontantes_croqui",
+            "insercao_confrontantes_croqui",
+            "insercao_de_confrontantes_no_croqui",
+            "inserir_confrontantes_no_croqui",
+            "croqui_confrontantes",
+        }
+
+        if categoria in categorias_matricula:
+            return "MATRICULA_COMPLETA"
+
+        if categoria in categorias_dados_brutos:
+            return "DADOS_BRUTOS_COMPLETO"
+
+        if categoria in categorias_documentos_pessoais:
+            return "DOCUMENTOS_PESSOAIS"
+
+        if categoria in categorias_sig:
+            return "FICHA_CADASTRAL_SIG"
+
+        if categoria in categorias_confrontantes_croqui:
+            return "CONFRONTANTES_CROQUI"
+
+        return None
+    
+    @staticmethod
+    def _pipeline_dados_brutos(
+        db: Session,
+        document_id: int,
+        ocr_result_id: int | None,
+        prompt_categoria: str,
+        dados: dict[str, object],
+    ) -> dict[str, object]:
+
+        result: dict[str, object] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "pipeline": "DADOS_BRUTOS_COMPLETO",
+            "categoria": prompt_categoria,
+            "steps": {},
+            "errors": [],
+            "warnings": [],
+        }
+
+        try:
+
+            doc = (
+                db.query(Document)
+                .filter(Document.id == document_id)
+                .first()
+            )
+
+            if not doc:
+                raise Exception(
+                    "Documento não encontrado."
+                )
+
+            imovel = (
+                db.query(Imovel)
+                .filter(Imovel.project_id == doc.project_id)
+                .first()
+            )
+
+            if not imovel:
+                raise Exception(
+                    "Projeto não possui imóvel vinculado."
+                )
+
+            # =====================================================
+            # 🔥 PAYLOAD NORMALIZADO
+            # =====================================================
+            payload_json = OcrPipelineService._json_safe(
+                dados
+            )
+
+            total_campos = (
+                len(payload_json)
+                if isinstance(payload_json, dict)
+                else 0
+            )
+
+            # =====================================================
+            # 🔥 QUALIDADE OCR
+            # =====================================================
+            qualidade_ocr = (
+                dados.get("qualidade")
+                if isinstance(dados, dict)
+                else None
+            )
+
+            score_ocr = 0
+
+            confianca_geral = None
+
+            if isinstance(qualidade_ocr, dict):
+
+                try:
+                    score_ocr = int(
+                        float(
+                            qualidade_ocr.get("score")
+                            or qualidade_ocr.get("confidence")
+                            or 0
+                        )
+                    )
+                except Exception:
+                    score_ocr = 0
+
+                confianca_geral = (
+                    qualidade_ocr.get("confianca_geral")
+                    or qualidade_ocr.get("confidence")
+                )
+
+            score_ocr = max(
+                0,
+                min(
+                    100,
+                    score_ocr,
+                ),
+            )
+
+            # =====================================================
+            # 🔥 GERAÇÃO DE ARQUIVOS FÍSICOS
+            # =====================================================
+            json_legivel = (
+                OcrPipelineService._formatar_json_legivel(
+                    payload_json
+                )
+            )
+
+            txt_legivel = (
+                "RELATÓRIO OCR - DADOS BRUTOS\n"
+                "\n"
+                f"DOCUMENT ID: {document_id}\n"
+                f"OCR RESULT ID: {ocr_result_id}\n"
+                f"CATEGORIA: {prompt_categoria}\n"
+                f"TOTAL CAMPOS: {total_campos}\n"
+                f"SCORE OCR: {score_ocr}\n"
+                "\n"
+                "====================================================\n"
+                "JSON EXTRAÍDO\n"
+                "====================================================\n"
+                "\n"
+                f"{json_legivel}"
+            )
+
+            arquivo_json = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="dados_brutos",
+                    nome_base="dados_brutos",
+                    extensao="json",
+                    conteudo=json_legivel,
+                )
+            )
+
+            arquivo_txt = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="dados_brutos",
+                    nome_base="dados_brutos_relatorio",
+                    extensao="txt",
+                    conteudo=txt_legivel,
+                )
+            )
+
+            # =====================================================
+            # 🔥 DOCUMENTO TÉCNICO
+            # =====================================================
+            documento_tecnico = create_documento_tecnico(
+                db=db,
+                imovel_id=imovel.id,
+                data=DocumentoTecnicoCreate(
+                    document_group_key="OCR_DADOS_BRUTOS",
+
+                    tipo="OCR Dados Brutos",
+
+                    status_tecnico="EM_ANALISE",
+
+                    conteudo_texto=txt_legivel,
+
+                    conteudo_json=payload_json,
+
+                    arquivo_path=arquivo_json.get(
+                        "arquivo_path"
+                    ),
+
+                    metadata_json={
+                        "ocr_result_id": ocr_result_id,
+                        "document_id": document_id,
+                        "categoria": prompt_categoria,
+
+                        "pipeline": (
+                            "DADOS_BRUTOS_COMPLETO"
+                        ),
+
+                        "pipeline_version": 2,
+
+                        "total_campos_extraidos": (
+                            total_campos
+                        ),
+
+                        "qualidade_score": score_ocr,
+
+                        "confianca_geral": (
+                            confianca_geral
+                        ),
+
+                        "arquivos_gerados": {
+                            "json": arquivo_json,
+                            "txt": arquivo_txt,
+                        },
+                    },
+
+                    gerado_em=datetime.utcnow(),
+                ),
+            )
+
+            # =====================================================
+            # 🔥 RESULTADO PRINCIPAL
+            # =====================================================
+            result["success"] = True
+
+            result["steps"] = {
+                "dados_brutos": {
+                    "success": True,
+
+                    "documento_tecnico_id": (
+                        documento_tecnico.id
+                    ),
+
+                    "document_group_key": (
+                        "OCR_DADOS_BRUTOS"
+                    ),
+
+                    "tipo_documento": (
+                        "OCR Dados Brutos"
+                    ),
+
+                    "pipeline": (
+                        "DADOS_BRUTOS_COMPLETO"
+                    ),
+
+                    "pipeline_version": 2,
+
+                    "categoria_prompt": (
+                        prompt_categoria
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "imovel_id": (
+                        imovel.id
+                    ),
+
+                    "total_campos": (
+                        total_campos
+                    ),
+
+                    "qualidade_score": (
+                        score_ocr
+                    ),
+
+                    "confianca_geral": (
+                        confianca_geral
+                    ),
+
+                    "payload": (
+                        payload_json
+                    ),
+
+                    "arquivo_json_path": (
+                        arquivo_json.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_json_url": (
+                        arquivo_json.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivo_txt_path": (
+                        arquivo_txt.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_txt_url": (
+                        arquivo_txt.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivos_gerados": {
+                        "json": arquivo_json,
+                        "txt": arquivo_txt,
+                    },
+
+                    "message": (
+                        "Dados brutos processados "
+                        "com geração completa "
+                        "de arquivos físicos."
+                    ),
+                },
+            }
+
+            # =====================================================
+            # 🔥 METADATA PIPELINE
+            # =====================================================
+            result["metadata_pipeline"] = {
+                "pipeline": (
+                    "DADOS_BRUTOS_COMPLETO"
+                ),
+
+                "pipeline_version": 2,
+
+                "engine_origem": (
+                    "OCR_PIPELINE"
+                ),
+
+                "normalizador": (
+                    "normalizar_dados_ocr"
+                ),
+
+                "categoria_prompt": (
+                    prompt_categoria
+                ),
+
+                "document_group_key": (
+                    "OCR_DADOS_BRUTOS"
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "document_id": (
+                    document_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "tipo_documento": (
+                    "OCR Dados Brutos"
+                ),
+
+                "arquivos_gerados": {
+                    "json": {
+                        "path": arquivo_json.get(
+                            "arquivo_path"
+                        ),
+                        "url": arquivo_json.get(
+                            "arquivo_url"
+                        ),
+                    },
+
+                    "txt": {
+                        "path": arquivo_txt.get(
+                            "arquivo_path"
+                        ),
+                        "url": arquivo_txt.get(
+                            "arquivo_url"
+                        ),
+                    },
+                },
+            }
+
+            # =====================================================
+            # 🔥 ESTATÍSTICAS
+            # =====================================================
+            result["estatisticas"] = {
+                "total_campos_extraidos": (
+                    total_campos
+                ),
+
+                "score_ocr": (
+                    score_ocr
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivos_gerados": 2,
+
+                "possui_json": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "possui_txt": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "pipeline_processado": True,
+            }
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO PIPELINE
+            # =====================================================
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "DADOS_BRUTOS_COMPLETO"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "persistencia_ok": True,
+
+                "payload_ok": bool(
+                    payload_json
+                ),
+
+                "payload_tipo": (
+                    type(payload_json).__name__
+                ),
+
+                "qualidade_score": (
+                    score_ocr
+                ),
+
+                "qualidade_minima_ok": (
+                    score_ocr >= 60
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_json_path": (
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_path": (
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "pipeline_processado": True,
+            }
+
+            return result
+
+        except Exception as exc:
+
+            OcrPipelineService._rollback_safely(db)
+
+            error_message = str(exc)
+
+            result["success"] = False
+
+            result["errors"].append(
+                error_message
+            )
+
+            result["steps"] = {
+                "dados_brutos": {
+                    "success": False,
+
+                    "pipeline": (
+                        "DADOS_BRUTOS_COMPLETO"
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "message": (
+                        error_message
+                    ),
+                },
+            }
+
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "DADOS_BRUTOS_COMPLETO"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "persistencia_ok": False,
+
+                "pipeline_processado": False,
+
+                "error": (
+                    error_message
+                ),
+            }
+
+            return result
+
+    @staticmethod
+    def _pipeline_documentos_pessoais(
+        db: Session,
+        document_id: int,
+        ocr_result_id: int | None,
+        prompt_categoria: str,
+        dados: dict[str, object],
+    ) -> dict[str, object]:
+
+        result: dict[str, object] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "pipeline": "DOCUMENTOS_PESSOAIS",
+            "categoria": prompt_categoria,
+            "steps": {},
+            "errors": [],
+            "warnings": [],
+        }
+
+        try:
+
+            doc = (
+                db.query(Document)
+                .filter(Document.id == document_id)
+                .first()
+            )
+
+            if not doc:
+                raise Exception(
+                    "Documento não encontrado."
+                )
+
+            imovel = (
+                db.query(Imovel)
+                .filter(Imovel.project_id == doc.project_id)
+                .first()
+            )
+
+            if not imovel:
+                raise Exception(
+                    "Projeto não possui imóvel vinculado."
+                )
+
+            # =====================================================
+            # 🔥 EXTRAÇÃO PRINCIPAL
+            # =====================================================
+            pessoa = dados.get("pessoa")
+
+            documentos = dados.get("documentos")
+
+            payload_json = OcrPipelineService._json_safe(
+                dados
+            )
+
+            pessoa_json = OcrPipelineService._json_safe(
+                pessoa
+            )
+
+            documentos_json = (
+                OcrPipelineService._json_safe(
+                    documentos
+                )
+            )
+
+            total_documentos = 0
+
+            if isinstance(documentos_json, list):
+                total_documentos = len(documentos_json)
+
+            elif isinstance(documentos_json, dict):
+                total_documentos = len(
+                    documentos_json.keys()
+                )
+
+            # =====================================================
+            # 🔥 QUALIDADE OCR
+            # =====================================================
+            qualidade_ocr = (
+                dados.get("qualidade")
+                if isinstance(dados, dict)
+                else None
+            )
+
+            score_ocr = 0
+
+            confianca_geral = None
+
+            if isinstance(qualidade_ocr, dict):
+
+                try:
+                    score_ocr = int(
+                        float(
+                            qualidade_ocr.get("score")
+                            or qualidade_ocr.get("confidence")
+                            or 0
+                        )
+                    )
+                except Exception:
+                    score_ocr = 0
+
+                confianca_geral = (
+                    qualidade_ocr.get("confianca_geral")
+                    or qualidade_ocr.get("confidence")
+                )
+
+            score_ocr = max(
+                0,
+                min(
+                    100,
+                    score_ocr,
+                ),
+            )
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO
+            # =====================================================
+            possui_pessoa = bool(
+                pessoa_json
+            )
+
+            possui_documentos = bool(
+                documentos_json
+            )
+
+            # =====================================================
+            # 🔥 GERAÇÃO DE ARQUIVOS FÍSICOS
+            # =====================================================
+            json_legivel = (
+                OcrPipelineService._formatar_json_legivel(
+                    payload_json
+                )
+            )
+
+            txt_legivel = (
+                "RELATÓRIO OCR - DOCUMENTOS PESSOAIS\n"
+                "\n"
+                f"DOCUMENT ID: {document_id}\n"
+                f"OCR RESULT ID: {ocr_result_id}\n"
+                f"CATEGORIA: {prompt_categoria}\n"
+                f"TOTAL DOCUMENTOS: {total_documentos}\n"
+                f"SCORE OCR: {score_ocr}\n"
+                "\n"
+                "====================================================\n"
+                "DADOS PESSOAIS EXTRAÍDOS\n"
+                "====================================================\n"
+                "\n"
+                f"{json_legivel}"
+            )
+
+            arquivo_json = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="documentos_pessoais",
+                    nome_base="documentos_pessoais",
+                    extensao="json",
+                    conteudo=json_legivel,
+                )
+            )
+
+            arquivo_txt = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="documentos_pessoais",
+                    nome_base="documentos_pessoais_relatorio",
+                    extensao="txt",
+                    conteudo=txt_legivel,
+                )
+            )
+
+            # =====================================================
+            # 🔥 DOCUMENTO TÉCNICO
+            # =====================================================
+            documento_tecnico = create_documento_tecnico(
+                db=db,
+                imovel_id=imovel.id,
+                data=DocumentoTecnicoCreate(
+                    document_group_key=(
+                        "OCR_DOCUMENTOS_PESSOAIS"
+                    ),
+
+                    tipo="OCR Documentos Pessoais",
+
+                    status_tecnico="EM_ANALISE",
+
+                    conteudo_texto=txt_legivel,
+
+                    conteudo_json=payload_json,
+
+                    arquivo_path=arquivo_json.get(
+                        "arquivo_path"
+                    ),
+
+                    metadata_json={
+                        "ocr_result_id": (
+                            ocr_result_id
+                        ),
+
+                        "document_id": (
+                            document_id
+                        ),
+
+                        "categoria": (
+                            prompt_categoria
+                        ),
+
+                        "pipeline": (
+                            "DOCUMENTOS_PESSOAIS"
+                        ),
+
+                        "pipeline_version": 2,
+
+                        "possui_pessoa": (
+                            possui_pessoa
+                        ),
+
+                        "possui_documentos": (
+                            possui_documentos
+                        ),
+
+                        "total_documentos": (
+                            total_documentos
+                        ),
+
+                        "qualidade_score": (
+                            score_ocr
+                        ),
+
+                        "confianca_geral": (
+                            confianca_geral
+                        ),
+
+                        "arquivos_gerados": {
+                            "json": arquivo_json,
+                            "txt": arquivo_txt,
+                        },
+                    },
+
+                    gerado_em=datetime.utcnow(),
+                ),
+            )
+
+            # =====================================================
+            # 🔥 WARNING OCR
+            # =====================================================
+            if score_ocr < 60:
+
+                warnings = result.get("warnings")
+
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+
+                warnings.append(
+                    (
+                        "OCR com score reduzido "
+                        f"(score={score_ocr})."
+                    )
+                )
+
+            # =====================================================
+            # 🔥 RESULTADO PRINCIPAL
+            # =====================================================
+            result["success"] = True
+
+            result["steps"] = {
+                "documentos_pessoais": {
+                    "success": True,
+
+                    "pipeline": (
+                        "DOCUMENTOS_PESSOAIS"
+                    ),
+
+                    "pipeline_version": 2,
+
+                    "documento_tecnico_id": (
+                        documento_tecnico.id
+                    ),
+
+                    "document_group_key": (
+                        "OCR_DOCUMENTOS_PESSOAIS"
+                    ),
+
+                    "tipo_documento": (
+                        "OCR Documentos Pessoais"
+                    ),
+
+                    "imovel_id": (
+                        imovel.id
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "pessoa": (
+                        pessoa_json
+                    ),
+
+                    "documentos": (
+                        documentos_json
+                    ),
+
+                    "possui_pessoa": (
+                        possui_pessoa
+                    ),
+
+                    "possui_documentos": (
+                        possui_documentos
+                    ),
+
+                    "total_documentos": (
+                        total_documentos
+                    ),
+
+                    "payload_completo": (
+                        payload_json
+                    ),
+
+                    "arquivo_json_path": (
+                        arquivo_json.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_json_url": (
+                        arquivo_json.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivo_txt_path": (
+                        arquivo_txt.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_txt_url": (
+                        arquivo_txt.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivos_gerados": {
+                        "json": arquivo_json,
+                        "txt": arquivo_txt,
+                    },
+
+                    "qualidade_score": (
+                        score_ocr
+                    ),
+
+                    "confianca_geral": (
+                        confianca_geral
+                    ),
+
+                    "message": (
+                        "Documentos pessoais "
+                        "processados, persistidos "
+                        "e exportados com sucesso."
+                    ),
+                },
+            }
+
+            # =====================================================
+            # 🔥 METADATA PIPELINE
+            # =====================================================
+            result["metadata_pipeline"] = {
+                "pipeline": (
+                    "DOCUMENTOS_PESSOAIS"
+                ),
+
+                "pipeline_version": 2,
+
+                "engine_origem": (
+                    "OCR_PIPELINE"
+                ),
+
+                "normalizador": (
+                    "normalizar_dados_ocr"
+                ),
+
+                "categoria_prompt": (
+                    prompt_categoria
+                ),
+
+                "document_group_key": (
+                    "OCR_DOCUMENTOS_PESSOAIS"
+                ),
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "arquivos_gerados": {
+                    "json": arquivo_json,
+                    "txt": arquivo_txt,
+                },
+
+                "pipeline_processado": True,
+
+                "possui_pessoa": (
+                    possui_pessoa
+                ),
+
+                "possui_documentos": (
+                    possui_documentos
+                ),
+            }
+
+            # =====================================================
+            # 🔥 ESTATÍSTICAS
+            # =====================================================
+            result["estatisticas"] = {
+                "total_documentos": (
+                    total_documentos
+                ),
+
+                "score_ocr": (
+                    score_ocr
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "possui_pessoa": (
+                    possui_pessoa
+                ),
+
+                "possui_documentos": (
+                    possui_documentos
+                ),
+
+                "total_campos_pessoa": (
+                    len(pessoa_json)
+                    if isinstance(
+                        pessoa_json,
+                        dict,
+                    )
+                    else 0
+                ),
+
+                "total_documentos_extraidos": (
+                    len(documentos_json)
+                    if isinstance(
+                        documentos_json,
+                        list,
+                    )
+                    else 0
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+            }
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO PIPELINE
+            # =====================================================
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "DOCUMENTOS_PESSOAIS"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "persistencia_ok": True,
+
+                "payload_ok": bool(
+                    payload_json
+                ),
+
+                "payload_tipo": (
+                    type(payload_json).__name__
+                ),
+
+                "possui_pessoa": (
+                    possui_pessoa
+                ),
+
+                "possui_documentos": (
+                    possui_documentos
+                ),
+
+                "qualidade_score": (
+                    score_ocr
+                ),
+
+                "qualidade_minima_ok": (
+                    score_ocr >= 60
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_json_path": (
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_path": (
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "pipeline_processado": True,
+            }
+
+            return result
+
+        except Exception as exc:
+
+            OcrPipelineService._rollback_safely(db)
+
+            error_message = str(exc)
+
+            result["success"] = False
+
+            result["errors"].append(
+                error_message
+            )
+
+            result["steps"] = {
+                "documentos_pessoais": {
+                    "success": False,
+
+                    "pipeline": (
+                        "DOCUMENTOS_PESSOAIS"
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "message": (
+                        error_message
+                    ),
+                },
+            }
+
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "DOCUMENTOS_PESSOAIS"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "persistencia_ok": False,
+
+                "pipeline_processado": False,
+
+                "error": (
+                    error_message
+                ),
+            }
+
+            return result
+        
+    @staticmethod
+    def _pipeline_ficha_cadastral_sig(
+        db: Session,
+        document_id: int,
+        ocr_result_id: int | None,
+        prompt_categoria: str,
+        dados: dict[str, object],
+    ) -> dict[str, object]:
+
+        result: dict[str, object] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "pipeline": "FICHA_CADASTRAL_SIG",
+            "categoria": prompt_categoria,
+            "steps": {},
+            "errors": [],
+            "warnings": [],
+        }
+
+        try:
+
+            doc = (
+                db.query(Document)
+                .filter(Document.id == document_id)
+                .first()
+            )
+
+            if not doc:
+                raise Exception(
+                    "Documento não encontrado."
+                )
+
+            imovel = (
+                db.query(Imovel)
+                .filter(Imovel.project_id == doc.project_id)
+                .first()
+            )
+
+            if not imovel:
+                raise Exception(
+                    "Projeto não possui imóvel vinculado."
+                )
+
+            # =====================================================
+            # 🔥 EXTRAÇÃO PRINCIPAL
+            # =====================================================
+            ficha = (
+                dados.get("ficha_cadastral")
+                or dados.get("sig")
+            )
+
+            payload_json = OcrPipelineService._json_safe(
+                dados
+            )
+
+            ficha_json = (
+                OcrPipelineService._json_safe(
+                    ficha
+                )
+            )
+
+            total_campos_ficha = 0
+
+            if isinstance(ficha_json, dict):
+                total_campos_ficha = len(
+                    ficha_json.keys()
+                )
+
+            elif isinstance(ficha_json, list):
+                total_campos_ficha = len(
+                    ficha_json
+                )
+
+            # =====================================================
+            # 🔥 QUALIDADE OCR
+            # =====================================================
+            qualidade_ocr = (
+                dados.get("qualidade")
+                if isinstance(dados, dict)
+                else None
+            )
+
+            score_ocr = 0
+
+            confianca_geral = None
+
+            if isinstance(qualidade_ocr, dict):
+
+                try:
+                    score_ocr = int(
+                        float(
+                            qualidade_ocr.get("score")
+                            or qualidade_ocr.get("confidence")
+                            or 0
+                        )
+                    )
+                except Exception:
+                    score_ocr = 0
+
+                confianca_geral = (
+                    qualidade_ocr.get("confianca_geral")
+                    or qualidade_ocr.get("confidence")
+                )
+
+            score_ocr = max(
+                0,
+                min(
+                    100,
+                    score_ocr,
+                ),
+            )
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO
+            # =====================================================
+            possui_ficha = bool(
+                ficha_json
+            )
+
+            # =====================================================
+            # 🔥 GERAÇÃO DE ARQUIVOS FÍSICOS
+            # =====================================================
+            json_legivel = (
+                OcrPipelineService._formatar_json_legivel(
+                    payload_json
+                )
+            )
+
+            txt_legivel = (
+                "RELATÓRIO OCR - FICHA CADASTRAL SIG\n"
+                "\n"
+                f"DOCUMENT ID: {document_id}\n"
+                f"OCR RESULT ID: {ocr_result_id}\n"
+                f"CATEGORIA: {prompt_categoria}\n"
+                f"TOTAL CAMPOS FICHA: {total_campos_ficha}\n"
+                f"SCORE OCR: {score_ocr}\n"
+                "\n"
+                "====================================================\n"
+                "FICHA CADASTRAL EXTRAÍDA\n"
+                "====================================================\n"
+                "\n"
+                f"{json_legivel}"
+            )
+
+            arquivo_json = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="ficha_cadastral_sig",
+                    nome_base="ficha_cadastral_sig",
+                    extensao="json",
+                    conteudo=json_legivel,
+                )
+            )
+
+            arquivo_txt = (
+                OcrPipelineService._salvar_arquivo_pipeline_ocr(
+                    imovel_id=imovel.id,
+                    pipeline="ficha_cadastral_sig",
+                    nome_base="ficha_cadastral_sig_relatorio",
+                    extensao="txt",
+                    conteudo=txt_legivel,
+                )
+            )
+
+            # =====================================================
+            # 🔥 DOCUMENTO TÉCNICO
+            # =====================================================
+            documento_tecnico = create_documento_tecnico(
+                db=db,
+                imovel_id=imovel.id,
+                data=DocumentoTecnicoCreate(
+                    document_group_key=(
+                        "OCR_FICHA_SIG"
+                    ),
+
+                    tipo="OCR Ficha Cadastral SIG",
+
+                    status_tecnico="EM_ANALISE",
+
+                    conteudo_texto=txt_legivel,
+
+                    conteudo_json=payload_json,
+
+                    arquivo_path=arquivo_json.get(
+                        "arquivo_path"
+                    ),
+
+                    metadata_json={
+                        "ocr_result_id": (
+                            ocr_result_id
+                        ),
+
+                        "document_id": (
+                            document_id
+                        ),
+
+                        "categoria": (
+                            prompt_categoria
+                        ),
+
+                        "pipeline": (
+                            "FICHA_CADASTRAL_SIG"
+                        ),
+
+                        "pipeline_version": 2,
+
+                        "possui_ficha": (
+                            possui_ficha
+                        ),
+
+                        "total_campos_ficha": (
+                            total_campos_ficha
+                        ),
+
+                        "qualidade_score": (
+                            score_ocr
+                        ),
+
+                        "confianca_geral": (
+                            confianca_geral
+                        ),
+
+                        "arquivos_gerados": {
+                            "json": arquivo_json,
+                            "txt": arquivo_txt,
+                        },
+                    },
+
+                    gerado_em=datetime.utcnow(),
+                ),
+            )
+
+            # =====================================================
+            # 🔥 WARNING OCR
+            # =====================================================
+            if score_ocr < 60:
+
+                warnings = result.get("warnings")
+
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+
+                warnings.append(
+                    (
+                        "OCR com score reduzido "
+                        f"(score={score_ocr})."
+                    )
+                )
+
+            # =====================================================
+            # 🔥 RESULTADO PRINCIPAL
+            # =====================================================
+            result["success"] = True
+
+            result["steps"] = {
+                "ficha_sig": {
+                    "success": True,
+
+                    "pipeline": (
+                        "FICHA_CADASTRAL_SIG"
+                    ),
+
+                    "pipeline_version": 2,
+
+                    "documento_tecnico_id": (
+                        documento_tecnico.id
+                    ),
+
+                    "document_group_key": (
+                        "OCR_FICHA_SIG"
+                    ),
+
+                    "tipo_documento": (
+                        "OCR Ficha Cadastral SIG"
+                    ),
+
+                    "imovel_id": (
+                        imovel.id
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "dados_ficha": (
+                        ficha_json
+                    ),
+
+                    "possui_ficha": (
+                        possui_ficha
+                    ),
+
+                    "total_campos_ficha": (
+                        total_campos_ficha
+                    ),
+
+                    "payload_completo": (
+                        payload_json
+                    ),
+
+                    "arquivo_json_path": (
+                        arquivo_json.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_json_url": (
+                        arquivo_json.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivo_txt_path": (
+                        arquivo_txt.get(
+                            "arquivo_path"
+                        )
+                    ),
+
+                    "arquivo_txt_url": (
+                        arquivo_txt.get(
+                            "arquivo_url"
+                        )
+                    ),
+
+                    "arquivos_gerados": {
+                        "json": arquivo_json,
+                        "txt": arquivo_txt,
+                    },
+
+                    "qualidade_score": (
+                        score_ocr
+                    ),
+
+                    "confianca_geral": (
+                        confianca_geral
+                    ),
+
+                    "message": (
+                        "Ficha cadastral SIG "
+                        "processada, persistida "
+                        "e exportada com sucesso."
+                    ),
+                },
+            }
+
+            # =====================================================
+            # 🔥 METADATA PIPELINE
+            # =====================================================
+            result["metadata_pipeline"] = {
+                "pipeline": (
+                    "FICHA_CADASTRAL_SIG"
+                ),
+
+                "pipeline_version": 2,
+
+                "engine_origem": (
+                    "OCR_PIPELINE"
+                ),
+
+                "normalizador": (
+                    "normalizar_dados_ocr"
+                ),
+
+                "categoria_prompt": (
+                    prompt_categoria
+                ),
+
+                "document_group_key": (
+                    "OCR_FICHA_SIG"
+                ),
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "arquivos_gerados": {
+                    "json": arquivo_json,
+                    "txt": arquivo_txt,
+                },
+
+                "pipeline_processado": True,
+
+                "possui_ficha": (
+                    possui_ficha
+                ),
+            }
+
+            # =====================================================
+            # 🔥 ESTATÍSTICAS
+            # =====================================================
+            result["estatisticas"] = {
+                "total_campos_ficha": (
+                    total_campos_ficha
+                ),
+
+                "score_ocr": (
+                    score_ocr
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "possui_ficha": (
+                    possui_ficha
+                ),
+
+                "total_campos_extraidos": (
+                    len(ficha_json)
+                    if isinstance(
+                        ficha_json,
+                        dict,
+                    )
+                    else 0
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+            }
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO PIPELINE
+            # =====================================================
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "FICHA_CADASTRAL_SIG"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "persistencia_ok": True,
+
+                "payload_ok": bool(
+                    payload_json
+                ),
+
+                "payload_tipo": (
+                    type(payload_json).__name__
+                ),
+
+                "possui_ficha": (
+                    possui_ficha
+                ),
+
+                "qualidade_score": (
+                    score_ocr
+                ),
+
+                "qualidade_minima_ok": (
+                    score_ocr >= 60
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_json_path": (
+                    arquivo_json.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "arquivo_txt_path": (
+                    arquivo_txt.get(
+                        "arquivo_path"
+                    )
+                ),
+
+                "pipeline_processado": True,
+            }
+
+            return result
+
+        except Exception as exc:
+
+            OcrPipelineService._rollback_safely(db)
+
+            error_message = str(exc)
+
+            result["success"] = False
+
+            result["errors"].append(
+                error_message
+            )
+
+            result["steps"] = {
+                "ficha_sig": {
+                    "success": False,
+
+                    "pipeline": (
+                        "FICHA_CADASTRAL_SIG"
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "message": (
+                        error_message
+                    ),
+                },
+            }
+
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "FICHA_CADASTRAL_SIG"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "persistencia_ok": False,
+
+                "pipeline_processado": False,
+
+                "error": (
+                    error_message
+                ),
+            }
+
+            return result
+
+    @staticmethod
+    def _pipeline_confrontantes_croqui(
+        db: Session,
+        document_id: int,
+        ocr_result_id: int | None,
+        prompt_categoria: str,
+        dados: dict[str, object],
+    ) -> dict[str, object]:
+
+        result: dict[str, object] = {
+            "success": False,
+            "document_id": document_id,
+            "ocr_result_id": ocr_result_id,
+            "pipeline": "CONFRONTANTES_CROQUI",
+            "categoria": prompt_categoria,
+            "steps": {},
+            "errors": [],
+            "warnings": [],
+        }
+
+        try:
+
+            doc = (
+                db.query(Document)
+                .filter(Document.id == document_id)
+                .first()
+            )
+
+            if not doc:
+                raise Exception(
+                    "Documento não encontrado."
+                )
+
+            imovel = (
+                db.query(Imovel)
+                .filter(Imovel.project_id == doc.project_id)
+                .first()
+            )
+
+            if not imovel:
+                raise Exception(
+                    "Projeto não possui imóvel vinculado."
+                )
+
+            confrontantes = (
+                dados.get("confrontantes")
+                or []
+            )
+
+            confrontantes_normalizados: list[
+                dict[str, object | None]
+            ] = []
+
+            lados_detectados: list[str] = []
+
+            matriculas_detectadas = 0
+
+            cpfs_detectados = 0
+
+            if isinstance(confrontantes, list):
+
+                for item in confrontantes:
+
+                    if not isinstance(item, dict):
+                        continue
+
+                    lado = (
+                        OcrPipelineService
+                        ._normalizar_texto_simples(
+                            item.get("lado")
+                            or item.get("direcao")
+                        )
+                    )
+
+                    matricula = (
+                        OcrPipelineService
+                        ._normalizar_numero_matricula(
+                            item.get("matricula")
+                            or item.get(
+                                "numero_matricula"
+                            )
+                        )
+                    )
+
+                    cpf_cnpj = (
+                        OcrPipelineService
+                        ._normalizar_texto_simples(
+                            item.get("cpf_cnpj")
+                        )
+                    )
+
+                    if lado:
+                        lados_detectados.append(
+                            lado
+                        )
+
+                    if matricula:
+                        matriculas_detectadas += 1
+
+                    if cpf_cnpj:
+                        cpfs_detectados += 1
+
+                    confrontantes_normalizados.append(
+                        {
+                            "lado": lado,
+
+                            "lado_normalizado": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get(
+                                        "lado_normalizado"
+                                    )
+                                )
+                            ),
+
+                            "nome": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get("nome")
+                                )
+                            ),
+
+                            "descricao": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get("descricao")
+                                )
+                            ),
+
+                            "matricula": matricula,
+
+                            "identificacao": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get(
+                                        "identificacao"
+                                    )
+                                )
+                            ),
+
+                            "cpf_cnpj": cpf_cnpj,
+
+                            "tipo": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get("tipo")
+                                )
+                            ),
+
+                            "lote": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get("lote")
+                                )
+                            ),
+
+                            "gleba": (
+                                OcrPipelineService
+                                ._normalizar_texto_simples(
+                                    item.get("gleba")
+                                )
+                            ),
+                        }
+                    )
+
+            # =====================================================
+            # 🔥 QUALIDADE OCR
+            # =====================================================
+            qualidade_ocr = (
+                dados.get("qualidade")
+                if isinstance(dados, dict)
+                else None
+            )
+
+            score_ocr = 0
+
+            confianca_geral = None
+
+            if isinstance(qualidade_ocr, dict):
+
+                try:
+                    score_ocr = int(
+                        float(
+                            qualidade_ocr.get("score")
+                            or qualidade_ocr.get("confidence")
+                            or 0
+                        )
+                    )
+                except Exception:
+                    score_ocr = 0
+
+                confianca_geral = (
+                    qualidade_ocr.get(
+                        "confianca_geral"
+                    )
+                    or qualidade_ocr.get(
+                        "confidence"
+                    )
+                )
+
+            score_ocr = max(
+                0,
+                min(
+                    100,
+                    score_ocr,
+                ),
+            )
+
+            # =====================================================
+            # 🔥 PAYLOAD FINAL
+            # =====================================================
+            payload_json = {
+                "confrontantes": (
+                    confrontantes_normalizados
+                ),
+
+                "payload_original": (
+                    OcrPipelineService._json_safe(
+                        dados
+                    )
+                ),
+            }
+
+            total_confrontantes = len(
+                confrontantes_normalizados
+            )
+
+            lados_unicos = sorted(
+                list(set(lados_detectados))
+            )
+
+            # =====================================================
+            # 🔥 EXPORTAÇÃO JSON
+            # =====================================================
+            json_bytes = json.dumps(
+                payload_json,
+                ensure_ascii=False,
+                indent=2,
+            ).encode("utf-8")
+
+            json_filename = (
+                f"ocr_confrontantes_"
+                f"{document_id}_"
+                f"{int(datetime.utcnow().timestamp())}.json"
+            )
+
+            arquivo_json = (
+                OcrPipelineService
+                ._salvar_arquivo_pipeline(
+                    project_id=doc.project_id,
+                    folder_relative=(
+                        "2_dados_imoveis_confrontantes"
+                    ),
+                    filename=json_filename,
+                    content=json_bytes,
+                )
+            )
+
+            # =====================================================
+            # 🔥 RELATÓRIO TXT
+            # =====================================================
+            linhas_relatorio: list[str] = []
+
+            linhas_relatorio.append(
+                "RELATÓRIO DE CONFRONTANTES"
+            )
+
+            linhas_relatorio.append("")
+
+            linhas_relatorio.append(
+                f"DOCUMENT_ID: {document_id}"
+            )
+
+            linhas_relatorio.append(
+                f"OCR_RESULT_ID: {ocr_result_id}"
+            )
+
+            linhas_relatorio.append(
+                f"TOTAL DE CONFRONTANTES: "
+                f"{total_confrontantes}"
+            )
+
+            linhas_relatorio.append("")
+
+            if lados_unicos:
+
+                linhas_relatorio.append(
+                    "LADOS IDENTIFICADOS:"
+                )
+
+                for lado in lados_unicos:
+                    linhas_relatorio.append(
+                        f"- {lado}"
+                    )
+
+                linhas_relatorio.append("")
+
+            for indice, confrontante in enumerate(
+                confrontantes_normalizados,
+                start=1,
+            ):
+
+                linhas_relatorio.append(
+                    f"CONFRONTANTE {indice}"
+                )
+
+                linhas_relatorio.append(
+                    "-" * 50
+                )
+
+                linhas_relatorio.append(
+                    f"NOME: "
+                    f"{confrontante.get('nome') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"LADO: "
+                    f"{confrontante.get('lado') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"TIPO: "
+                    f"{confrontante.get('tipo') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"MATRÍCULA: "
+                    f"{confrontante.get('matricula') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"CPF/CNPJ: "
+                    f"{confrontante.get('cpf_cnpj') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"LOTE: "
+                    f"{confrontante.get('lote') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"GLEBA: "
+                    f"{confrontante.get('gleba') or '-'}"
+                )
+
+                linhas_relatorio.append(
+                    f"DESCRIÇÃO: "
+                    f"{confrontante.get('descricao') or '-'}"
+                )
+
+                linhas_relatorio.append("")
+
+            relatorio_txt = "\n".join(
+                linhas_relatorio
+            )
+
+            txt_filename = (
+                f"relatorio_confrontantes_"
+                f"{document_id}_"
+                f"{int(datetime.utcnow().timestamp())}.txt"
+            )
+
+            arquivo_txt = (
+                OcrPipelineService
+                ._salvar_arquivo_pipeline(
+                    project_id=doc.project_id,
+                    folder_relative=(
+                        "2_dados_imoveis_confrontantes"
+                    ),
+                    filename=txt_filename,
+                    content=relatorio_txt.encode(
+                        "utf-8"
+                    ),
+                )
+            )
+
+            # =====================================================
+            # 🔥 DOCUMENTOS DO FRONTEND
+            # =====================================================
+            documento_json = (
+                OcrPipelineService
+                ._registrar_documento_pipeline(
+                    db=db,
+                    project_id=doc.project_id,
+                    doc_type=(
+                        "OCR_CONFRONTANTES_JSON"
+                    ),
+                    stored_filename=(
+                        arquivo_json[
+                            "stored_filename"
+                        ]
+                    ),
+                    original_filename=(
+                        json_filename
+                    ),
+                    file_path=(
+                        arquivo_json[
+                            "relative_path"
+                        ]
+                    ),
+                    content_type=(
+                        "application/json"
+                    ),
+                    description=(
+                        "OCR estruturado "
+                        "de confrontantes."
+                    ),
+                )
+            )
+
+            documento_txt = (
+                OcrPipelineService
+                ._registrar_documento_pipeline(
+                    db=db,
+                    project_id=doc.project_id,
+                    doc_type=(
+                        "OCR_CONFRONTANTES_RELATORIO"
+                    ),
+                    stored_filename=(
+                        arquivo_txt[
+                            "stored_filename"
+                        ]
+                    ),
+                    original_filename=(
+                        txt_filename
+                    ),
+                    file_path=(
+                        arquivo_txt[
+                            "relative_path"
+                        ]
+                    ),
+                    content_type=(
+                        "text/plain"
+                    ),
+                    description=(
+                        "Relatório textual "
+                        "de confrontantes."
+                    ),
+                )
+            )
+
+            # =====================================================
+            # 🔥 WARNING OCR
+            # =====================================================
+            if score_ocr < 60:
+
+                warnings = result.get("warnings")
+
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+
+                warnings.append(
+                    (
+                        "OCR com score reduzido "
+                        f"(score={score_ocr})."
+                    )
+                )
+
+            if total_confrontantes == 0:
+
+                warnings = result.get("warnings")
+
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+
+                warnings.append(
+                    "Nenhum confrontante válido detectado."
+                )
+
+            # =====================================================
+            # 🔥 DOCUMENTO TÉCNICO
+            # =====================================================
+            documento_tecnico = create_documento_tecnico(
+                db=db,
+                imovel_id=imovel.id,
+                data=DocumentoTecnicoCreate(
+                    document_group_key=(
+                        "OCR_CONFRONTANTES_CROQUI"
+                    ),
+
+                    tipo=(
+                        "OCR Confrontantes Croqui"
+                    ),
+
+                    status_tecnico=(
+                        "EM_ANALISE"
+                    ),
+
+                    conteudo_texto=(
+                        relatorio_txt
+                    ),
+
+                    conteudo_json=(
+                        payload_json
+                    ),
+
+                    arquivo_path=(
+                        arquivo_json[
+                            "relative_path"
+                        ]
+                    ),
+
+                    metadata_json={
+                        "ocr_result_id": (
+                            ocr_result_id
+                        ),
+
+                        "document_id": (
+                            document_id
+                        ),
+
+                        "categoria": (
+                            prompt_categoria
+                        ),
+
+                        "pipeline": (
+                            "CONFRONTANTES_CROQUI"
+                        ),
+
+                        "pipeline_version": 2,
+
+                        "document_group_key": (
+                            "OCR_CONFRONTANTES_CROQUI"
+                        ),
+
+                        "total_confrontantes": (
+                            total_confrontantes
+                        ),
+
+                        "lados_detectados": (
+                            lados_unicos
+                        ),
+
+                        "matriculas_detectadas": (
+                            matriculas_detectadas
+                        ),
+
+                        "cpfs_detectados": (
+                            cpfs_detectados
+                        ),
+
+                        "qualidade_score": (
+                            score_ocr
+                        ),
+
+                        "confianca_geral": (
+                            confianca_geral
+                        ),
+
+                        "arquivos_gerados": {
+                            "json": {
+                                "document_id": (
+                                    documento_json.id
+                                ),
+
+                                "stored_filename": (
+                                    arquivo_json[
+                                        "stored_filename"
+                                    ]
+                                ),
+
+                                "relative_path": (
+                                    arquivo_json[
+                                        "relative_path"
+                                    ]
+                                ),
+
+                                "content_type": (
+                                    "application/json"
+                                ),
+                            },
+
+                            "txt": {
+                                "document_id": (
+                                    documento_txt.id
+                                ),
+
+                                "stored_filename": (
+                                    arquivo_txt[
+                                        "stored_filename"
+                                    ]
+                                ),
+
+                                "relative_path": (
+                                    arquivo_txt[
+                                        "relative_path"
+                                    ]
+                                ),
+
+                                "content_type": (
+                                    "text/plain"
+                                ),
+                            },
+                        },
+
+                        "frontend_outputs": {
+                            "json_document_id": (
+                                documento_json.id
+                            ),
+
+                            "txt_document_id": (
+                                documento_txt.id
+                            ),
+                        },
+
+                        "persistido_em": (
+                            datetime.utcnow().isoformat()
+                        ),
+                    },
+
+                    gerado_em=datetime.utcnow(),
+                ),
+            )
+
+            # =====================================================
+            # 🔥 RESULTADO
+            # =====================================================
+            result["success"] = True
+
+            result["steps"] = {
+                "confrontantes": {
+                    "success": True,
+
+                    "pipeline": (
+                        "CONFRONTANTES_CROQUI"
+                    ),
+
+                    "pipeline_version": 2,
+
+                    "documento_tecnico_id": (
+                        documento_tecnico.id
+                    ),
+
+                    "document_group_key": (
+                        "OCR_CONFRONTANTES_CROQUI"
+                    ),
+
+                    "tipo_documento": (
+                        "OCR Confrontantes Croqui"
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "imovel_id": (
+                        imovel.id
+                    ),
+
+                    "total": (
+                        total_confrontantes
+                    ),
+
+                    "dados": (
+                        confrontantes_normalizados
+                    ),
+
+                    "lados_detectados": (
+                        lados_unicos
+                    ),
+
+                    "matriculas_detectadas": (
+                        matriculas_detectadas
+                    ),
+
+                    "cpfs_detectados": (
+                        cpfs_detectados
+                    ),
+
+                    "arquivo_json_path": (
+                        arquivo_json.get(
+                            "relative_path"
+                        )
+                    ),
+
+                    "arquivo_txt_path": (
+                        arquivo_txt.get(
+                            "relative_path"
+                        )
+                    ),
+
+                    "documento_json_id": (
+                        documento_json.id
+                    ),
+
+                    "documento_txt_id": (
+                        documento_txt.id
+                    ),
+
+                    "arquivos_gerados": {
+                        "json": arquivo_json,
+                        "txt": arquivo_txt,
+                    },
+
+                    "qualidade_score": (
+                        score_ocr
+                    ),
+
+                    "confianca_geral": (
+                        confianca_geral
+                    ),
+
+                    "message": (
+                        "Confrontantes processados, "
+                        "persistidos e exportados "
+                        "com sucesso."
+                    ),
+                },
+            }
+
+            # =====================================================
+            # 🔥 METADATA PIPELINE
+            # =====================================================
+            result["metadata_pipeline"] = {
+                "pipeline": (
+                    "CONFRONTANTES_CROQUI"
+                ),
+
+                "pipeline_version": 2,
+
+                "engine_origem": (
+                    "OCR_PIPELINE"
+                ),
+
+                "normalizador": (
+                    "normalizar_dados_ocr"
+                ),
+
+                "categoria_prompt": (
+                    prompt_categoria
+                ),
+
+                "document_group_key": (
+                    "OCR_CONFRONTANTES_CROQUI"
+                ),
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "total_confrontantes": (
+                    total_confrontantes
+                ),
+
+                "lados_detectados": (
+                    lados_unicos
+                ),
+
+                "arquivos_gerados": {
+                    "json": arquivo_json,
+                    "txt": arquivo_txt,
+                },
+
+                "frontend_documents": {
+                    "json_document_id": (
+                        documento_json.id
+                    ),
+
+                    "txt_document_id": (
+                        documento_txt.id
+                    ),
+                },
+
+                "pipeline_processado": True,
+            }
+
+            # =====================================================
+            # 🔥 ESTATÍSTICAS
+            # =====================================================
+            result["estatisticas"] = {
+                "total_confrontantes": (
+                    total_confrontantes
+                ),
+
+                "lados_detectados": (
+                    lados_unicos
+                ),
+
+                "matriculas_detectadas": (
+                    matriculas_detectadas
+                ),
+
+                "cpfs_detectados": (
+                    cpfs_detectados
+                ),
+
+                "score_ocr": (
+                    score_ocr
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "relative_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "relative_path"
+                    )
+                ),
+
+                "documentos_frontend_gerados": {
+                    "json": (
+                        documento_json.id
+                    ),
+
+                    "txt": (
+                        documento_txt.id
+                    ),
+                },
+
+                "pipeline_processado": True,
+            }
+
+            # =====================================================
+            # 🔥 VALIDAÇÃO PIPELINE
+            # =====================================================
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "CONFRONTANTES_CROQUI"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "documento_tecnico_id": (
+                    documento_tecnico.id
+                ),
+
+                "imovel_id": (
+                    imovel.id
+                ),
+
+                "persistencia_ok": True,
+
+                "payload_ok": bool(
+                    payload_json
+                ),
+
+                "confrontantes_detectados": (
+                    total_confrontantes > 0
+                ),
+
+                "qualidade_score": (
+                    score_ocr
+                ),
+
+                "qualidade_minima_ok": (
+                    score_ocr >= 60
+                ),
+
+                "confianca_geral": (
+                    confianca_geral
+                ),
+
+                "arquivo_json_gerado": bool(
+                    arquivo_json.get(
+                        "relative_path"
+                    )
+                ),
+
+                "arquivo_txt_gerado": bool(
+                    arquivo_txt.get(
+                        "relative_path"
+                    )
+                ),
+
+                "documento_json_id": (
+                    documento_json.id
+                ),
+
+                "documento_txt_id": (
+                    documento_txt.id
+                ),
+
+                "pipeline_processado": True,
+            }
+
+            return result
+
+        except Exception as exc:
+
+            OcrPipelineService._rollback_safely(db)
+
+            error_message = str(exc)
+
+            result["success"] = False
+
+            result["errors"].append(
+                error_message
+            )
+
+            result["steps"] = {
+                "confrontantes": {
+                    "success": False,
+
+                    "pipeline": (
+                        "CONFRONTANTES_CROQUI"
+                    ),
+
+                    "document_id": (
+                        document_id
+                    ),
+
+                    "ocr_result_id": (
+                        ocr_result_id
+                    ),
+
+                    "message": (
+                        error_message
+                    ),
+                },
+            }
+
+            result["validacao_pipeline"] = {
+                "pipeline": (
+                    "CONFRONTANTES_CROQUI"
+                ),
+
+                "pipeline_version": 2,
+
+                "document_id": (
+                    document_id
+                ),
+
+                "ocr_result_id": (
+                    ocr_result_id
+                ),
+
+                "persistencia_ok": False,
+
+                "pipeline_processado": False,
+
+                "error": (
+                    error_message
+                ),
+            }
+
+            return result
 
     @staticmethod
     def _pipeline_matricula(
@@ -1546,28 +4426,171 @@ class OcrPipelineService:
 
         epsg_origem_atual = geometria.epsg_origem if geometria else None
 
-        # 🔥 NOVO — QUALIDADE OCR
-        qualidade_ocr = dados.get("qualidade") if isinstance(dados, dict) else None
+        # =========================================================
+        # 🔥 QUALIDADE OCR (UNIFICADA)
+        # =========================================================
+        qualidade_ocr = (
+            dados.get("qualidade")
+            if isinstance(dados, dict)
+            else None
+        )
+
+        metadata_ocr = (
+            dados.get("metadata")
+            if isinstance(dados, dict)
+            else None
+        )
+
+        ocr_metadata = (
+            dados.get("ocr_metadata")
+            if isinstance(dados, dict)
+            else None
+        )
+
+        quality_data = (
+            dados.get("quality")
+            if isinstance(dados, dict)
+            else None
+        )
 
         score_ocr = 0
+
         confianca_geral = None
 
+        origem_score = None
+
+        # =========================================================
+        # 🔥 QUALIDADE PADRÃO PIPELINE
+        # =========================================================
         if isinstance(qualidade_ocr, dict):
+
             try:
-                score_ocr = int(qualidade_ocr.get("score", 0) or 0)
+                valor_score = (
+                    qualidade_ocr.get("score")
+                    or qualidade_ocr.get("score_ocr")
+                    or qualidade_ocr.get("confidence")
+                    or 0
+                )
+
+                score_ocr = int(float(valor_score))
+
+                origem_score = "qualidade"
+
             except Exception:
                 score_ocr = 0
 
-            confianca_geral = qualidade_ocr.get("confianca_geral")
+            confianca_geral = (
+                qualidade_ocr.get("confianca_geral")
+                or qualidade_ocr.get("confidence")
+                or qualidade_ocr.get("confidence_score")
+            )
 
+        # =========================================================
+        # 🔥 FALLBACK → METADATA
+        # =========================================================
+        if score_ocr <= 0 and isinstance(metadata_ocr, dict):
+
+            try:
+                valor_score = (
+                    metadata_ocr.get("score")
+                    or metadata_ocr.get("ocr_score")
+                    or metadata_ocr.get("confidence")
+                    or metadata_ocr.get("confidence_score")
+                    or 0
+                )
+
+                score_ocr = int(float(valor_score))
+
+                origem_score = "metadata"
+
+            except Exception:
+                score_ocr = 0
+
+            if not confianca_geral:
+                confianca_geral = (
+                    metadata_ocr.get("confianca_geral")
+                    or metadata_ocr.get("confidence")
+                    or metadata_ocr.get("confidence_score")
+                )
+
+        # =========================================================
+        # 🔥 FALLBACK → OCR METADATA
+        # =========================================================
+        if score_ocr <= 0 and isinstance(ocr_metadata, dict):
+
+            try:
+                valor_score = (
+                    ocr_metadata.get("score")
+                    or ocr_metadata.get("ocr_score")
+                    or ocr_metadata.get("confidence")
+                    or 0
+                )
+
+                score_ocr = int(float(valor_score))
+
+                origem_score = "ocr_metadata"
+
+            except Exception:
+                score_ocr = 0
+
+            if not confianca_geral:
+                confianca_geral = (
+                    ocr_metadata.get("confianca_geral")
+                    or ocr_metadata.get("confidence")
+                )
+
+        # =========================================================
+        # 🔥 FALLBACK → QUALITY
+        # =========================================================
+        if score_ocr <= 0 and isinstance(quality_data, dict):
+
+            try:
+                valor_score = (
+                    quality_data.get("score")
+                    or quality_data.get("confidence")
+                    or quality_data.get("ocr_score")
+                    or 0
+                )
+
+                score_ocr = int(float(valor_score))
+
+                origem_score = "quality"
+
+            except Exception:
+                score_ocr = 0
+
+            if not confianca_geral:
+                confianca_geral = (
+                    quality_data.get("confianca_geral")
+                    or quality_data.get("confidence")
+                )
+
+        # =========================================================
+        # 🔥 SANITIZAÇÃO FINAL
+        # =========================================================
+        try:
+            score_ocr = max(
+                0,
+                min(
+                    100,
+                    int(score_ocr),
+                ),
+            )
+        except Exception:
+            score_ocr = 0
+
+        # =========================================================
         # 🔥 NOVO — CONTROLE DE SIGEF
+        # =========================================================
         sigef_obrigatorio = bool(
             geometria
             and epsg_origem_atual
             and epsg_origem_atual > 0
         )
 
+        # =========================================================
         # 🔥 REGRAS DE SUCESSO
+        # =========================================================
         sucesso_base = (
             geometria_ok
             and memorial_ok
@@ -1576,7 +4599,10 @@ class OcrPipelineService:
         )
 
         if sigef_obrigatorio:
-            sucesso_base = sucesso_base and sigef_ok
+            sucesso_base = (
+                sucesso_base
+                and sigef_ok
+            )
 
         # =========================================================
         # 🔥 QUALIDADE OCR (NÃO BLOQUEANTE)
@@ -1594,7 +4620,8 @@ class OcrPipelineService:
             warnings.append(
                 (
                     "OCR com score reduzido "
-                    f"(score={score_ocr}), porém pipeline permaneceu executável."
+                    f"(score={score_ocr}), "
+                    "porém pipeline permaneceu executável."
                 )
             )
 
@@ -1603,21 +4630,33 @@ class OcrPipelineService:
         # =========================================================
         result["success"] = sucesso_base
 
+        # =========================================================
         # 🔥 DEBUG / RASTREABILIDADE
+        # =========================================================
         result["validacao_pipeline"] = {
             "geometria_ok": geometria_ok,
             "memorial_ok": memorial_ok,
             "croqui_ok": croqui_ok,
             "cad_ok": cad_ok,
+
             "sigef_obrigatorio": sigef_obrigatorio,
             "sigef_ok": sigef_ok,
+
             "qualidade_score": score_ocr,
             "qualidade_minima_ok": qualidade_minima_ok,
+
             "confianca_geral": confianca_geral,
+
+            "origem_score": origem_score,
+
+            "pipeline": "MATRICULA",
+
+            "ocr_result_id": ocr_result_id,
+
+            "document_id": document_id,
         }
 
         print("🏁 Pipeline OCR concluído")
-        
 
         return result
 
@@ -2144,6 +5183,12 @@ class OcrPipelineService:
             try:
                 parsed = json.loads(geojson_str)
 
+                if not isinstance(dados, dict):
+                    logger.error(
+                        "Payload inválido para resolução de GeoJSON."
+                    )
+                    return None
+
                 if (
                     isinstance(parsed, dict)
                     and parsed.get("type") in ["Polygon", "MultiPolygon"]
@@ -2154,15 +5199,28 @@ class OcrPipelineService:
 
                         geom = shape(parsed)
 
+                        if geom.is_empty:
+                            return None
+                        
                         if not geom.is_valid:
-                            geom = geom.buffer(0)
+                            try:
+                                geom = geom.buffer(0)
+                            except Exception:
+                                return None
+
 
                         if geom.is_valid and not geom.is_empty:
                             # 🔥 RETORNA GEOMETRIA CORRIGIDA (CRÍTICO)
-                            return json.dumps(mapping(geom))
+                            return json.dumps(
+                                mapping(geom),
+                                ensure_ascii=False,
+                            )
 
                     except Exception as exc:
-                        print(f"⚠️ Falha validação shapely: {str(exc)}")
+                        logger.warning(
+                            "Falha validação shapely no GeoJSON OCR: %s",
+                            str(exc),
+                        )
 
             except Exception:
                 pass
@@ -2186,27 +5244,39 @@ class OcrPipelineService:
             if geojson_normalizado:
                 geo_validado = _validar_geojson(geojson_normalizado)
                 if geo_validado:
-                    print("✅ GeoJSON válido (estrutura normalizada + validado)")
+                    logger.info(
+                        "GeoJSON válido carregado da estrutura normalizada."
+                    )
                     return geo_validado
 
             # ================= SEGMENTOS =================
-            if isinstance(segmentos, list) and segmentos:
+            if (
+                isinstance(segmentos, list)
+                and len(segmentos) >= 3
+            ):
                 geojson_por_segmentos = OcrPipelineService._gerar_geojson_por_segmentos(
                     segmentos
                 )
 
                 if geojson_por_segmentos:
-                    print("✅ GeoJSON gerado via segmentos (normalizado)")
+                    logger.info(
+                        "GeoJSON reconstruído via segmentos OCR."
+                    )
                     return geojson_por_segmentos
 
             # ================= MEMORIAL =================
-            if isinstance(memorial_texto, str) and memorial_texto.strip():
+            if (
+                isinstance(memorial_texto, str)
+                and len(memorial_texto.strip()) >= 30
+            ):
                 geojson_por_memorial = OcrPipelineService._gerar_geojson_por_memorial(
                     memorial_texto
                 )
 
                 if geojson_por_memorial:
-                    print("✅ GeoJSON gerado via memorial (normalizado)")
+                    logger.info(
+                        "GeoJSON reconstruído via memorial OCR."
+                    )
                     return geojson_por_memorial
 
         # =========================================================
@@ -2219,7 +5289,9 @@ class OcrPipelineService:
         if geojson_normalizado:
             geo_validado = _validar_geojson(geojson_normalizado)
             if geo_validado:
-                print("⚠️ GeoJSON legado válido (corrigido)")
+                logger.warning(
+                    "GeoJSON legado utilizado após fallback."
+                )
                 return geo_validado
 
         # ================= SEGMENTOS LEGADO =================
@@ -2231,7 +5303,9 @@ class OcrPipelineService:
             )
 
             if geojson_por_segmentos:
-                print("⚠️ GeoJSON gerado via segmentos (legado)")
+                logger.warning(
+                    "GeoJSON legado reconstruído via segmentos."
+                )
                 return geojson_por_segmentos
 
         # ================= MEMORIAL LEGADO =================
@@ -2243,10 +5317,14 @@ class OcrPipelineService:
             )
 
             if geojson_por_memorial:
-                print("⚠️ GeoJSON gerado via memorial (legado)")
+                logger.warning(
+                    "GeoJSON legado reconstruído via memorial."
+                )   
                 return geojson_por_memorial
 
-        print("❌ Nenhuma fonte geométrica válida encontrada")
+        logger.error(
+            "Nenhuma fonte geométrica válida encontrada no OCR"
+        )
         return None
     
     @staticmethod
@@ -2255,6 +5333,12 @@ class OcrPipelineService:
             return None
 
         parsed = None
+
+        if isinstance(geojson, list):
+            logger.warning(
+                "GeoJSON OCR recebido como lista inválida."
+            )
+            return None
 
         if isinstance(geojson, dict):
             parsed = geojson
@@ -2268,7 +5352,9 @@ class OcrPipelineService:
             try:
                 parsed = json.loads(texto)
             except Exception:
-                print("⚠️ GeoJSON inválido recebido do OCR")
+                logger.warning(
+                    "GeoJSON inválido recebido do OCR."
+                )
                 return None
 
         if not isinstance(parsed, dict):
@@ -2280,7 +5366,9 @@ class OcrPipelineService:
         if tipo == "Feature":
             geometry = parsed.get("geometry")
             if not isinstance(geometry, dict):
-                print("⚠️ GeoJSON ignorado: Feature sem geometry válido")
+                logger.warning(
+                    "Feature OCR sem geometry válido."
+                )   
                 return None
             parsed = geometry
             tipo = parsed.get("type")
@@ -2288,7 +5376,9 @@ class OcrPipelineService:
         elif tipo == "FeatureCollection":
             features = parsed.get("features")
             if not isinstance(features, list) or not features:
-                print("⚠️ GeoJSON ignorado: FeatureCollection sem features")
+                logger.warning(
+                    "FeatureCollection OCR sem features."
+                )
                 return None
 
             geometria_feature = None
@@ -2307,7 +5397,9 @@ class OcrPipelineService:
                     break
 
             if not geometria_feature:
-                print("⚠️ GeoJSON ignorado: FeatureCollection sem geometria poligonal")
+                logger.warning(
+                    "FeatureCollection sem geometria poligonal válida."
+                )
                 return None
 
             parsed = geometria_feature
@@ -2315,17 +5407,77 @@ class OcrPipelineService:
 
         coords = parsed.get("coordinates")
 
+        if coords is None:
+            logger.warning(
+                "GeoJSON OCR sem coordinates."
+            )
+            return None
+
         if tipo not in ["Polygon", "MultiPolygon"]:
-            print("⚠️ GeoJSON ignorado: tipo inválido")
+            logger.warning(
+                "GeoJSON OCR ignorado por tipo inválido."
+            )
             return None
 
         if not isinstance(coords, list) or not coords:
-            print("⚠️ GeoJSON ignorado: coordinates inválido")
+            logger.warning(
+                "GeoJSON OCR ignorado por coordinates inválido."
+            )
             return None
 
         try:
-            return json.dumps(parsed)
-        except Exception:
+            from shapely.geometry import shape
+
+            geom = shape(parsed)
+
+            if geom.is_empty:
+                logger.warning(
+                    "GeoJSON OCR gerou geometria vazia."
+                )
+                return None
+
+            if not geom.is_valid:
+
+                try:
+                    geom = geom.buffer(0)
+
+                except Exception:
+                    logger.warning(
+                        "Falha ao corrigir geometria OCR."
+                    )
+                    return None
+
+            if geom.is_empty or not geom.is_valid:
+                logger.warning(
+                    "Geometria OCR inválida após correção."
+                )
+                return None
+
+        except Exception as exc:
+            logger.warning(
+                "Falha validação shapely GeoJSON OCR: %s",
+                str(exc),
+            )
+            return None
+
+        try:
+
+            logger.info(
+                "GeoJSON OCR normalizado com sucesso."
+            )
+
+            return json.dumps(
+                parsed,
+                ensure_ascii=False,
+            )
+
+        except Exception as exc:
+
+            logger.warning(
+                "Falha serialização GeoJSON OCR: %s",
+                str(exc),
+            )
+
             return None
 
     @staticmethod
@@ -2400,6 +5552,9 @@ class OcrPipelineService:
         LIMITE_ENVELOPE = 50000.0
         LIMITE_SALTO_ANGULAR = 170.0
         LIMITE_INVALIDOS_PERCENTUAL = 0.35
+        LIMITE_AREA_ABSURDA = 1_000_000_000.0
+        LIMITE_COORDENADA_ABSURDA = 100_000_000.0
+        LIMITE_MINIMO_SEGMENTOS = 3
 
         for index, seg in enumerate(segmentos_memorial, start=1):
 
@@ -2543,6 +5698,15 @@ class OcrPipelineService:
             novo_x = x + dx
             novo_y = y + dy
 
+            if (
+                abs(novo_x) > LIMITE_COORDENADA_ABSURDA
+                or abs(novo_y) > LIMITE_COORDENADA_ABSURDA
+            ):
+                segmentos_invalidos.append(
+                    f"Segmento {index}: coordenada absoluta inválida"
+                )
+                continue
+
             minx = min(minx, novo_x)
             miny = min(miny, novo_y)
 
@@ -2577,7 +5741,10 @@ class OcrPipelineService:
             for item in segmentos_invalidos[:10]:
                 print(f"   - {item}")
 
-        if segmentos_validos < 3 or len(coords) < 4:
+        if (
+            segmentos_validos < LIMITE_MINIMO_SEGMENTOS
+            or len(coords) < 4
+        ):
             print(
                 "⚠️ Segmentos válidos insuficientes "
                 "para formar polígono"
@@ -2663,10 +5830,30 @@ class OcrPipelineService:
             print("⚠️ Área geométrica inválida")
             return None
 
+        if polygon.area > LIMITE_AREA_ABSURDA:
+            print(
+                "⚠️ Área geométrica absurda detectada"
+            )
+            return None
+
         try:
             from shapely.geometry import mapping
 
             geojson_final = mapping(polygon)
+
+            perimetro = float(polygon.length)
+
+            indice_compacidade = 0.0
+
+            try:
+                if perimetro > 0:
+                    indice_compacidade = float(
+                        (4 * math.pi * polygon.area)
+                        / (perimetro ** 2)
+                    )
+
+            except Exception:
+                 indice_compacidade = 0.0
 
             geojson_final["metadata"] = {
                 "referencial": "LOCAL_CARTESIANO",
@@ -2800,9 +5987,8 @@ class OcrPipelineService:
                     )
                 )
 
-                print(
-                    "⚠️ Memorial recuperado "
-                    "via heurística OCR"
+                logger.info(
+                    "Memorial recuperado via heurística OCR."
                 )
 
             except Exception as exc2:
@@ -2929,11 +6115,14 @@ class OcrPipelineService:
             # =====================================================
             # 🔥 ÁREA INVÁLIDA
             # =====================================================
-            if geom.area <= 0:
-
-                print(
-                    "⚠️ Geometria do memorial "
-                    "possui área inválida"
+            if (
+                geom.area
+                > OcrPipelineService.LIMITE_AREA_ABSURDA
+            ):
+                
+                logger.warning(
+                    "Geometria do memorial "
+                    "possui área absurda."
                 )
 
                 return None
@@ -2947,12 +6136,25 @@ class OcrPipelineService:
 
             if len(exterior_coords) < 4:
 
-                print(
-                    "⚠️ Polígono do memorial "
-                    "possui vértices insuficientes"
+                primeiro_ponto = exterior_coords[0]
+                ultimo_ponto = exterior_coords[-1]
+
+                erro_fechamento = math.dist(
+                    primeiro_ponto,
+                    ultimo_ponto,
                 )
 
-                return None
+                if (
+                    erro_fechamento
+                    > OcrPipelineService
+                    .FECHAMENTO_TOLERANCIA_METROS
+                ):
+                    logger.warning(
+                        "Memorial OCR possui erro "
+                        "de fechamento elevado."
+                    )
+
+                    return None
 
             # =====================================================
             # 🔥 BBOX
@@ -2975,11 +6177,29 @@ class OcrPipelineService:
                 "tipo_geometria": "POLIGONO_RECONSTRUIDO",
                 "engine": "OCR_PIPELINE",
 
+                "pipeline": "MEMORIAL_OCR",
+
+                "origem_parser": (
+                    "MemorialParserService"
+                ),
+
                 "modo_recuperacao_ocr": True,
+
+                "memorial_processado": True,
 
                 "geom_type": geom.geom_type,
 
                 "vertices": len(exterior_coords) - 1,
+
+                "erro_fechamento_metros": round(
+                    float(erro_fechamento),
+                    6,
+                ),
+
+                "fechamento_tolerancia_metros": (
+                    OcrPipelineService
+                    .FECHAMENTO_TOLERANCIA_METROS
+                ),
 
                 "area_modelo": round(
                     float(geom.area),
@@ -2999,16 +6219,17 @@ class OcrPipelineService:
             return json.dumps(
                 geojson_final,
                 ensure_ascii=False,
+                default=float,
             )
 
         except Exception as exc:
 
-            print(
-                "⚠️ Falha ao validar geometria "
-                f"do memorial: {str(exc)}"
+           logger.exception(
+                "Falha ao validar geometria "
+                "gerada pelo memorial OCR."
             )
 
-            return None
+        return None
         
     @staticmethod
     def _parse_angulo_para_graus(

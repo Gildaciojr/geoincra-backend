@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime
 from typing import List
 
 from sqlalchemy.orm import Session
 
 from app.models.documento_tecnico import DocumentoTecnico
-from app.models.documento_tecnico_checklist import DocumentoTecnicoChecklist
+from app.models.documento_tecnico_checklist import (
+    DocumentoTecnicoChecklist,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentoTecnicoValidacaoService:
@@ -18,91 +25,261 @@ class DocumentoTecnicoValidacaoService:
     STATUS_REPROVADO = "REPROVADO"
     STATUS_EM_ANALISE = "EM_ANALISE"
 
+    TIPOS_OCR_ISOLADOS = {
+        "OCR Dados Brutos",
+        "OCR Documentos Pessoais",
+        "OCR Ficha Cadastral SIG",
+        "OCR Confrontantes Croqui",
+    }
+
     @staticmethod
     def validar_documento(
         db: Session,
         documento: DocumentoTecnico,
     ) -> DocumentoTecnico:
 
-        checklist_itens: List[DocumentoTecnicoChecklist] = (
+        if not documento:
+            raise ValueError(
+                "Documento técnico inválido."
+            )
+
+        # =====================================================
+        # OCRs ISOLADOS NÃO ENTRAM EM CHECKLIST TÉCNICO
+        # =====================================================
+        if documento.tipo in (
+            DocumentoTecnicoValidacaoService
+            .TIPOS_OCR_ISOLADOS
+        ):
+
+            logger.info(
+                "Documento OCR isolado ignorado "
+                "na validação técnica. "
+                "documento_id=%s tipo=%s",
+                getattr(documento, "id", None),
+                documento.tipo,
+            )
+
+            return DocumentoTecnicoValidacaoService._atualizar_status(
+                db=db,
+                documento=documento,
+                status=(
+                    DocumentoTecnicoValidacaoService
+                    .STATUS_APROVADO
+                ),
+                observacao=(
+                    "Documento OCR isolado validado "
+                    "automaticamente."
+                ),
+            )
+
+        # =====================================================
+        # CHECKLIST TÉCNICO
+        # =====================================================
+        checklist_itens: List[
+            DocumentoTecnicoChecklist
+        ] = (
             db.query(DocumentoTecnicoChecklist)
-            .filter(DocumentoTecnicoChecklist.documento_tecnico_id == documento.id)
+            .filter(
+                DocumentoTecnicoChecklist
+                .documento_tecnico_id
+                == documento.id
+            )
             .all()
         )
 
+        # =====================================================
+        # DOCUMENTOS TÉCNICOS SEM CHECKLIST
+        # =====================================================
         if not checklist_itens:
-            return DocumentoTecnicoValidacaoService._atualizar_status(
-                db,
-                documento,
-                DocumentoTecnicoValidacaoService.STATUS_CORRIGIR,
-                "Checklist técnico não encontrado.",
+
+            logger.warning(
+                "Checklist técnico não encontrado. "
+                "documento_id=%s tipo=%s",
+                getattr(documento, "id", None),
+                getattr(documento, "tipo", None),
             )
 
-        pendentes_criticos = []
-        pendentes_nao_criticos = []
+            return DocumentoTecnicoValidacaoService._atualizar_status(
+                db=db,
+                documento=documento,
+                status=(
+                    DocumentoTecnicoValidacaoService
+                    .STATUS_CORRIGIR
+                ),
+                observacao=(
+                    "Checklist técnico não encontrado."
+                ),
+            )
 
+        pendentes_criticos: List[
+            DocumentoTecnicoChecklist
+        ] = []
+
+        pendentes_nao_criticos: List[
+            DocumentoTecnicoChecklist
+        ] = []
+
+        # =====================================================
+        # PROCESSAMENTO DOS ITENS
+        # =====================================================
         for item in checklist_itens:
 
-            # ✔ OK passa
-            if item.status == "OK":
+            status_item = (
+                str(item.status or "")
+                .strip()
+                .upper()
+            )
+
+            # =================================================
+            # ITEM OK
+            # =================================================
+            if status_item == "OK":
                 continue
 
-            # ❗ ERRO obrigatório → reprova direto
-            if item.status == "ERRO" and item.obrigatorio:
+            # =================================================
+            # ERRO OBRIGATÓRIO
+            # =================================================
+            if (
+                status_item == "ERRO"
+                and item.obrigatorio
+            ):
+
                 pendentes_criticos.append(item)
+
                 continue
 
-            # ❗ NA obrigatório → reprova também
-            if item.status == "NA" and item.obrigatorio:
+            # =================================================
+            # NÃO APLICÁVEL OBRIGATÓRIO
+            # =================================================
+            if (
+                status_item == "NA"
+                and item.obrigatorio
+            ):
+
                 pendentes_criticos.append(item)
+
                 continue
 
-            # ⚠ ALERTA ou NA não obrigatório → corrigir
+            # =================================================
+            # ALERTAS / NÃO OBRIGATÓRIOS
+            # =================================================
             pendentes_nao_criticos.append(item)
 
+        # =====================================================
+        # REPROVAÇÃO
+        # =====================================================
         if pendentes_criticos:
+
+            logger.warning(
+                "Documento técnico reprovado. "
+                "documento_id=%s pendencias=%s",
+                getattr(documento, "id", None),
+                len(pendentes_criticos),
+            )
+
             return DocumentoTecnicoValidacaoService._atualizar_status(
-                db,
-                documento,
-                DocumentoTecnicoValidacaoService.STATUS_REPROVADO,
-                DocumentoTecnicoValidacaoService._montar_observacao(
-                    "Itens obrigatórios pendentes",
-                    pendentes_criticos,
+                db=db,
+                documento=documento,
+                status=(
+                    DocumentoTecnicoValidacaoService
+                    .STATUS_REPROVADO
+                ),
+                observacao=(
+                    DocumentoTecnicoValidacaoService
+                    ._montar_observacao(
+                        "Itens obrigatórios pendentes",
+                        pendentes_criticos,
+                    )
                 ),
             )
 
+        # =====================================================
+        # CORRIGIR
+        # =====================================================
         if pendentes_nao_criticos:
+
+            logger.info(
+                "Documento técnico exige correção. "
+                "documento_id=%s pendencias=%s",
+                getattr(documento, "id", None),
+                len(pendentes_nao_criticos),
+            )
+
             return DocumentoTecnicoValidacaoService._atualizar_status(
-                db,
-                documento,
-                DocumentoTecnicoValidacaoService.STATUS_CORRIGIR,
-                DocumentoTecnicoValidacaoService._montar_observacao(
-                    "Itens não obrigatórios pendentes",
-                    pendentes_nao_criticos,
+                db=db,
+                documento=documento,
+                status=(
+                    DocumentoTecnicoValidacaoService
+                    .STATUS_CORRIGIR
+                ),
+                observacao=(
+                    DocumentoTecnicoValidacaoService
+                    ._montar_observacao(
+                        "Itens não obrigatórios pendentes",
+                        pendentes_nao_criticos,
+                    )
                 ),
             )
+
+        # =====================================================
+        # APROVAÇÃO
+        # =====================================================
+        logger.info(
+            "Documento técnico aprovado automaticamente. "
+            "documento_id=%s",
+            getattr(documento, "id", None),
+        )
 
         return DocumentoTecnicoValidacaoService._atualizar_status(
-            db,
-            documento,
-            DocumentoTecnicoValidacaoService.STATUS_APROVADO,
-            "Documento técnico validado automaticamente.",
+            db=db,
+            documento=documento,
+            status=(
+                DocumentoTecnicoValidacaoService
+                .STATUS_APROVADO
+            ),
+            observacao=(
+                "Documento técnico validado automaticamente."
+            ),
         )
 
     @staticmethod
-    def _atualizar_status(db, documento, status, observacao):
+    def _atualizar_status(
+        db: Session,
+        documento: DocumentoTecnico,
+        status: str,
+        observacao: str,
+    ) -> DocumentoTecnico:
+
         documento.status_tecnico = status
+
         documento.observacoes_tecnicas = observacao
+
         documento.updated_at = datetime.utcnow()
 
         db.commit()
+
         db.refresh(documento)
 
         return documento
 
     @staticmethod
-    def _montar_observacao(titulo, itens):
-        linhas = [titulo + ":"]
+    def _montar_observacao(
+        titulo: str,
+        itens: List[DocumentoTecnicoChecklist],
+    ) -> str:
+
+        linhas = [f"{titulo}:"]
+
         for item in itens:
-            linhas.append(f"- {item.descricao}")
+
+            descricao = (
+                item.descricao
+                if item.descricao
+                else "Item técnico sem descrição"
+            )
+
+            linhas.append(
+                f"- {descricao}"
+            )
+
         return "\n".join(linhas)

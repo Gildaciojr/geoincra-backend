@@ -1,6 +1,7 @@
 # app/services/documento_tecnico_aprovacao_service.py
-
 from __future__ import annotations
+
+import logging
 
 from datetime import datetime
 from typing import Optional
@@ -16,6 +17,8 @@ from app.services.project_status_automation_service import ProjectStatusAutomati
 from app.models.pagamento import Pagamento
 from app.services.pagamento_automacao_service import PagamentoAutomacaoService
 
+logger = logging.getLogger(__name__)
+
 
 class DocumentoTecnicoAprovacaoService:
 
@@ -23,6 +26,27 @@ class DocumentoTecnicoAprovacaoService:
     STATUS_CORRIGIR = "CORRIGIR"
     STATUS_REPROVADO = "REPROVADO"
     STATUS_EM_ANALISE = "EM_ANALISE"
+
+    TIPOS_OCR_ISOLADOS = {
+        "OCR Dados Brutos",
+        "OCR Documentos Pessoais",
+        "OCR Ficha Cadastral SIG",
+        "OCR Confrontantes Croqui",
+    }
+    
+    @staticmethod
+    def _documento_participa_fluxo(
+        doc: DocumentoTecnico,
+    ) -> bool:
+
+        if not doc:
+            return False
+
+        return (
+            doc.tipo
+            not in DocumentoTecnicoAprovacaoService
+            .TIPOS_OCR_ISOLADOS
+        )
 
     @staticmethod
     def aprovar_documento(
@@ -67,23 +91,69 @@ class DocumentoTecnicoAprovacaoService:
         db.commit()
         db.refresh(doc)
 
-        ProjectFluxoService.avaliar_fluxo_projeto(
-            db=db,
-            project_id=doc.imovel.project_id,
-            definido_por_usuario_id=aprovado_por_usuario_id,
-        )
+        if (
+            DocumentoTecnicoAprovacaoService
+            ._documento_participa_fluxo(doc)
+        ):
 
-        ProjectStatusAutomationService.avaliar_e_atualizar_status(
-            db=db,
-            project_id=doc.imovel.project_id,
-        )
+            try:
 
-        pagamentos = db.query(Pagamento).filter(
-            Pagamento.project_id == doc.imovel.project_id
-        ).all()
+                ProjectFluxoService.avaliar_fluxo_projeto(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                    definido_por_usuario_id=(
+                        aprovado_por_usuario_id
+                    ),
+                )
 
-        for pagamento in pagamentos:
-            PagamentoAutomacaoService.avaliar_liberacao_pagamento(db, pagamento)
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar fluxo "
+                    "do projeto."
+                )
+
+            try:
+
+                ProjectStatusAutomationService.avaliar_e_atualizar_status(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao atualizar status "
+                    "automático do projeto."
+                )
+
+            try:
+
+                pagamentos = db.query(Pagamento).filter(
+                    Pagamento.project_id
+                    == doc.imovel.project_id
+                ).all()
+
+                for pagamento in pagamentos:
+
+                    PagamentoAutomacaoService.avaliar_liberacao_pagamento(
+                        db,
+                        pagamento,
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar automações "
+                    "de pagamento."
+                )
+
+        else:
+
+            logger.info(
+                "Documento OCR isolado ignorado "
+                "nas automações de fluxo."
+            )
 
         return doc
 
@@ -129,23 +199,69 @@ class DocumentoTecnicoAprovacaoService:
         db.commit()
         db.refresh(doc)
 
-        ProjectFluxoService.avaliar_fluxo_projeto(
-            db=db,
-            project_id=doc.imovel.project_id,
-            definido_por_usuario_id=solicitado_por_usuario_id,
-        )
+        if (
+            DocumentoTecnicoAprovacaoService
+            ._documento_participa_fluxo(doc)
+        ):
 
-        ProjectStatusAutomationService.avaliar_e_atualizar_status(
-            db=db,
-            project_id=doc.imovel.project_id,
-        )
+            try:
 
-        pagamentos = db.query(Pagamento).filter(
-            Pagamento.project_id == doc.imovel.project_id
-        ).all()
+                ProjectFluxoService.avaliar_fluxo_projeto(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                    definido_por_usuario_id=(
+                        solicitado_por_usuario_id
+                    ),
+                )
 
-        for pagamento in pagamentos:
-            PagamentoAutomacaoService.avaliar_liberacao_pagamento(db, pagamento)
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar fluxo "
+                    "do projeto."
+                )
+
+            try:
+
+                ProjectStatusAutomationService.avaliar_e_atualizar_status(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao atualizar status "
+                    "automático do projeto."
+                )
+
+            try:
+
+                pagamentos = db.query(Pagamento).filter(
+                    Pagamento.project_id
+                    == doc.imovel.project_id
+                ).all()
+
+                for pagamento in pagamentos:
+
+                    PagamentoAutomacaoService.avaliar_liberacao_pagamento(
+                        db,
+                        pagamento,
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar automações "
+                    "de pagamento."
+                )
+
+        else:
+
+            logger.info(
+                "Documento OCR isolado ignorado "
+                "nas automações de fluxo."
+            )
 
         return doc
 
@@ -191,22 +307,68 @@ class DocumentoTecnicoAprovacaoService:
         db.commit()
         db.refresh(doc)
 
-        ProjectFluxoService.avaliar_fluxo_projeto(
-            db=db,
-            project_id=doc.imovel.project_id,
-            definido_por_usuario_id=reprovado_por_usuario_id,
-        )
+        if (
+            DocumentoTecnicoAprovacaoService
+            ._documento_participa_fluxo(doc)
+        ):
 
-        ProjectStatusAutomationService.avaliar_e_atualizar_status(
-            db=db,
-            project_id=doc.imovel.project_id,
-        )
+            try:
 
-        pagamentos = db.query(Pagamento).filter(
-            Pagamento.project_id == doc.imovel.project_id
-        ).all()
+                ProjectFluxoService.avaliar_fluxo_projeto(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                    definido_por_usuario_id=(
+                        reprovado_por_usuario_id
+                    ),
+                )
 
-        for pagamento in pagamentos:
-            PagamentoAutomacaoService.avaliar_liberacao_pagamento(db, pagamento)
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar fluxo "
+                    "do projeto."
+                )
+
+            try:
+
+                ProjectStatusAutomationService.avaliar_e_atualizar_status(
+                    db=db,
+                    project_id=doc.imovel.project_id,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao atualizar status "
+                    "automático do projeto."
+                )
+
+            try:
+
+                pagamentos = db.query(Pagamento).filter(
+                    Pagamento.project_id
+                    == doc.imovel.project_id
+                ).all()
+
+                for pagamento in pagamentos:
+
+                    PagamentoAutomacaoService.avaliar_liberacao_pagamento(
+                        db,
+                        pagamento,
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "Falha ao avaliar automações "
+                    "de pagamento."
+                )
+
+        else:
+
+            logger.info(
+                "Documento OCR isolado ignorado "
+                "nas automações de fluxo."
+            )
 
         return doc

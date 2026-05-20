@@ -31,6 +31,9 @@ class DocumentoTecnico(Base):
         ),
         Index("ix_doc_tecnico_imovel_group", "imovel_id", "document_group_key"),
         Index("ix_doc_tecnico_status", "status_tecnico"),
+        Index("ix_doc_tecnico_pipeline", "pipeline_utilizado"),
+        Index("ix_doc_tecnico_origem_ocr", "origem_ocr"),
+        Index("ix_doc_tecnico_doc_origem", "documento_origem_id"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -58,11 +61,39 @@ class DocumentoTecnico(Base):
     # Marca a versão atual (ativa) do grupo
     is_versao_atual = Column(Boolean, nullable=False, default=True)
 
+    gerado_automaticamente = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     # =========================================================
     # TIPO / STATUS TÉCNICO
     # =========================================================
     # Tipo humano do documento (ex.: "Memorial Descritivo", "Croqui", "Planilha SIGEF")
     tipo = Column(String(120), nullable=False)
+
+    origem_ocr = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+    prompt_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    pipeline_utilizado = Column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+
+    engine_utilizada = Column(
+        String(120),
+        nullable=True,
+    )
 
     # Status técnico padronizado:
     # RASCUNHO | EM_ANALISE | APROVADO | CORRIGIR | REPROVADO
@@ -83,8 +114,23 @@ class DocumentoTecnico(Base):
     # Caminho/URL do arquivo gerado (PDF, SVG, CSV, ODS etc.)
     arquivo_path = Column(String(512), nullable=True)
 
+    documento_origem_id = Column(
+        Integer,
+        ForeignKey(
+            "documentos_tecnicos.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     # Metadados extras (ex.: hash, origem, versão do algoritmo, epsg, etc.)
     metadata_json = Column(JSON, nullable=True)
+
+    outputs_gerados_json = Column(
+        JSON,
+        nullable=True,
+    )
 
     # =========================================================
     # METADADOS TEMPORAIS
@@ -104,6 +150,21 @@ class DocumentoTecnico(Base):
         nullable=False,
     )
 
+    processado_em = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    tempo_processamento_ms = Column(
+        Integer,
+        nullable=True,
+    )
+
+    score_confianca = Column(
+        Integer,
+        nullable=True,
+    )
+
     # =========================================================
     # RELACIONAMENTOS
     # =========================================================
@@ -113,11 +174,20 @@ class DocumentoTecnico(Base):
         backref="documentos_tecnicos",
     )
 
+    documento_origem = relationship(
+        "DocumentoTecnico",
+        remote_side=[id],
+        lazy="joined",
+    )
+
     def __repr__(self) -> str:
         return (
-            f"<DocumentoTecnico id={self.id} "
+            f"<DocumentoTecnico "
+            f"id={self.id} "
             f"imovel_id={self.imovel_id} "
             f"group={self.document_group_key} "
             f"versao={self.versao} "
-            f"status={self.status_tecnico}>"
+            f"status={self.status_tecnico} "
+            f"pipeline={self.pipeline_utilizado} "
+            f"ocr={self.origem_ocr}>"
         )

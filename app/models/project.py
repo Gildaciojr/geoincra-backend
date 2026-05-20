@@ -13,8 +13,17 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     descricao_simplificada = Column(String(512), nullable=True)
 
+    outputs_gerados_json = Column(
+        Text,
+        nullable=True,
+    )
+
     # Tipo de processo (ex: GEOREFERENCIAMENTO, USUCAPIÃO, DESMEMBRAMENTO)
     tipo_processo = Column(String(80), nullable=True)
+    etapa_pipeline = Column(
+        String(120),
+        nullable=True,
+    )
 
     # Município/UF apenas para referência rápida
     municipio = Column(String(120), nullable=True)
@@ -26,13 +35,75 @@ class Project(Base):
     codigo_car = Column(String(50), nullable=True)
     codigo_sigef = Column(String(50), nullable=True)
 
+    origem_ocr = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+    prompt_principal_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    pipeline_principal = Column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+
+    engine_ocr_utilizada = Column(
+        String(120),
+        nullable=True,
+    )
+
     observacoes = Column(Text, nullable=True)
+
+    score_confianca_ocr = Column(
+        Integer,
+        nullable=True,
+    )
+
+    status_tecnico = Column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    possui_geometria_valida = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    possui_memorial = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    possui_sigef = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
 
     # Status do processo
     status = Column(
         String(50),
         nullable=False,
         default="rascunho",  # rascunho | em_andamento | finalizado | arquivado
+    )
+
+    status_processamento = Column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    processado_em = Column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     # Proprietário do processo (usuário do sistema)
@@ -86,13 +157,20 @@ class Project(Base):
     )
 
     proposals = relationship(
-    "Proposal",
-    back_populates="project",
-    cascade="all, delete-orphan",
-    lazy="select",
-)
+        "Proposal",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
 
 
 
     def __repr__(self) -> str:
-        return f"<Project id={self.id} name={self.name} status={self.status}>"
+        return (
+            f"<Project "
+            f"id={self.id} "
+            f"name={self.name} "
+            f"status={self.status} "
+            f"pipeline={self.pipeline_principal} "
+            f"ocr={self.origem_ocr}>"
+        )

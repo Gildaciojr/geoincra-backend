@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -23,6 +24,10 @@ class DocumentoTecnicoChecklist(Base):
             "chave",
             name="uq_doc_tecnico_checklist_item",
         ),
+
+        Index("ix_doc_checklist_status", "status"),
+        Index("ix_doc_checklist_origem_ocr", "origem_ocr"),
+        Index("ix_doc_checklist_etapa", "etapa_validacao"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -58,6 +63,12 @@ class DocumentoTecnicoChecklist(Base):
         default=True,
     )
 
+    bloqueia_aprovacao = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
     # =========================================================
     # RESULTADO DA VALIDAÇÃO
     # =========================================================
@@ -68,16 +79,64 @@ class DocumentoTecnicoChecklist(Base):
         default="NA",
     )
 
+    etapa_validacao = Column(
+        String(100),
+        nullable=True,
+    )
+
     mensagem = Column(
         Text,
         nullable=True,
         comment="Mensagem técnica explicativa (erro, alerta, observação)",
     )
 
+    auto_corrigido = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    corrigido_por_pipeline = Column(
+        String(255),
+        nullable=True,
+    )
+
+    origem_ocr = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+    prompt_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    pipeline_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    engine_utilizada = Column(
+        String(120),
+        nullable=True,
+    )
+
     validado_automaticamente = Column(
         Boolean,
         nullable=False,
         default=False,
+    )
+
+    score_confianca = Column(
+        Integer,
+        nullable=True,
+    )
+
+    severidade = Column(
+        String(30),
+        nullable=True,
+        default="MEDIA",
     )
 
     validado_por_usuario_id = Column(
@@ -120,8 +179,11 @@ class DocumentoTecnicoChecklist(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<DocumentoTecnicoChecklist id={self.id} "
+            f"<DocumentoTecnicoChecklist "
+            f"id={self.id} "
             f"doc_id={self.documento_tecnico_id} "
             f"chave={self.chave} "
-            f"status={self.status}>"
+            f"status={self.status} "
+            f"etapa={self.etapa_validacao} "
+            f"ocr={self.origem_ocr}>"
         )

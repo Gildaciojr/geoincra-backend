@@ -2113,3 +2113,173 @@ def normalizar_dados_ocr(dados: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("OCR inválido: nenhum proprietário válido identificado")
 
     return resultado
+
+
+# =========================================================
+# NORMALIZADORES ESPECÍFICOS POR PROMPT
+# =========================================================
+def normalizar_documento_bruto(
+    dados: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    if not isinstance(dados, dict):
+        raise ValueError(
+            "Documento bruto inválido."
+        )
+
+    return {
+        "documento_bruto": dados,
+        "payload_original": dados,
+    }
+
+
+def normalizar_documento_pessoal(
+    dados: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    if not isinstance(dados, dict):
+        raise ValueError(
+            "Documento pessoal inválido."
+        )
+
+    pessoa = {
+        "nome": _normalizar_texto(
+            _coalesce(
+                dados.get("nome"),
+                dados.get("nome_completo"),
+                dados.get("titular"),
+            )
+        ),
+
+        "cpf": _normalizar_cpf_cnpj(
+            _coalesce(
+                dados.get("cpf"),
+                dados.get("cpf_cnpj"),
+            )
+        ),
+
+        "rg": _normalizar_texto(
+            dados.get("rg")
+        ),
+
+        "nascimento": _normalizar_texto(
+            dados.get("data_nascimento")
+        ),
+    }
+
+    documentos = {
+        "cpf": pessoa.get("cpf"),
+        "rg": pessoa.get("rg"),
+    }
+
+    return {
+        "pessoa": pessoa,
+        "documentos": documentos,
+        "payload_original": dados,
+    }
+
+
+def normalizar_ficha_sig(
+    dados: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    if not isinstance(dados, dict):
+        raise ValueError(
+            "Ficha SIG inválida."
+        )
+
+    ficha = {
+        "codigo_imovel": _normalizar_texto(
+            _coalesce(
+                dados.get("codigo_imovel"),
+                dados.get("codigo"),
+            )
+        ),
+
+        "denominacao": _normalizar_texto(
+            _coalesce(
+                dados.get("denominacao"),
+                dados.get("nome_imovel"),
+            )
+        ),
+
+        "municipio": _normalizar_texto(
+            dados.get("municipio")
+        ),
+
+        "area_ha": _to_float(
+            _coalesce(
+                dados.get("area_ha"),
+                dados.get("area"),
+            )
+        ),
+    }
+
+    return {
+        "ficha_cadastral": ficha,
+        "payload_original": dados,
+    }
+
+
+def normalizar_confrontantes_croqui(
+    dados: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    if not isinstance(dados, dict):
+        raise ValueError(
+            "Confrontantes inválidos."
+        )
+
+    warnings: List[str] = []
+
+    confrontantes = _resolver_confrontantes(
+        dados,
+        warnings,
+    )
+
+    return {
+        "confrontantes": confrontantes,
+        "warnings": warnings,
+        "payload_original": dados,
+    }
+
+
+def normalizar_memorial_ocr(
+    dados: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    if not isinstance(dados, dict):
+        raise ValueError(
+            "Memorial OCR inválido."
+        )
+
+    warnings: List[str] = []
+
+    segmentos, erros = _resolver_segmentos(
+        dados,
+        warnings,
+    )
+
+    geometria = _resolver_geometria(
+        dados=dados,
+        segmentos_validos=segmentos,
+        warnings=warnings,
+    )
+
+    return {
+        "memorial_texto": geometria.get(
+            "memorial_texto"
+        ),
+
+        "segmentos_memorial": segmentos,
+
+        "geojson": geometria.get(
+            "geojson"
+        ),
+
+        "warnings": warnings,
+
+        "errors": erros,
+
+        "payload_original": dados,
+    }

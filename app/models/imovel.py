@@ -42,21 +42,100 @@ class Imovel(Base):
         index=True,
     )
 
+    documento_origem_id = Column(
+        Integer,
+        ForeignKey(
+            "documents.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     # ================================
     # IDENTIFICAÇÃO DO IMÓVEL
     # ================================
 
     nome = Column(String(255), nullable=True)
+    status_tecnico = Column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
     descricao = Column(Text, nullable=True)
+
+    area_georreferenciada = Column(
+        Float,
+        nullable=True,
+    )
+
+    perimetro_georreferenciado = Column(
+        Float,
+        nullable=True,
+    )
+
+    possui_geometria_valida = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
 
     # Área oficial do imóvel (hectares)
     area_hectares = Column(Float, nullable=False)
 
+    score_confianca_ocr = Column(
+        Integer,
+        nullable=True,
+    )
+
+    validado_tecnicamente = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
     # Código CCIR (quando existir)
     ccir = Column(String(50), nullable=True)
 
+    codigo_incra = Column(
+        String(100),
+        nullable=True,
+    )
+
+    nirf = Column(
+        String(100),
+        nullable=True,
+    )
+
+    itr = Column(
+        String(100),
+        nullable=True,
+    )
+
     # Número da matrícula principal
     matricula_principal = Column(String(100), nullable=True)
+
+    origem_ocr = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+    prompt_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    pipeline_utilizado = Column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+
+    engine_utilizada = Column(
+        String(120),
+        nullable=True,
+    )
 
     created_at = Column(
         DateTime(timezone=True),
@@ -83,6 +162,11 @@ class Imovel(Base):
 
     municipio = relationship(
         "Municipio",
+        lazy="joined",
+    )
+
+    documento_origem = relationship(
+        "Document",
         lazy="joined",
     )
 
@@ -114,9 +198,19 @@ class Imovel(Base):
         passive_deletes=True,
     )
 
+    documentos_tecnicos = relationship(
+        "DocumentoTecnico",
+        back_populates="imovel",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     def __repr__(self) -> str:
         return (
-            f"<Imovel id={self.id} "
+            f"<Imovel "
+            f"id={self.id} "
+            f"project_id={self.project_id} "
             f"area={self.area_hectares}ha "
-            f"project_id={self.project_id}>"
+            f"pipeline={self.pipeline_utilizado} "
+            f"ocr={self.origem_ocr}>"
         )

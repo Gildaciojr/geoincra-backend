@@ -24,6 +24,9 @@ class Confrontante(Base):
         Index("ix_confrontantes_ordem_segmento", "ordem_segmento"),
         # 🔥 novo índice para vínculo futuro
         Index("ix_confrontantes_matricula_id", "matricula_id"),
+        Index("ix_confrontantes_hash_segmento", "hash_segmento"),
+        Index("ix_confrontantes_origem_ocr", "origem_ocr"),
+        Index("ix_confrontantes_pipeline_utilizado", "pipeline_utilizado"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -73,8 +76,34 @@ class Confrontante(Base):
         index=True,
     )
 
+    hash_segmento = Column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+
     lado_label = Column(
         String(30),
+        nullable=True,
+    )
+
+    vertice_inicial = Column(
+        String(100),
+        nullable=True,
+    )
+
+    vertice_final = Column(
+        String(100),
+        nullable=True,
+    )
+
+    distancia_metros = Column(
+        String(50),
+        nullable=True,
+    )
+
+    azimute = Column(
+        String(50),
         nullable=True,
     )
 
@@ -107,10 +136,42 @@ class Confrontante(Base):
         nullable=True,
     )
 
+    origem_ocr = Column(
+        String(120),
+        nullable=True,
+        index=True,
+    )
+
+    prompt_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    pipeline_utilizado = Column(
+        String(255),
+        nullable=True,
+    )
+
+    engine_utilizada = Column(
+        String(120),
+        nullable=True,
+    )
+
     # 🔥 NOVOS CAMPOS (sem quebrar nada)
     tipo = Column(
         String(50),
         nullable=True,
+    )
+
+    score_confianca = Column(
+        Integer,
+        nullable=True,
+    )
+
+    validado_manualmente = Column(
+        Integer,
+        nullable=False,
+        default=0,
     )
 
     lote = Column(
@@ -121,6 +182,18 @@ class Confrontante(Base):
     gleba = Column(
         String(50),
         nullable=True,
+    )
+
+    confrontante_tecnico = Column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
+
+    confrontante_auxiliar = Column(
+        Integer,
+        nullable=False,
+        default=0,
     )
 
     # =========================================================
@@ -161,11 +234,13 @@ class Confrontante(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Confrontante id={self.id} "
+            f"<Confrontante "
+            f"id={self.id} "
             f"imovel_id={self.imovel_id} "
             f"geometria_id={self.geometria_id} "
             f"matricula_id={self.matricula_id} "
             f"direcao={self.direcao} "
-            f"direcao_normalizada={self.direcao_normalizada} "
-            f"ordem_segmento={self.ordem_segmento}>"
+            f"ordem_segmento={self.ordem_segmento} "
+            f"origem_ocr={self.origem_ocr} "
+            f"pipeline={self.pipeline_utilizado}>"
         )

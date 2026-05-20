@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,8 @@ from app.services.memorial_parser_service import MemorialParserService
 from app.services.memorial_service import MemorialService
 from app.services.geometria_service import GeometriaService
 from app.services.geometria_persistencia_service import GeometriaPersistenciaService
+
+logger = logging.getLogger(__name__)
 
 
 class MatriculaOcrProcessorService:
@@ -130,7 +133,10 @@ class MatriculaOcrProcessorService:
 
                 inteiro_teor=ocr.texto_extraido,
                 arquivo_path=document.file_path,
-                observacoes="Criado automaticamente via OCR",
+                observacoes=(
+                    "Criado automaticamente via OCR | "
+                    f"ocr_result_id={ocr.id}"
+                ),
             )
 
             db.add(matricula)
@@ -158,6 +164,22 @@ class MatriculaOcrProcessorService:
 
         if ocr.texto_extraido:
             matricula.inteiro_teor = ocr.texto_extraido
+
+        observacao_atual = (
+            matricula.observacoes or ""
+        )
+
+        rastreamento = (
+             f"ocr_result_id={ocr.id}"
+        )
+
+        if rastreamento not in observacao_atual:
+            matricula.observacoes = (
+                f"{observacao_atual} | {rastreamento}"
+                if observacao_atual
+                else rastreamento
+            )
+
 
         if document.file_path:
             matricula.arquivo_path = document.file_path
@@ -596,6 +618,22 @@ class MatriculaOcrProcessorService:
 
             if not ocr.dados_extraidos_json:
                 raise Exception("OCR não possui dados estruturados.")
+            
+            categoria_ocr = str(
+                getattr(ocr, "categoria", "") or ""
+            ).strip().upper()
+
+            categorias_matricula_validas = {
+                "MATRICULA",
+                "ANALISE_MATRICULA",
+                "ANALISE_MATRICULA_COMPLETA",
+                "ANALISE_TECNICA_COMPLETA_MATRICULA",
+            }
+
+            if categoria_ocr not in categorias_matricula_validas:
+                raise Exception(
+                    "OCR incompatível com pipeline de matrícula."
+                )
 
             dados_brutos = MatriculaOcrProcessorService._parse_json(
                 ocr.dados_extraidos_json
@@ -724,67 +762,115 @@ class MatriculaOcrProcessorService:
                     parsed = MemorialParserService.gerar_geometria(memorial_texto)
                     geojson = parsed.get("geojson")
                 except Exception as e:
-                    print(f"[ERRO] Parser de memorial falhou: {str(e)}")
+                    logger.exception(
+                        "Parser de memorial OCR falhou."
+                    )
                     geojson = None
 
             # =========================================================
             # PIPELINE DE GEOMETRIA COMPLETO
             # =========================================================
+            geojson_normalizado = None
+
             if geojson:
 
                 try:
-                    geometria = GeometriaService.salvar_geometria(
-                        db=db,
-                        imovel_id=imovel.id,
-                        geojson=geojson,
+
+                    geojson_normalizado = (
+                        GeometriaService.validar_geojson(
+                            geojson
+                        )
+                    )
+
+                    if not geojson_normalizado:
+                        raise Exception(
+                            "GeoJSON inválido após validação."
+                        )
+
+                    geometria = (
+                        GeometriaService.salvar_geometria(
+                            db=db,
+                            imovel_id=imovel.id,
+                            geojson=geojson_normalizado,
+                        )
                     )
 
                     try:
+
                         GeometriaPersistenciaService.persistir_estrutura(
                             db=db,
                             geometria_id=geometria.id,
-                            geojson=geojson,
+                            geojson=geojson_normalizado,
                         )
-                    except Exception as e:
-                        print(f"[ERRO] Persistência de geometria falhou: {str(e)}")
+
+                    except Exception as exc:
+
+                        logger.exception(
+                            "Persistência de geometria OCR falhou."
+                        )
 
                     try:
+
                         MemorialService.gerar_memorial(
                             geometria_id=geometria.id,
-                            geojson=geojson,
-                            area_hectares=dados.get("area_hectares") or dados.get("area_total") or 0,
-                            perimetro_m=getattr(geometria, "perimetro_m", 0) or 0,
+                            geojson=geojson_normalizado,
+                            area_hectares=(
+                                dados.get("area_hectares")
+                                or dados.get("area_total")
+                                or 0
+                            ),
+                            perimetro_m=(
+                                getattr(
+                                    geometria,
+                                    "perimetro_m",
+                                    0,
+                                )
+                                or 0
+                            ),
                             imovel_id=imovel.id,
                         )
-                    except Exception as e:
-                        print(f"[ERRO] Geração de memorial falhou: {str(e)}")
 
-                except Exception as e:
-                    print(f"[ERRO] Falha ao salvar geometria: {str(e)}")
-                    geojson = None
+                    except Exception as exc:
+
+                        logger.exception(
+                            "Geração de memorial OCR falhou."
+                        )
+
+                except Exception as exc:
+
+                    logger.exception(
+                        "Falha ao salvar geometria OCR."
+                    )
+
+                    geojson_normalizado = None
 
             # =========================================================
             # COMMIT FINAL
             # =========================================================
             db.commit()
+
             db.refresh(matricula)
 
             return {
                 "status": "SUCCESS",
                 "matricula_id": matricula.id,
                 "imovel_id": imovel.id,
-                "numero_matricula": matricula.numero_matricula,
-                "total_proprietarios": len(proprietarios),
-                "geojson": geojson,
+                "numero_matricula": (
+                    matricula.numero_matricula
+                ),
+                "total_proprietarios": len(
+                    proprietarios
+                ),
+                "geojson": geojson_normalizado,
             }
 
-        except Exception as e:
+        except Exception as exc:
 
             db.rollback()
 
             return {
                 "status": "ERROR",
-                "message": str(e)
+                "message": str(exc),
             }
 
 

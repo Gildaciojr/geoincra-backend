@@ -6,8 +6,11 @@ from typing import Any
 import re
 import shutil
 from datetime import datetime
+import logging
 
 from docx import Document  # python-docx
+
+logger = logging.getLogger(__name__)
 
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}")
@@ -19,17 +22,40 @@ def _get_value(data: dict[str, Any], key: str) -> str:
       - "cliente_nome"
       - "proprietario.cpf"
     """
+
+    if not isinstance(data, dict):
+        return ""
+
+    if not key:
+        return ""
+
     if "." not in key:
+
         val = data.get(key, "")
-        return "" if val is None else str(val)
+
+        if val is None:
+            return ""
+
+        if isinstance(val, (dict, list)):
+            return ""
+
+        return str(val)
 
     cur: Any = data
+
     for part in key.split("."):
+
         if not isinstance(cur, dict):
             return ""
+
         cur = cur.get(part)
+
         if cur is None:
             return ""
+
+    if isinstance(cur, (dict, list)):
+        return ""
+
     return str(cur)
 
 
@@ -74,10 +100,33 @@ def fill_docx_template(template_path: Path, data: dict[str, Any], output_dir: Pa
 
     # cria cópia para escrita segura
     ts = int(datetime.utcnow().timestamp())
-    out_path = output_dir / f"requerimento_{ts}.docx"
+    documento_nome = (
+        data.get("documento_nome")
+        or data.get("tipo_documento")
+        or "requerimento"
+    )
+    documento_nome = re.sub(
+        r"[^a-zA-Z0-9_-]+",
+        "_",
+        str(documento_nome).lower(),
+    )
+    out_path = output_dir / (
+        f"{documento_nome}_{ts}.docx"
+    )
     shutil.copyfile(template_path, out_path)
 
-    doc = Document(str(out_path))
+    try:
+        doc = Document(str(out_path))
+
+    except Exception as exc:
+
+        logger.exception(
+             "Falha ao abrir template DOCX."
+        )
+
+        raise RuntimeError(
+            "Template DOCX inválido ou corrompido."
+        ) from exc
 
     # paragraphs
     for p in doc.paragraphs:
@@ -88,4 +137,10 @@ def fill_docx_template(template_path: Path, data: dict[str, Any], output_dir: Pa
         _replace_in_table(t, data)
 
     doc.save(str(out_path))
+
+    logger.info(
+        "DOCX gerado com sucesso: %s",
+        str(out_path),
+    )
+
     return out_path

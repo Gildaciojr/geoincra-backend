@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime
 from typing import List
 
@@ -12,6 +14,9 @@ from app.models.imovel import Imovel
 from app.models.timeline import TimelineEntry
 from app.crud.project_status_crud import definir_status_projeto
 from app.schemas.project_status import ProjectStatusCreate
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectFluxoService:
@@ -44,6 +49,30 @@ class ProjectFluxoService:
     DOC_REPROVADO = "REPROVADO"
     DOC_EM_ANALISE = "EM_ANALISE"
     DOC_RASCUNHO = "RASCUNHO"
+
+    # =========================================================
+    # DOCUMENTOS OCR AUXILIARES — NÃO MOVEM FLUXO DO PROJETO
+    # =========================================================
+
+    TIPOS_OCR_ISOLADOS = {
+        "OCR Dados Brutos",
+        "OCR Documentos Pessoais",
+        "OCR Ficha Cadastral SIG",
+        "OCR Confrontantes Croqui",
+    }
+
+    @staticmethod
+    def _documento_participa_fluxo(
+        doc: DocumentoTecnico,
+    ) -> bool:
+
+        if not doc:
+            return False
+
+        return (
+            doc.tipo
+            not in ProjectFluxoService.TIPOS_OCR_ISOLADOS
+        )
 
     @staticmethod
     def avaliar_fluxo_projeto(
@@ -82,13 +111,33 @@ class ProjectFluxoService:
                 definido_por_usuario_id=definido_por_usuario_id,
             )
 
-        total = len(documentos)
+        documentos_fluxo: List[DocumentoTecnico] = [
+            doc
+            for doc in documentos
+            if ProjectFluxoService._documento_participa_fluxo(doc)
+        ]
+
+        if not documentos_fluxo:
+            logger.info(
+                "Projeto possui apenas documentos OCR auxiliares. project_id=%s",
+                project_id,
+            )
+
+            return ProjectFluxoService._definir_status(
+                db=db,
+                project_id=project_id,
+                status=ProjectFluxoService.STATUS_DOCUMENTOS_EM_ANALISE,
+                descricao="Projeto possui apenas documentos OCR auxiliares.",
+                definido_por_usuario_id=definido_por_usuario_id,
+            )
+
+        total = len(documentos_fluxo)
         aprovados = 0
         corrigir = 0
         reprovados = 0
         em_analise = 0
 
-        for doc in documentos:
+        for doc in documentos_fluxo:
             status_doc = (doc.status_tecnico or "").upper().strip()
 
             if status_doc == ProjectFluxoService.DOC_APROVADO:
@@ -155,6 +204,17 @@ class ProjectFluxoService:
         descricao: str,
         definido_por_usuario_id: int | None,
     ) -> ProjectStatus:
+
+        ultimo_status: ProjectStatus | None = (
+            db.query(ProjectStatus)
+            .filter(ProjectStatus.project_id == project_id)
+            .order_by(ProjectStatus.created_at.desc())
+            .first()
+        )
+
+        if ultimo_status and ultimo_status.status == status:
+            return ultimo_status
+
         payload = ProjectStatusCreate(
             status=status,
             descricao=descricao,
