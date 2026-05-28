@@ -181,11 +181,6 @@ class Imovel(Base):
         lazy="joined",
     )
 
-    responsavel_tecnico = relationship(
-        "ResponsavelTecnico",
-        lazy="joined",
-    )
-
     confrontantes = relationship(
         "Confrontante",
         back_populates="imovel",
