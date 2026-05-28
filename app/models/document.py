@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Boolean, String, BigInteger, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -35,7 +35,7 @@ class Document(Base):
     )
 
     tamanho_bytes = Column(
-        Integer,
+        BigInteger,
         nullable=True,
     )
 
@@ -66,9 +66,9 @@ class Document(Base):
     file_path = Column(String(512), nullable=True)
 
     arquivo_gerado_automaticamente = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     documento_origem_id = Column(

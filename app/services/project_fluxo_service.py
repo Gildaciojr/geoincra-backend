@@ -50,6 +50,14 @@ class ProjectFluxoService:
     DOC_EM_ANALISE = "EM_ANALISE"
     DOC_RASCUNHO = "RASCUNHO"
 
+    DOC_STATUS_VALIDOS = {
+        DOC_APROVADO,
+        DOC_CORRIGIR,
+        DOC_REPROVADO,
+        DOC_EM_ANALISE,
+        DOC_RASCUNHO,
+    }
+
     # =========================================================
     # DOCUMENTOS OCR AUXILIARES — NÃO MOVEM FLUXO DO PROJETO
     # =========================================================
@@ -59,6 +67,7 @@ class ProjectFluxoService:
         "OCR Documentos Pessoais",
         "OCR Ficha Cadastral SIG",
         "OCR Confrontantes Croqui",
+        "OCR Matrícula",
     }
 
     @staticmethod
@@ -138,19 +147,47 @@ class ProjectFluxoService:
         em_analise = 0
 
         for doc in documentos_fluxo:
-            status_doc = (doc.status_tecnico or "").upper().strip()
+
+            status_doc = (
+                (doc.status_tecnico or "")
+                .upper()
+                .strip()
+            )
+
+            if (
+                status_doc
+                not in ProjectFluxoService.DOC_STATUS_VALIDOS
+            ):
+
+                logger.warning(
+                    "Status técnico inválido detectado. "
+                    "documento_id=%s status=%s",
+                    getattr(doc, "id", None),
+                    status_doc,
+                )
+
+                em_analise += 1
+                continue
 
             if status_doc == ProjectFluxoService.DOC_APROVADO:
+
                 aprovados += 1
+
             elif status_doc == ProjectFluxoService.DOC_CORRIGIR:
+
                 corrigir += 1
+
             elif status_doc == ProjectFluxoService.DOC_REPROVADO:
+
                 reprovados += 1
+
             elif status_doc in (
                 ProjectFluxoService.DOC_EM_ANALISE,
                 ProjectFluxoService.DOC_RASCUNHO,
             ):
+
                 em_analise += 1
+            
 
         if reprovados > 0:
             return ProjectFluxoService._definir_status(
@@ -193,6 +230,19 @@ class ProjectFluxoService:
             project_id=project_id,
             status=ProjectFluxoService.STATUS_DOCUMENTOS_EM_ANALISE,
             descricao="Estado técnico indefinido. Revisão necessária.",
+            definido_por_usuario_id=definido_por_usuario_id,
+        )
+    
+    @staticmethod
+    def reavaliar_fluxo_projeto(
+        db: Session,
+        project_id: int,
+        definido_por_usuario_id: int | None = None,
+    ) -> ProjectStatus:
+        
+        return ProjectFluxoService.avaliar_fluxo_projeto(
+            db=db,
+            project_id=project_id,
             definido_por_usuario_id=definido_por_usuario_id,
         )
 

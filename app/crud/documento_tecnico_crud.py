@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.imovel import Imovel
 from app.models.documento_tecnico import DocumentoTecnico
@@ -19,7 +20,10 @@ from app.services.project_automacao_service import ProjectAutomacaoService
 # HELPERS
 # =========================================================
 def _validar_imovel(db: Session, imovel_id: int) -> Imovel:
-    imovel = db.query(Imovel).filter(Imovel.id == imovel_id).first()
+    imovel = db.get(
+        Imovel,
+        imovel_id,
+    )
     if not imovel:
         raise ValueError("Imóvel não encontrado.")
     return imovel
@@ -177,10 +181,9 @@ def get_documento_tecnico(
     db: Session,
     documento_id: int,
 ) -> DocumentoTecnico | None:
-    return (
-        db.query(DocumentoTecnico)
-        .filter(DocumentoTecnico.id == documento_id)
-        .first()
+    return db.get(
+        DocumentoTecnico,
+        documento_id,
     )
 
 
@@ -200,8 +203,15 @@ def update_documento_tecnico(
     for field, value in payload.items():
         setattr(obj, field, value)
 
-    db.commit()
-    db.refresh(obj)
+    try:
+        db.commit()
+
+        db.refresh(obj)
+
+    except SQLAlchemyError:
+        db.rollback()
+
+        raise
 
     project_id = obj.imovel.project_id
     _executar_automacoes_pos_documento(db, project_id)
@@ -244,9 +254,19 @@ def criar_nova_versao(
         gerado_em=data.gerado_em,
     )
 
-    db.add(obj)
-    db.commit()
-    db.refresh(obj)
+    try:
+
+        db.add(obj)
+
+        db.commit()
+
+        db.refresh(obj)
+
+    except SQLAlchemyError:
+
+        db.rollback()
+
+        raise
 
     project_id = obj.imovel.project_id
     _executar_automacoes_pos_documento(db, project_id)
@@ -260,10 +280,10 @@ def criar_nova_versao(
 def delete_documento_tecnico(
     db: Session,
     documento_id: int,
-) -> bool:
+) -> DocumentoTecnico | None:
     obj = get_documento_tecnico(db, documento_id)
     if not obj:
-        return False
+        return None
 
     imovel_id = obj.imovel_id
     group_key = obj.document_group_key
@@ -292,4 +312,4 @@ def delete_documento_tecnico(
 
     _executar_automacoes_pos_documento(db, project_id)
 
-    return True
+    return obj

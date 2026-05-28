@@ -1,6 +1,8 @@
 # app/crud/imovel_crud.py
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+
 from fastapi import HTTPException
 
 from app.models.imovel import Imovel
@@ -31,10 +33,21 @@ def create_imovel(db: Session, data: ImovelCreate):
         matricula_principal=data.matricula_principal,
     )
 
-    db.add(imovel)
-    db.commit()
-    db.refresh(imovel)
-    return imovel
+    try:
+
+        db.add(imovel)
+
+        db.commit()
+
+        db.refresh(imovel)
+
+        return imovel
+    
+    except SQLAlchemyError:
+
+        db.rollback()
+
+        raise
 
 
 # =====================================================
@@ -52,9 +65,15 @@ def list_imoveis_by_project(db: Session, project_id: int):
 # =====================================================
 # Buscar imóvel por ID
 # =====================================================
-def get_imovel(db: Session, imovel_id: int):
-    return db.query(Imovel).filter(Imovel.id == imovel_id).first()
+def get_imovel(
+        db: Session,
+        imovel_id: int,
+    ) -> Imovel | None:
 
+        return db.get(
+            Imovel,
+            imovel_id,
+        )
 
 # =====================================================
 # Atualizar imóvel
@@ -74,19 +93,42 @@ def update_imovel(db: Session, imovel_id: int, data: ImovelUpdate):
     for field, value in payload.items():
         setattr(imovel, field, value)
 
-    db.commit()
-    db.refresh(imovel)
-    return imovel
+    try:
 
+        db.commit()
+
+        db.refresh(imovel)
+
+        return imovel
+    
+    except SQLAlchemyError:
+
+        db.rollback()
+
+        raise
 
 # =====================================================
 # Deletar imóvel
 # =====================================================
-def delete_imovel(db: Session, imovel_id: int):
+def delete_imovel(
+        db: Session,
+        imovel_id: int,
+    ) -> Imovel | None:
     imovel = get_imovel(db, imovel_id)
     if not imovel:
-        return False
+        return None
+    
+    try:
 
-    db.delete(imovel)
-    db.commit()
-    return True
+        db.delete(imovel)
+
+        db.commit()
+
+        return imovel
+    
+    except SQLAlchemyError:
+
+        db.rollback()
+
+        raise
+    

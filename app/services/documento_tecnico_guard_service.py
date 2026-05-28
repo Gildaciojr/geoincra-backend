@@ -28,6 +28,7 @@ class DocumentoTecnicoGuardService:
         "OCR Documentos Pessoais",
         "OCR Ficha Cadastral SIG",
         "OCR Confrontantes Croqui",
+        "OCR Matrícula",
     }
 
     @staticmethod
@@ -55,10 +56,12 @@ class DocumentoTecnicoGuardService:
         # =====================================================
         if (
             documento.is_versao_atual
-            and documento.status_tecnico
-            == DocumentoTecnicoGuardService
-            .STATUS_APROVADO
-        ):
+            and (
+                documento.status_tecnico
+                or ""
+            ).upper().strip()
+            == DocumentoTecnicoGuardService.STATUS_APROVADO
+            ):
 
             raise HTTPException(
                 status_code=409,

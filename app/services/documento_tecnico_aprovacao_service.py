@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.documento_tecnico import DocumentoTecnico
 from app.models.documento_tecnico_checklist import DocumentoTecnicoChecklist
@@ -27,11 +28,16 @@ class DocumentoTecnicoAprovacaoService:
     STATUS_REPROVADO = "REPROVADO"
     STATUS_EM_ANALISE = "EM_ANALISE"
 
+    STATUS_CHECKLIST_OK = "OK"
+    STATUS_CHECKLIST_ALERTA = "ALERTA"
+    STATUS_CHECKLIST_ERRO = "ERRO"
+
     TIPOS_OCR_ISOLADOS = {
         "OCR Dados Brutos",
         "OCR Documentos Pessoais",
         "OCR Ficha Cadastral SIG",
         "OCR Confrontantes Croqui",
+        "OCR Matrícula",
     }
     
     @staticmethod
@@ -56,9 +62,10 @@ class DocumentoTecnicoAprovacaoService:
         parecer_tecnico: Optional[str] = None,
     ) -> DocumentoTecnico:
 
-        doc = db.query(DocumentoTecnico).filter(
-            DocumentoTecnico.id == documento_id
-        ).first()
+        doc = db.get(
+            DocumentoTecnico,
+            documento_id,
+        )
 
         if not doc:
             raise ValueError("Documento técnico não encontrado.")
@@ -72,7 +79,7 @@ class DocumentoTecnicoAprovacaoService:
             DocumentoTecnicoChecklist.documento_tecnico_id == documento_id
         ).update(
             {
-                "status": "APROVADO",
+                "status": DocumentoTecnicoAprovacaoService.STATUS_CHECKLIST_OK,
                 "validado_automaticamente": False,
                 "validado_por_usuario_id": aprovado_por_usuario_id,
                 "validado_em": datetime.utcnow(),
@@ -87,9 +94,21 @@ class DocumentoTecnicoAprovacaoService:
             created_at=datetime.utcnow(),
         )
 
-        db.add(timeline)
-        db.commit()
-        db.refresh(doc)
+        try:
+
+            db.add(timeline)
+
+            db.commit()
+
+            db.refresh(doc)
+
+        except SQLAlchemyError:
+
+            db.rollback()
+
+            raise
+
+
 
         if (
             DocumentoTecnicoAprovacaoService
@@ -165,9 +184,10 @@ class DocumentoTecnicoAprovacaoService:
         motivo: str,
     ) -> DocumentoTecnico:
 
-        doc = db.query(DocumentoTecnico).filter(
-            DocumentoTecnico.id == documento_id
-        ).first()
+        doc = db.get(
+            DocumentoTecnico,
+            documento_id,
+        )
 
         if not doc:
             raise ValueError("Documento técnico não encontrado.")
@@ -180,7 +200,7 @@ class DocumentoTecnicoAprovacaoService:
             DocumentoTecnicoChecklist.documento_tecnico_id == documento_id
         ).update(
             {
-                "status": "CORRIGIR",
+                "status": DocumentoTecnicoAprovacaoService.STATUS_CHECKLIST_ALERTA,
                 "validado_automaticamente": False,
                 "validado_por_usuario_id": None,
                 "validado_em": None,
@@ -195,9 +215,19 @@ class DocumentoTecnicoAprovacaoService:
             created_at=datetime.utcnow(),
         )
 
-        db.add(timeline)
-        db.commit()
-        db.refresh(doc)
+        try:
+
+            db.add(timeline)
+
+            db.commit()
+
+            db.refresh(doc)
+
+        except SQLAlchemyError:
+
+            db.rollback()
+
+            raise
 
         if (
             DocumentoTecnicoAprovacaoService
@@ -273,9 +303,10 @@ class DocumentoTecnicoAprovacaoService:
         motivo: str,
     ) -> DocumentoTecnico:
 
-        doc = db.query(DocumentoTecnico).filter(
-            DocumentoTecnico.id == documento_id
-        ).first()
+        doc = db.get(
+            DocumentoTecnico,
+            documento_id,
+        )
 
         if not doc:
             raise ValueError("Documento técnico não encontrado.")
@@ -288,7 +319,7 @@ class DocumentoTecnicoAprovacaoService:
             DocumentoTecnicoChecklist.documento_tecnico_id == documento_id
         ).update(
             {
-                "status": "REPROVADO",
+                "status": DocumentoTecnicoAprovacaoService.STATUS_CHECKLIST_ERRO,
                 "validado_automaticamente": False,
                 "validado_por_usuario_id": None,
                 "validado_em": None,
@@ -303,9 +334,19 @@ class DocumentoTecnicoAprovacaoService:
             created_at=datetime.utcnow(),
         )
 
-        db.add(timeline)
-        db.commit()
-        db.refresh(doc)
+        try:
+
+            db.add(timeline)
+
+            db.commit()
+
+            db.refresh(doc)
+
+        except SQLAlchemyError:
+
+            db.rollback()
+
+            raise
 
         if (
             DocumentoTecnicoAprovacaoService

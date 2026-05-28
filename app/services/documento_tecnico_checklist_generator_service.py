@@ -551,11 +551,9 @@ class DocumentoTecnicoChecklistGeneratorService:
                 existente = (
                     db.query(DocumentoTecnicoChecklist)
                     .filter(
-                        DocumentoTecnicoChecklist.documento_tecnico_id
-                        == documento.id,
+                        DocumentoTecnicoChecklist.documento_tecnico_id == documento.id,
 
-                        DocumentoTecnicoChecklist.chave
-                        == chave,
+                        DocumentoTecnicoChecklist.chave == chave,
                     )
                     .first()
                 )

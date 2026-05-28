@@ -10,6 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean
 from app.core.database import Base
 
 
@@ -52,6 +53,16 @@ class Imovel(Base):
         index=True,
     )
 
+    responsavel_tecnico_id = Column(
+        Integer,
+        ForeignKey(
+            "responsaveis_tecnicos.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     # ================================
     # IDENTIFICAÇÃO DO IMÓVEL
     # ================================
@@ -75,9 +86,9 @@ class Imovel(Base):
     )
 
     possui_geometria_valida = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     # Área oficial do imóvel (hectares)
@@ -89,9 +100,9 @@ class Imovel(Base):
     )
 
     validado_tecnicamente = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
+        default=False,
     )
 
     # Código CCIR (quando existir)
@@ -167,6 +178,11 @@ class Imovel(Base):
 
     documento_origem = relationship(
         "Document",
+        lazy="joined",
+    )
+
+    responsavel_tecnico = relationship(
+        "ResponsavelTecnico",
         lazy="joined",
     )
 

@@ -210,7 +210,10 @@ def delete_documento_tecnico_route(
 ):
     _check_documento_owner(db, documento_id, current_user.id)
 
-    delete_documento_tecnico(db, documento_id)
+    deleted_doc = delete_documento_tecnico(
+        db,
+        documento_id,
+    )
 
     AuditService.log(
         db,
@@ -220,4 +223,7 @@ def delete_documento_tecnico_route(
         source="api",
         payload_json={},
     )
-    return {"deleted": True}
+    return {
+        "deleted": True,
+        "id": deleted_doc.id,
+    }

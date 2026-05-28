@@ -76,10 +76,9 @@ class DocumentoTecnicoOrquestracaoService:
         # =========================================================
         # 2️⃣ Atualização do fluxo do projeto
         # =========================================================
-        imovel = (
-            db.query(Imovel)
-            .filter(Imovel.id == documento.imovel_id)
-            .first()
+        imovel = db.get(
+            Imovel,
+            documento.imovel_id,
         )
 
         if imovel:

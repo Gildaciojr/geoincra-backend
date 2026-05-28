@@ -123,5 +123,12 @@ def delete_imovel_route(
     if not imovel or imovel.project_id != project_id:
         raise HTTPException(status_code=404, detail="Imóvel não encontrado")
 
-    delete_imovel(db, imovel_id)
-    return {"deleted": True}
+    deleted_imovel = delete_imovel(
+        db,
+        imovel_id,
+    )
+
+    return {
+        "deleted": True,
+        "id": deleted_imovel.id,
+    }

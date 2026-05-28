@@ -17,10 +17,23 @@ def create_document(db: Session, project_id: int, data: DocumentCreate) -> Docum
         file_path=data.file_path,
         observacoes=data.observacoes,
     )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-    return doc
+
+    try:
+
+        db.add(doc)
+
+        db.commit()
+
+        db.refresh(doc)
+
+        return doc
+    
+    except Exception:
+
+        db.rollback()
+
+        raise
+
 
 
 def get_document(db: Session, document_id: int) -> Document | None:
@@ -39,10 +52,10 @@ def list_documents_by_project(db: Session, project_id: int) -> list[Document]:
 BASE_UPLOAD_PATH = Path("/app/app/uploads").resolve()
 
 
-def delete_document(db: Session, document_id: int) -> bool:
+def delete_document(db: Session, document_id: int) -> Document | None:
     doc = get_document(db, document_id)
     if not doc:
-        return False
+        return None
 
     # 🔥 REMOVE ARQUIVO FÍSICO
     try:
@@ -60,6 +73,17 @@ def delete_document(db: Session, document_id: int) -> bool:
         # não interrompe delete se falhar exclusão física
         pass
 
-    db.delete(doc)
-    db.commit()
-    return True
+    try:
+        db.delete(doc)
+
+        db.commit()
+
+        return doc
+    
+    except Exception:
+
+        db.rollback()
+
+        raise
+
+

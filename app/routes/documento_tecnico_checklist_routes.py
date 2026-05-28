@@ -18,6 +18,11 @@ from app.crud.documento_tecnico_checklist_crud import (
     atualizar_item_checklist,
     deletar_item_checklist,
 )
+
+from app.models.documento_tecnico_checklist import (
+    DocumentoTecnicoChecklist,
+)
+
 from app.services.documento_tecnico_orquestracao_service import (
     DocumentoTecnicoOrquestracaoService,
 )
@@ -123,9 +128,30 @@ def delete_checklist_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    item = deletar_item_checklist(db, checklist_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
 
-    _check_documento_owner(db, item.documento_tecnico_id, current_user.id)
-    return {"deleted": True}
+    item = db.get(
+        DocumentoTecnicoChecklist,
+        checklist_id,
+    )
+
+    if not item:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Item de checklist não encontrado.",
+        )
+
+    _check_documento_owner(
+        db,
+        item.documento_tecnico_id,
+        current_user.id,
+    )
+
+    deletar_item_checklist(
+        db,
+        checklist_id,
+    )
+
+    return {
+        "deleted": True,
+    }

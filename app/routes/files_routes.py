@@ -29,8 +29,24 @@ def download_document(
 
     if doc.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Acesso negado")
+    
+    if doc.project.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso negado",
+        )
+    
+    if not doc.file_path:
 
-    file_path = (BASE_UPLOAD_PATH / doc.file_path).resolve()
+        raise HTTPException(
+            status_code=404,
+            detail="Documento sem arquivo vinculado.",
+        )
+
+    file_path = (
+        BASE_UPLOAD_PATH
+        / doc.file_path
+    ).resolve()
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor")

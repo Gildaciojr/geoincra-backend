@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.documento_tecnico import DocumentoTecnico
 from app.models.documento_tecnico_checklist import (
@@ -133,7 +134,10 @@ class DocumentoTecnicoValidacaoService:
             # =================================================
             # ITEM OK
             # =================================================
-            if status_item == "OK":
+            if status_item == (
+                DocumentoTecnicoValidacaoService
+                .CHECKLIST_OK
+            ):
                 continue
 
             # =================================================
@@ -152,12 +156,10 @@ class DocumentoTecnicoValidacaoService:
             # NÃO APLICÁVEL OBRIGATÓRIO
             # =================================================
             if (
-                status_item == "NA"
-                and item.obrigatorio
+                status_item
+                == DocumentoTecnicoValidacaoService.CHECKLIST_NA
             ):
-
-                pendentes_criticos.append(item)
-
+                pendentes_nao_criticos.append(item)
                 continue
 
             # =================================================
@@ -256,11 +258,18 @@ class DocumentoTecnicoValidacaoService:
 
         documento.updated_at = datetime.utcnow()
 
-        db.commit()
+        try:
+            db.commit()
 
-        db.refresh(documento)
+            db.refresh(documento)
 
-        return documento
+            return documento
+        
+        except SQLAlchemyError:
+
+            db.rollback()
+
+            raise
 
     @staticmethod
     def _montar_observacao(
