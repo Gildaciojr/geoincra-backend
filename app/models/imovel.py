@@ -53,16 +53,6 @@ class Imovel(Base):
         index=True,
     )
 
-    responsavel_tecnico_id = Column(
-        Integer,
-        ForeignKey(
-            "responsaveis_tecnicos.id",
-            ondelete="SET NULL",
-        ),
-        nullable=True,
-        index=True,
-    )
-
     # ================================
     # IDENTIFICAÇÃO DO IMÓVEL
     # ================================
