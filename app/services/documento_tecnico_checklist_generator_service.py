@@ -178,6 +178,12 @@ class DocumentoTecnicoChecklistGeneratorService:
             "SIGEF CSV": "SIGEF",
             "SIGEF": "SIGEF",
 
+            "PLANILHA SIGEF": "SIGEF",
+            "PLANILHA SIGEF (CSV)": "SIGEF",
+            "PLANILHA SIGEF CSV": "SIGEF",
+
+            "SIGEF PLANILHA": "SIGEF",
+
             "GEOJSON": "GEOJSON",
             "GEOMETRIA": "GEOJSON",
 
@@ -190,10 +196,15 @@ class DocumentoTecnicoChecklistGeneratorService:
             "TXT LISP": "CAD",
             "DXF PROFISSIONAL": "CAD",
             "ARQUIVO SHP": "CAD",
-            
+
             "CAD": "CAD",
             "SHP": "CAD",
             "SHAPEFILE": "CAD",
+
+            "SCRIPT CAD": "CAD",
+            "CAD SCRIPT": "CAD",
+            "CAD_SCRIPT": "CAD",
+            
         }
 
         return mapa_tipos.get(
