@@ -202,6 +202,9 @@ from app.routes.csv_export_routes import router as csv_export_router
 
 from app.routes.audit_log_routes import router as audit_log_router
 from app.routes.sigef_export_routes import router as sigef_export_router
+from app.routes.ficha_cadastral_sig_ri_routes import (
+    router as ficha_cadastral_sig_ri_router,
+)
 from app.routes.map_routes import router as map_router
 
 from app.routes.sigef_ods_routes import router as sigef_ods_router
@@ -285,6 +288,11 @@ app.include_router(
 app.include_router(sigef_export_router, prefix="/api", tags=["SIGEF"])
 app.include_router(audit_log_router, prefix="/api", tags=["Audit Logs"])
 
+app.include_router(
+    ficha_cadastral_sig_ri_router,
+    prefix="/api",
+    tags=["Ficha Cadastral SIG-RI"],
+)
 app.include_router(sigef_ods_router, prefix="/api", tags=["SIGEF ODS"])
 app.include_router(cad_export_router, prefix="/api", tags=["CAD"])
 app.include_router(ocr_router, prefix="/api", tags=["OCR"])
