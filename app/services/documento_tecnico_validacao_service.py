@@ -26,11 +26,17 @@ class DocumentoTecnicoValidacaoService:
     STATUS_REPROVADO = "REPROVADO"
     STATUS_EM_ANALISE = "EM_ANALISE"
 
+    CHECKLIST_OK = "OK"
+    CHECKLIST_NA = "NA"
+    CHECKLIST_ALERTA = "ALERTA"
+    CHECKLIST_ERRO = "ERRO"
+
     TIPOS_OCR_ISOLADOS = {
         "OCR Dados Brutos",
         "OCR Documentos Pessoais",
         "OCR Ficha Cadastral SIG",
         "OCR Confrontantes Croqui",
+        "OCR Matrícula",
     }
 
     @staticmethod
@@ -144,13 +150,15 @@ class DocumentoTecnicoValidacaoService:
             # ERRO OBRIGATÓRIO
             # =================================================
             if (
-                status_item == "ERRO"
+                status_item
+                == DocumentoTecnicoValidacaoService.CHECKLIST_ERRO
                 and item.obrigatorio
             ):
-
+                
                 pendentes_criticos.append(item)
 
                 continue
+            
 
             # =================================================
             # NÃO APLICÁVEL OBRIGATÓRIO
@@ -159,11 +167,22 @@ class DocumentoTecnicoValidacaoService:
                 status_item
                 == DocumentoTecnicoValidacaoService.CHECKLIST_NA
             ):
-                pendentes_nao_criticos.append(item)
                 continue
 
             # =================================================
-            # ALERTAS / NÃO OBRIGATÓRIOS
+            # ALERTAS
+            # =================================================
+            if (
+                status_item
+                == DocumentoTecnicoValidacaoService.CHECKLIST_ALERTA
+            ):
+                
+                pendentes_nao_criticos.append(item)
+
+                continue
+
+            # =================================================
+            # QUALQUER OUTRO STATUS
             # =================================================
             pendentes_nao_criticos.append(item)
 

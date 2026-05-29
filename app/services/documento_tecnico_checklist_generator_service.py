@@ -182,6 +182,15 @@ class DocumentoTecnicoChecklistGeneratorService:
             "GEOMETRIA": "GEOJSON",
 
             "DXF": "CAD",
+            "TXT PERÍMETROS/LISP": "CAD",
+            "TXT PERIMETROS/LISP": "CAD",
+
+            "ARQUIVO DXF": "CAD",
+
+            "TXT LISP": "CAD",
+            "DXF PROFISSIONAL": "CAD",
+            "ARQUIVO SHP": "CAD",
+            
             "CAD": "CAD",
             "SHP": "CAD",
             "SHAPEFILE": "CAD",
